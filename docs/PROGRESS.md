@@ -1,10 +1,10 @@
 # ReconAI Development Progress
 
 ## Project Status
-Step 8 Completed — Implemented Exception Queue, Human Review Workflow, Safety Gates, and Centralized Append-Only Audit Trail (`safetyGateService.js`, `severityService.js`, `exceptionService.js`, `humanReviewService.js`, `auditService.js`, Zod validators, `/api/exceptions`, `/api/audit`). Enforced strict safety gate rules and classification preservation invariants (human decisions update workflow status but NEVER alter original engine classification). Documented workflow in `docs/EXCEPTION_WORKFLOW.md`. Executed live audited benchmark run on MongoDB Atlas (`RUN-20260902113400-FA3I`: 120 results, 40 `ExceptionCase` records, 122 audit events). Demonstrated live human review on primary ambiguous scenario `ORD-000116` (`KEEP_EXCEPTION`), preserving `UNDER_REVIEW` state and `AMBIGUOUS` classification. 128/128 Vitest tests passing across 29 test files.
+Step 9 Completed — Implemented Gemini Advisory Exception Investigator with safe structured output validation (Zod schema `aiAnalysisOutputSchema`), provider infrastructure service (`geminiService.js` with `@google/genai` SDK and 15s timeout), business investigator (`exceptionInvestigator.js`), and deterministic fallback generator (`fallbackExplanation.js`). Enforced strict safety boundaries: Gemini is advisory only and NEVER alters financial truth, classification, confidence, severity, status, or human decisions. Enforced prompt injection safety boundary (all fields treated as untrusted data), advisory next-step allow-list (`ALLOWED_RECOMMENDED_NEXT_STEPS`), server-side safety overrides, and append-only audit event logging (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`). Built investigation REST API (`POST /api/exceptions/:exceptionId/investigate`). Verified pure engine separation (zero AI calls during batch runs) and primary ambiguous scenario `ORD-000116` state preservation. Documented architecture in `docs/AI_INVESTIGATION.md`. 150/150 Vitest tests passing across 35 test files.
 
 ## Current Step
-Step 8: Exception Queue, Human Review, Safety Gates, and Audit Trail.
+Step 9: Gemini Advisory Exception Investigator with Safe Structured Output & Deterministic Fallback.
 
 ## Completed Steps
 - [x] Initialized mandatory project memory context (`memory.md`, `implemented.md`, `folderstr.md`, `docs/PROGRESS.md`).
@@ -44,9 +44,16 @@ Step 8: Exception Queue, Human Review, Safety Gates, and Audit Trail.
 - [x] Verified live audited run on MongoDB Atlas (`RUN-20260902113400-FA3I`: 120 results, 40 exceptions, 122 audit logs).
 - [x] Verified live human review decision on `ORD-000116` (`KEEP_EXCEPTION`), preserving `UNDER_REVIEW` state and `AMBIGUOUS` classification.
 - [x] Documented exception workflow and safety policy in `docs/EXCEPTION_WORKFLOW.md`.
+- [x] Installed official Google GenAI SDK (`@google/genai`) and configured `GEMINI_MODEL`.
+- [x] Implemented Gemini Provider Infrastructure (`geminiService.js`), 15s timeout, and normalized error mapping.
+- [x] Implemented Zod structured output contract (`aiSchemas.js`) enforcing allowed recommendation enum allow-list and rejecting forbidden execution actions.
+- [x] Implemented Business Exception Investigator (`exceptionInvestigator.js`) with minimal evidence payload and prompt injection safety instructions.
+- [x] Implemented Deterministic Fallback Generator (`fallbackExplanation.js`) supporting all 11 exception types with zero workflow breakage.
+- [x] Built Investigation REST API (`POST /api/exceptions/:exceptionId/investigate`).
+- [x] Implemented AI Audit Integration (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`).
+- [x] Documented AI Investigator architecture and safety policy in `docs/AI_INVESTIGATION.md`.
 
 ## Pending Steps
-- [ ] Step 9: Implement Gemini AI Exception Investigator (Advisory post-exception root cause analysis).
 - [ ] Step 10: Implement CSV Ingestion Services & Razorpay Sync Adapter.
 - [ ] Step 11: Build React UI Pages (Dashboard, Runs, Exceptions, AI Investigation, Audit Trail, Evaluation Metrics).
 - [ ] Step 12: End-to-End Testing, Accuracy Metrics Verification, and Demo Run.
@@ -63,10 +70,14 @@ None.
 - **Run Resolution Safety Gate Rule**: Only `classification === "MATCHED"` AND `confidence >= 0.95` AND `requiresReview === false` may auto-reconcile (`safetyGateService.js`). All anomaly classifications (`AMOUNT_MISMATCH`, `AMBIGUOUS`, etc.) FORCE `allowedAutomaticResolution = false` and `requiresHumanReview = true` regardless of confidence score.
 - **Classification Preservation Invariant**: Human review decisions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) update workflow status fields (`resolutionStatus`, `requiresReview`), but NEVER change original `ReconciliationResult.classification`.
 - **Centralized Append-Only Audit Trail**: All audit events pass through `auditService.js` with recursive credential sanitization. No UPDATE/DELETE routes exist for `/api/audit`.
+- **Advisory AI Boundary & Fallback Semantics**: Gemini AI cannot perform primary matching or classification. AI investigation is triggered on-demand per exception, uses minimal untrusted evidence payloads, strictly rejects forbidden actions via Zod, and falls back to deterministic explanations without workflow interruption.
 
 ## Last Verification
+- Vitest Test Suite: PASS (35/35 test files passed, 150/150 tests passed).
+- AI Separation Invariant: VERIFIED PASS (`aiSeparation.test.js` proves zero AI calls during primary matching).
+- Strict Financial Truth Invariant: VERIFIED PASS (`exceptionInvestigator.test.js` proves protected fields cannot be mutated by AI).
+- Deterministic Fallback & Quota Degradation: VERIFIED PASS.
+- Prompt Injection Safety Boundary: VERIFIED PASS.
 - Live MongoDB Atlas Audited Run Executed: PASS (runId: `RUN-20260902113400-FA3I`, 120 results, 40 ExceptionCases, 122 Audit Logs).
-- Live Human Review Decision Executed: PASS (`ORD-000116` updated to `UNDER_REVIEW`, `KEEP_EXCEPTION`, `HUMAN_DECISION` audit log created, `AMBIGUOUS` classification preserved).
 - Benchmark Accuracy: 120/120 (100.00%).
 - GroundTruth Isolation Guard: VERIFIED PASS.
-- `npm test` in `server`: 29/29 test files passed, 128/128 tests passed.

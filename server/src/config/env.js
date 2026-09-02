@@ -13,6 +13,8 @@ const envSchema = z
     GEMINI_MODEL: z.string().optional().default("gemini-2.5-flash"),
     RAZORPAY_KEY_ID: z.string().optional().default(""),
     RAZORPAY_KEY_SECRET: z.string().optional().default(""),
+    RAZORPAY_MODE: z.enum(["test", "live"]).default("test"),
+    RAZORPAY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
     DEMO_MODE: z
       .union([z.boolean(), z.string()])
       .transform((val) => {
