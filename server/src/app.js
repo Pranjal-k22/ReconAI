@@ -7,6 +7,7 @@ import { apiLimiter } from "./middleware/rateLimiter.js";
 import { notFoundHandler } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import healthRoutes from "./routes/healthRoutes.js";
+import reconciliationRoutes from "./routes/reconciliationRoutes.js";
 
 const env = getEnv();
 const app = express();
@@ -34,6 +35,7 @@ app.use("/api", apiLimiter);
 
 // API Routes
 app.use("/api", healthRoutes);
+app.use("/api/reconciliation", reconciliationRoutes);
 
 // 404 Handler for unmatched routes
 app.use(notFoundHandler);
