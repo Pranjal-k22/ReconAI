@@ -48,8 +48,20 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 - **Deterministic Confidence Model**: Confidence (0.00 - 1.00) measures evidence strength, not financial permission. All anomaly classifications require review (`requiresReview = true`).
 - **Primary Ambiguous Demo Scenario**: `ORD-000116` with two payment candidates and unlinked settlement is deterministically classified as `AMBIGUOUS` (`requiresReview = true`, `confidence = 0.45`). Engine never guesses.
 - **Synthetic Fee Policy**: Standard synthetic fee (2% gross + 18% GST on fee) encapsulated in `server/src/services/finance/syntheticFeePolicy.js`.
-- Engine Version: `RECON_ENGINE_V1`.
-- AI / Deterministic Separation: Gemini AI cannot perform primary matching or classification.
+- **Engine Version**: `RECON_ENGINE_V1`.
+- **AI / Deterministic Separation**: Gemini AI cannot perform primary matching or classification.
+- **Gemini Advisory Exception Investigator Boundary**:
+  - Gemini is invoked strictly on-demand via `POST /api/exceptions/:exceptionId/investigate`.
+  - Gemini is NEVER invoked during batch reconciliation runs (`POST /api/reconciliation/runs`).
+  - Provider integration uses official `@google/genai` SDK with `GEMINI_MODEL` (default `gemini-2.5-flash`).
+  - AI input is minimized and strictly excludes `GroundTruth`, API credentials, raw provider payloads, internal database keys, and customer PII.
+  - AI structured JSON output is validated at runtime via Zod (`aiAnalysisOutputSchema`).
+  - AI recommendations use a strict enum allow-list (`ALLOWED_RECOMMENDED_NEXT_STEPS`); forbidden execution actions (`REFUND_CUSTOMER`, `CAPTURE_PAYMENT`, `APPROVE_MATCH`, etc.) are rejected by schema.
+  - Server-side advisory safety override normalizes any `NO_ACTION` recommendation on anomaly classifications to `MANUAL_REVIEW`.
+  - Gemini failure (missing key, timeout >15s, quota, network error, invalid JSON) triggers deterministic fallback (`fallbackExplanation.js`), logging `AI_INVESTIGATION_FAILED` and returning HTTP 200 with `source: "FALLBACK"`.
+  - AI cannot modify `classification`, `confidence`, `severity`, `financialImpactPaise`, `status`, `humanDecision`, `requiresReview`, or `resolutionStatus`.
+  - AI investigation logs append-only audit events (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`).
+  - Primary ambiguous scenario `ORD-000116` remains human-controlled (`AMBIGUOUS`, `confidence = 0.45`, `status = UNDER_REVIEW`, `humanDecision = KEEP_EXCEPTION`) regardless of AI investigation output.
 
 ## Financial Safety Rules
 - All money amounts stored as integer paise (1 INR = 100 paise) to prevent floating-point rounding errors.

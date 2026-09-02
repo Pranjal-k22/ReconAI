@@ -84,7 +84,18 @@
 - [x] Exception Workflow Documentation (`docs/EXCEPTION_WORKFLOW.md`)
 
 ### AI Service
-- [ ] Gemini API Integration & Advisory Exception Investigator
+- [x] Gemini provider service (`server/src/services/ai/geminiService.js`) with `@google/genai` SDK
+- [x] Structured AI response validation (`server/src/services/ai/aiSchemas.js` via Zod)
+- [x] Exception investigator business service (`server/src/services/ai/exceptionInvestigator.js`)
+- [x] Deterministic fallback explanations (`server/src/services/ai/fallbackExplanation.js`)
+- [x] Advisory recommendation allow-list (`ALLOWED_RECOMMENDED_NEXT_STEPS`) & forbidden action rejection
+- [x] AI mutation protection (Strict financial & classification truth preservation invariant)
+- [x] AI audit events (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`)
+- [x] AI investigation REST API (`POST /api/exceptions/:exceptionId/investigate`)
+- [x] Gemini failure degradation & 15s timeout policy
+- [x] Prompt injection safety boundary & data minimization
+- [ ] Live Gemini provider verification — API key unavailable/not tested
+- [x] AI Investigation Architecture Documentation (`docs/AI_INVESTIGATION.md`)
 
 ### Razorpay & Import Services
 - [ ] CSV Importers (Orders, Payments, Settlements)

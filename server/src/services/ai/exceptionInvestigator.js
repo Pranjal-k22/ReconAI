@@ -6,7 +6,7 @@ import { generateFallbackExplanation } from "./fallbackExplanation.js";
 import { aiAnalysisOutputSchema } from "./aiSchemas.js";
 import { paiseToRupees } from "../../utils/money.js";
 import { AppError } from "../../utils/AppError.js";
-import logger from "../../config/logger.js";
+import { logger } from "../../config/logger.js";
 
 export const SYSTEM_INSTRUCTION = `You are ReconAI's advisory finance-exception investigator.
 
@@ -83,13 +83,13 @@ export async function investigateException({ exceptionId, actorId = "demo-financ
   const evidencePayload = {
     exceptionType: exc.type,
     severity: exc.severity,
-    financialImpact: `${paiseToRupees(exc.financialImpactPaise)} INR`,
+    financialImpact: `${paiseToRupees(exc.financialImpactPaise || 0)} INR`,
     merchantOrderId: exc.merchantOrderId || "UNKNOWN",
     deterministicClassification: result.classification,
     deterministicConfidence: result.confidence,
-    expectedAmount: result.expectedAmountPaise !== null ? `${paiseToRupees(result.expectedAmountPaise)} INR` : "N/A",
-    actualAmount: result.actualAmountPaise !== null ? `${paiseToRupees(result.actualAmountPaise)} INR` : "N/A",
-    difference: result.differencePaise !== null ? `${paiseToRupees(result.differencePaise)} INR` : "N/A",
+    expectedAmount: typeof result.expectedAmountPaise === "number" ? `${paiseToRupees(result.expectedAmountPaise)} INR` : "N/A",
+    actualAmount: typeof result.actualAmountPaise === "number" ? `${paiseToRupees(result.actualAmountPaise)} INR` : "N/A",
+    difference: typeof result.differencePaise === "number" ? `${paiseToRupees(result.differencePaise)} INR` : "N/A",
     reasons: result.reasons || [],
     currentStatus: exc.status
   };

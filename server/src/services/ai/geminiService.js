@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { getEnv } from "../../config/env.js";
-import logger from "../../config/logger.js";
+import { logger } from "../../config/logger.js";
 
 export const DEFAULT_TIMEOUT_MS = 15000;
 

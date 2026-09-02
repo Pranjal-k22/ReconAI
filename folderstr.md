@@ -67,6 +67,11 @@ reconai/
 │   │   │   ├── healthRoutes.js
 │   │   │   └── reconciliationRoutes.js
 │   │   ├── services/
+│   │   │   ├── ai/
+│   │   │   │   ├── aiSchemas.js
+│   │   │   │   ├── exceptionInvestigator.js
+│   │   │   │   ├── fallbackExplanation.js
+│   │   │   │   └── geminiService.js
 │   │   │   ├── audit/
 │   │   │   │   └── auditService.js
 │   │   │   ├── demo/
@@ -100,6 +105,11 @@ reconai/
 │   │   ├── app.js
 │   │   └── server.js
 │   ├── tests/
+│   │   ├── ai/
+│   │   │   ├── aiSchemas.test.js
+│   │   │   ├── exceptionInvestigator.test.js
+│   │   │   ├── fallbackExplanation.test.js
+│   │   │   └── geminiService.test.js
 │   │   ├── audit/
 │   │   │   └── auditService.test.js
 │   │   ├── demo/
@@ -120,6 +130,7 @@ reconai/
 │   │   │   ├── reconciliationModels.test.js
 │   │   │   └── settlementRecord.test.js
 │   │   ├── reconciliation/
+│   │   │   ├── aiSeparation.test.js
 │   │   │   ├── benchmarkCompatibility.test.js
 │   │   │   ├── candidateMatcher.test.js
 │   │   │   ├── confidenceEngine.test.js
@@ -129,6 +140,7 @@ reconai/
 │   │   │   ├── normalizationService.test.js
 │   │   │   └── safetyGate.test.js
 │   │   ├── routes/
+│   │   │   ├── aiInvestigationRoutes.test.js
 │   │   │   ├── auditRoutes.test.js
 │   │   │   ├── exceptionRoutes.test.js
 │   │   │   └── reconciliationRoutes.test.js
@@ -140,6 +152,7 @@ reconai/
 │   └── package.json
 │
 ├── docs/
+│   ├── AI_INVESTIGATION.md
 │   ├── ARCHITECTURE.md
 │   ├── DATASET.md
 │   ├── EVALUATION.md
