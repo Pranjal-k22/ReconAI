@@ -10,6 +10,7 @@ const envSchema = z
     CLIENT_URL: z.string().default("http://localhost:5173"),
     MONGODB_URI: z.string().default(""),
     GEMINI_API_KEY: z.string().optional().default(""),
+    GEMINI_MODEL: z.string().optional().default("gemini-2.5-flash"),
     RAZORPAY_KEY_ID: z.string().optional().default(""),
     RAZORPAY_KEY_SECRET: z.string().optional().default(""),
     DEMO_MODE: z

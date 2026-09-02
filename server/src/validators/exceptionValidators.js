@@ -7,3 +7,7 @@ export const humanDecisionSchema = z.object({
   resolutionNotes: z.string().trim().min(5, "resolutionNotes must be at least 5 characters long").max(2000, "resolutionNotes cannot exceed 2000 characters"),
   actorId: z.string().trim().optional().default("demo-finance-reviewer")
 });
+
+export const investigateRequestSchema = z.object({
+  actorId: z.string().trim().optional().default("demo-finance-reviewer")
+});

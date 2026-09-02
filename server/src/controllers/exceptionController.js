@@ -1,7 +1,8 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { humanDecisionSchema } from "../validators/exceptionValidators.js";
+import { humanDecisionSchema, investigateRequestSchema } from "../validators/exceptionValidators.js";
 import * as exceptionService from "../services/exceptions/exceptionService.js";
 import * as humanReviewService from "../services/exceptions/humanReviewService.js";
+import * as exceptionInvestigator from "../services/ai/exceptionInvestigator.js";
 
 /**
  * GET /api/exceptions
@@ -65,6 +66,25 @@ export const applyDecision = asyncHandler(async (req, res) => {
     exceptionId,
     decision: validated.decision,
     resolutionNotes: validated.resolutionNotes,
+    actorId: validated.actorId
+  });
+
+  res.status(200).json({
+    success: true,
+    data: result
+  });
+});
+
+/**
+ * POST /api/exceptions/:exceptionId/investigate
+ * Triggers AI (or deterministic fallback) investigation for an exception.
+ */
+export const investigateException = asyncHandler(async (req, res) => {
+  const { exceptionId } = req.params;
+  const validated = investigateRequestSchema.parse(req.body || {});
+
+  const result = await exceptionInvestigator.investigateException({
+    exceptionId,
     actorId: validated.actorId
   });
 

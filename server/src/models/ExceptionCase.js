@@ -91,6 +91,35 @@ const exceptionCaseSchema = new mongoose.Schema(
       max: [1, "aiConfidence cannot be greater than 1"],
       default: null
     },
+    aiInvestigationMetadata: {
+      source: {
+        type: String,
+        enum: ["GEMINI", "FALLBACK"],
+        default: null
+      },
+      model: {
+        type: String,
+        default: null
+      },
+      investigatedAt: {
+        type: Date,
+        default: null
+      },
+      likelyCause: {
+        type: String,
+        default: null
+      },
+      evidence: [{
+        type: String
+      }],
+      riskNotes: [{
+        type: String
+      }],
+      durationMs: {
+        type: Number,
+        default: null
+      }
+    },
     status: {
       type: String,
       required: true,
