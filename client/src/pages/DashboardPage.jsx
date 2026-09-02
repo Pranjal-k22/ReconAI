@@ -123,10 +123,10 @@ export default function DashboardPage() {
   const reviewValuePaise = metrics?.amountUnderReviewPaise ?? null;
 
   // Accuracy from evaluation
-  const accuracyPct = evaluation?.overallMetrics?.accuracy ?? 1.0;
-  const precisionPct = evaluation?.overallMetrics?.precision ?? 1.0;
-  const recallPct = evaluation?.overallMetrics?.recall ?? 1.0;
-  const f1Pct = evaluation?.overallMetrics?.f1Score ?? 1.0;
+  const accuracyPct = evaluation?.classificationAccuracy ?? evaluation?.overallMetrics?.accuracy ?? 1.0;
+  const precisionPct = evaluation?.exceptionDetection?.precision ?? evaluation?.overallMetrics?.precision ?? 1.0;
+  const recallPct = evaluation?.exceptionDetection?.recall ?? evaluation?.overallMetrics?.recall ?? 1.0;
+  const f1Pct = evaluation?.exceptionDetection?.f1Score ?? evaluation?.overallMetrics?.f1Score ?? 1.0;
 
   // Chart data formatting
   const distributionData = Object.entries(metrics?.classificationBreakdown || metrics?.byClassification || {}).map(([key, value]) => ({
