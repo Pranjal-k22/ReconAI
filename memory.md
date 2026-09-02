@@ -10,13 +10,13 @@ Financial Tech / AI Automation / Reconciliation Engine.
 Ingest merchant orders, gateway payments, and settlement records, run deterministic matching rules, classify anomalies, isolate low-confidence exceptions for Gemini AI investigation, and maintain an immutable audit trail.
 
 ## Tech Stack
-- Frontend: React (Vite, JavaScript), Vanilla CSS, Lucide Icons, Axios.
-- Backend: Node.js + Express API.
+- Frontend: React (Vite, JavaScript), Tailwind CSS, Lucide Icons, Axios, Recharts.
+- Backend: Node.js + Express API (ES modules).
 - Database: MongoDB + Mongoose.
 - AI Service: Google Gemini API (used strictly for exception root cause investigation, fallback explanations, and human-in-the-loop recommendations; NOT for direct matching).
 
 ## Architecture Decisions
-- Monorepo structure with `client/` and `server/` directories.
+- Full-stack monorepo structure with `client/` and `server/` managed by root `package.json` with `concurrently`.
 - Deterministic reconciliation engine runs locally in Node.js service layers.
 - Strict isolation: Gemini AI cannot perform reconciliation matching.
 - Ground truth dataset is stored separately to evaluate engine accuracy.
@@ -47,14 +47,15 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 ## Razorpay Strategy
 - Razorpay API test mode client for syncing live payments and settlements when keys are present; graceful fallback to generated test data.
 
-## Environment Variables
-- `PORT`, `MONGODB_URI`, `GEMINI_API_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `NODE_ENV`.
-
-## Database Conventions
-- Schemas for `MerchantOrder`, `GatewayPayment`, `SettlementRecord`, `ReconciliationRun`, `ReconciliationResult`, `ExceptionCase`, `AuditLog`, `GroundTruth`.
+## Environment & Server Conventions
+- Server Port: `process.env.PORT || 5000`.
+- Client Dev Server: `http://localhost:5173`.
+- Health Endpoint: `GET /api/health` -> `{ success: true, service: "reconai-api", status: "healthy" }`.
+- Environment Variables: `PORT`, `NODE_ENV`, `CLIENT_URL`, `MONGODB_URI`, `GEMINI_API_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `DEMO_MODE`.
 
 ## Testing Conventions
-- Jest/Supertest for backend unit and integration tests; benchmark evaluation script for precision/recall testing against ground truth.
+- Vitest + Supertest for Express API integration testing (`server/tests/`).
+- Benchmark evaluation script for precision/recall testing against ground truth.
 
 ## Critical Notes For Future Agents
 - React uses JavaScript (JSX), not TypeScript.

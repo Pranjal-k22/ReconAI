@@ -1,47 +1,52 @@
 # ReconAI Folder Structure
 
 reconai/
-├── docs/
-│   ├── ARCHITECTURE.md
-│   └── PROGRESS.md
-├── memory.md
-├── implemented.md
-├── folderstr.md
-└── README.md
-
-## Planned Structure
-reconai/
 ├── client/
 │   ├── public/
-│   │   └── favicon.svg
 │   ├── src/
 │   │   ├── api/
+│   │   ├── assets/
 │   │   ├── components/
-│   │   ├── pages/
-│   │   ├── hooks/
-│   │   ├── utils/
+│   │   │   ├── common/
+│   │   │   └── layout/
 │   │   ├── constants/
+│   │   ├── hooks/
+│   │   ├── pages/
+│   │   ├── utils/
 │   │   ├── App.jsx
+│   │   ├── index.css
 │   │   └── main.jsx
 │   ├── .env.example
+│   ├── .gitignore
+│   ├── index.html
 │   ├── package.json
 │   └── vite.config.js
 │
 ├── server/
 │   ├── src/
 │   │   ├── config/
-│   │   ├── models/
 │   │   ├── controllers/
-│   │   ├── routes/
-│   │   ├── services/
+│   │   │   └── healthController.js
 │   │   ├── middleware/
+│   │   ├── models/
+│   │   ├── routes/
+│   │   │   └── healthRoutes.js
+│   │   ├── services/
 │   │   ├── utils/
+│   │   ├── validators/
 │   │   ├── app.js
 │   │   └── server.js
-│   ├── scripts/
 │   ├── tests/
-│   ├── data/
+│   │   └── health.test.js
 │   ├── .env.example
 │   └── package.json
 │
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── PROGRESS.md
+├── .gitignore
+├── folderstr.md
+├── implemented.md
+├── memory.md
+├── package.json
 └── README.md
