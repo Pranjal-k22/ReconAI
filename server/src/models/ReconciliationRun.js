@@ -66,10 +66,19 @@ const reconciliationRunSchema = new mongoose.Schema(
       }
     },
     metrics: {
-      matchedCount: { type: Number, default: 0 },
-      exceptionCount: { type: Number, default: 0 },
-      manualReviewCount: { type: Number, default: 0 },
-      autoReconciledCount: { type: Number, default: 0 }
+      type: mongoose.Schema.Types.Mixed,
+      default: {
+        matchedCount: 0,
+        exceptionCount: 0,
+        manualReviewCount: 0,
+        autoReconciledCount: 0,
+        autoReconciliationRate: 0,
+        throughputRecordsPerSecond: 0,
+        totalAmountProcessedPaise: 0,
+        autoReconciledAmountPaise: 0,
+        amountUnderReviewPaise: 0,
+        classificationBreakdown: {}
+      }
     },
     configuration: {
       type: mongoose.Schema.Types.Mixed,

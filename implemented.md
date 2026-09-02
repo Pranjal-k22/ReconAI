@@ -40,10 +40,15 @@
 - [x] GroundTruth (`server/src/models/GroundTruth.js`)
 
 ### Reconciliation Engine
-- [ ] Data Normalization Service
-- [ ] Candidate Matcher & Deterministic Engine
-- [ ] Anomaly Classifier & Confidence Engine
-- [ ] Safety Gate & Auto-reconciliation Policy
+- [x] Data Normalization Service (`server/src/services/reconciliation/normalizationService.js`)
+- [x] Candidate Matcher & Evidence Hierarchy (`server/src/services/reconciliation/candidateMatcher.js`)
+- [x] Deterministic Anomaly Classifier (`server/src/services/reconciliation/anomalyClassifier.js`)
+- [x] Deterministic Confidence Engine (`server/src/services/reconciliation/confidenceEngine.js`)
+- [x] Pure Reconciliation Matching Engine (`server/src/services/reconciliation/matchingEngine.js`)
+- [x] Synthetic Fee Policy (`server/src/services/finance/syntheticFeePolicy.js`)
+- [x] GroundTruth Architecture Isolation Guard (`server/tests/reconciliation/groundTruthIsolationGuard.test.js`)
+- [x] 120-Scenario Benchmark Compatibility Test (`server/tests/reconciliation/benchmarkCompatibility.test.js` - 100% 120/120 match rate)
+- [ ] Safety Gate & Auto-reconciliation Persistence Policy
 
 ### AI Service
 - [ ] Gemini API Integration & Advisory Exception Investigator

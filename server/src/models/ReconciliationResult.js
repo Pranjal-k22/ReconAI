@@ -83,18 +83,18 @@ const reconciliationResultSchema = new mongoose.Schema(
     },
     actualAmountPaise: {
       type: Number,
-      default: 0,
+      default: null,
       validate: {
-        validator: isNonNegativeSafeInteger,
-        message: "actualAmountPaise must be a non-negative safe integer"
+        validator: (v) => v === null || v === undefined || isNonNegativeSafeInteger(v),
+        message: "actualAmountPaise must be a non-negative safe integer or null"
       }
     },
     differencePaise: {
       type: Number,
-      default: 0,
+      default: null,
       validate: {
-        validator: isSafeInteger,
-        message: "differencePaise must be a valid safe integer"
+        validator: (v) => v === null || v === undefined || isSafeInteger(v),
+        message: "differencePaise must be a valid safe integer or null"
       }
     },
     reasons: {
@@ -123,6 +123,7 @@ const reconciliationResultSchema = new mongoose.Schema(
 
 reconciliationResultSchema.index({ runId: 1, classification: 1 });
 reconciliationResultSchema.index({ runId: 1, requiresReview: 1 });
+reconciliationResultSchema.index({ runId: 1, merchantOrderId: 1 }, { unique: true });
 
 export const ReconciliationResult =
   mongoose.models.ReconciliationResult ||

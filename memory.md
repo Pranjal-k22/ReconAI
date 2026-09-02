@@ -33,10 +33,14 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 - **Application Business Identifiers**: Strings (`ORD-100001`, `pay_ABC123`, `set_rec_001`, `RUN-001`, `RES-001`, `EXC-001`, `AUD-001`) indexed for high throughput queries.
 - **Settlement Id Granularity**: `settlementRecordId` is unique per line item; `settlementId` groups multiple line items per batch payout.
 - **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
-- **Ground Truth Isolation**: `GroundTruth` model is evaluation-only and strictly isolated from production reconciliation import paths.
-- **AI / Deterministic Separation**: `deterministicExplanation` stores rule proofs; `aiExplanation` stores advisory Gemini insights.
-- Deterministic reconciliation engine runs locally in Node.js service layers.
-- Strict isolation: Gemini AI cannot perform reconciliation matching.
+- **Ground Truth Isolation**: `GroundTruth` model is evaluation-only and strictly isolated from production reconciliation import paths (`groundTruthIsolationGuard.test.js` enforces zero imports in `server/src/services/reconciliation/`).
+- **Pure In-Memory Reconciliation Engine**: Engine (`reconcileScenario`) is 100% pure, deterministic, and in-memory (`server/src/services/reconciliation/matchingEngine.js`). It never queries/mutates MongoDB, never calls Gemini or Razorpay.
+- **Evidence Hierarchy Rule**: Amount alone can NEVER establish a match between transactions. Match hierarchy requires direct order reference (`merchantOrderId`) or entity linkage (`settlementRecord.entityId === gatewayPayment.gatewayPaymentId`).
+- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`. Missing values (`MISSING_PAYMENT`) keep `actualAmountPaise = null` and `differencePaise = null` (missing values are never faked as 0).
+- **Deterministic Confidence Model**: Confidence (0.00 - 1.00) measures evidence strength, not financial permission. All anomaly classifications require review (`requiresReview = true`).
+- **Primary Ambiguous Demo Scenario**: `ORD-000116` with two payment candidates and unlinked settlement is deterministically classified as `AMBIGUOUS` (`requiresReview = true`, `confidence = 0.45`). Engine never guesses.
+- **Synthetic Fee Policy**: Standard synthetic fee (2% gross + 18% GST on fee) encapsulated in `server/src/services/finance/syntheticFeePolicy.js`.
+- AI / Deterministic Separation: Gemini AI cannot perform primary matching or classification.
 
 ## Financial Safety Rules
 - All money amounts stored as integer paise (1 INR = 100 paise) to prevent floating-point rounding errors.

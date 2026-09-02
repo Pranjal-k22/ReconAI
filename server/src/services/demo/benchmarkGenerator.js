@@ -1,5 +1,6 @@
 import SeededRandom from "./prng.js";
 import { rupeesToPaise } from "../../utils/money.js";
+import { calculateSyntheticFee } from "../finance/syntheticFeePolicy.js";
 
 export const BENCHMARK_CONSTANTS = {
   DATASET_VERSION: "RECONAI_DEMO_V1",
@@ -24,15 +25,7 @@ const BASE_AMOUNTS_INR = [
   199, 499, 799, 999, 1299, 1499, 1999, 2499, 3999, 4999, 7499, 9999, 12999, 14999, 24999, 49999
 ];
 
-/**
- * Calculates synthetic benchmark gateway fee (2% + 18% GST on fee).
- */
-export function calculateBenchmarkFee(amountPaise) {
-  const feePaise = Math.round(amountPaise * 0.02);
-  const taxPaise = Math.round(feePaise * 0.18);
-  const netAmountPaise = amountPaise - feePaise - taxPaise;
-  return { feePaise, taxPaise, netAmountPaise };
-}
+export const calculateBenchmarkFee = calculateSyntheticFee;
 
 /**
  * Generates 120 deterministic synthetic benchmark scenario records.

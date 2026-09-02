@@ -59,10 +59,18 @@ reconai/
 │   │   ├── routes/
 │   │   │   └── healthRoutes.js
 │   │   ├── services/
-│   │   │   └── demo/
-│   │   │       ├── benchmarkGenerator.js
-│   │   │       ├── csvExporter.js
-│   │   │       └── prng.js
+│   │   │   ├── demo/
+│   │   │   │   ├── benchmarkGenerator.js
+│   │   │   │   ├── csvExporter.js
+│   │   │   │   └── prng.js
+│   │   │   ├── finance/
+│   │   │   │   └── syntheticFeePolicy.js
+│   │   │   └── reconciliation/
+│   │   │       ├── anomalyClassifier.js
+│   │   │       ├── candidateMatcher.js
+│   │   │       ├── confidenceEngine.js
+│   │   │       ├── matchingEngine.js
+│   │   │       └── normalizationService.js
 │   │   ├── utils/
 │   │   │   ├── AppError.js
 │   │   │   ├── asyncHandler.js
@@ -81,6 +89,13 @@ reconai/
 │   │   │   ├── merchantOrder.test.js
 │   │   │   ├── reconciliationModels.test.js
 │   │   │   └── settlementRecord.test.js
+│   │   ├── reconciliation/
+│   │   │   ├── benchmarkCompatibility.test.js
+│   │   │   ├── candidateMatcher.test.js
+│   │   │   ├── confidenceEngine.test.js
+│   │   │   ├── groundTruthIsolationGuard.test.js
+│   │   │   ├── matchingEngine.test.js
+│   │   │   └── normalizationService.test.js
 │   │   ├── envInvariant.test.js
 │   │   ├── health.test.js
 │   │   ├── infrastructure.test.js
@@ -91,7 +106,8 @@ reconai/
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── DATASET.md
-│   └── PROGRESS.md
+│   ├── PROGRESS.md
+│   └── RECONCILIATION_ENGINE.md
 ├── .gitignore
 ├── folderstr.md
 ├── implemented.md
