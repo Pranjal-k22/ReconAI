@@ -5,19 +5,51 @@ reconai/
 │   ├── public/
 │   ├── src/
 │   │   ├── api/
-│   │   ├── assets/
+│   │   │   ├── auditApi.js
+│   │   │   ├── axios.js
+│   │   │   ├── exceptionApi.js
+│   │   │   ├── integrationApi.js
+│   │   │   ├── razorpayApi.js
+│   │   │   └── reconciliationApi.js
 │   │   ├── components/
 │   │   │   ├── common/
+│   │   │   │   ├── Badge.jsx
+│   │   │   │   ├── Button.jsx
+│   │   │   │   ├── Card.jsx
+│   │   │   │   ├── EmptyState.jsx
+│   │   │   │   ├── ErrorState.jsx
+│   │   │   │   ├── LoadingState.jsx
+│   │   │   │   ├── MetricCard.jsx
+│   │   │   │   ├── PageHeader.jsx
+│   │   │   │   ├── Pagination.jsx
+│   │   │   │   └── ToastContext.jsx
 │   │   │   └── layout/
+│   │   │       ├── AppLayout.jsx
+│   │   │       ├── IntegrationStatus.jsx
+│   │   │       ├── MobileSidebar.jsx
+│   │   │       ├── Sidebar.jsx
+│   │   │       └── Topbar.jsx
 │   │   ├── constants/
-│   │   ├── hooks/
+│   │   │   └── app.js
 │   │   ├── pages/
+│   │   │   ├── AuditTrailPage.jsx
+│   │   │   ├── DashboardPage.jsx
+│   │   │   ├── EvaluationPage.jsx
+│   │   │   ├── ExceptionDetailPage.jsx
+│   │   │   ├── ExceptionsPage.jsx
+│   │   │   ├── ImportDataPage.jsx
+│   │   │   ├── NotFoundPage.jsx
+│   │   │   ├── RazorpaySyncPage.jsx
+│   │   │   ├── ReconciliationDetailPage.jsx
+│   │   │   └── ReconciliationRunsPage.jsx
 │   │   ├── utils/
+│   │   │   ├── date.js
+│   │   │   ├── enum.js
+│   │   │   └── money.js
 │   │   ├── App.jsx
 │   │   ├── index.css
 │   │   └── main.jsx
 │   ├── .env.example
-│   ├── .gitignore
 │   ├── index.html
 │   ├── package.json
 │   └── vite.config.js

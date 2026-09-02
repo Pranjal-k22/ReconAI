@@ -120,15 +120,25 @@
 
 ## Frontend
 
-### Application Shell
+### Application Shell & Central API Architecture
 - [x] Vite React Setup + Tailwind CSS Design System
-- [ ] Responsive Navigation & App Layout
+- [x] Centralized Axios Client (`client/src/api/axios.js`) & Error Normalization
+- [x] API Client Modules (`reconciliationApi.js`, `exceptionApi.js`, `auditApi.js`, `razorpayApi.js`, `integrationApi.js`)
+- [x] Responsive Navigation, Fixed Dark Sidebar & Mobile Drawer Layout (`AppLayout.jsx`, `Sidebar.jsx`, `Topbar.jsx`, `MobileSidebar.jsx`)
+- [x] Toast Notification System (`ToastContext.jsx`)
+- [x] Integer Paise Money Formatter (`formatINRFromPaise`) & Null Handling (`—`)
 
 ### Pages & Views
-- [ ] Dashboard Page
-- [ ] Reconciliation Runs & Details Page
-- [ ] Exceptions Management & Case Detail Page
-- [ ] Audit Trail & System Evaluation Page
+- [x] Dashboard Page (`DashboardPage.jsx`) — Live execution trigger, API-driven KPI cards, Recharts visualizations, Trust Panel
+- [x] Reconciliation Runs Page (`ReconciliationRunsPage.jsx`) — Paginated run execution history table
+- [x] Run Details Page (`ReconciliationDetailPage.jsx`) — Metadata KPI cards, filterable results table, Evidence Confidence display
+- [x] Exceptions Queue Page (`ExceptionsPage.jsx`) — Exception summary metrics, filterable exception queue
+- [x] Exception Detail Showcase Page (`ExceptionDetailPage.jsx`) — AMBIGUOUS safety notice, financial comparison, candidate payment evidence, AI advisory investigation panel, human review decision workflow
+- [x] Audit Trail Page (`AuditTrailPage.jsx`) — Append-only audit events table, event payload inspection modal
+- [x] Benchmark Evaluation Page (`EvaluationPage.jsx`) — 100% accuracy metrics, GroundTruth isolation notice, confusion matrix, per-class breakdown
+- [x] Data Import & Sources Page (`ImportDataPage.jsx`) — Synthetic benchmark trigger & honest CSV status banner
+- [x] Razorpay Test Mode Sync Page (`RazorpaySyncPage.jsx`) — Read-only safety notice, payment & settlement sync forms
+- [x] Production Client Build Verified (`npm run build` passing with 0 errors)
 
 ## Testing & Benchmarks
 - [x] Integration test for GET /api/health semantics (`server/tests/health.test.js`)

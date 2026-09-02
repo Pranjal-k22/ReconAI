@@ -7,7 +7,7 @@ import {
   ScrollText,
   Upload,
   CreditCard,
-  ChartNoAxesCombined,
+  BarChart3,
   ShieldCheck
 } from "lucide-react";
 
@@ -18,7 +18,7 @@ export const navItems = [
   { name: "Audit Trail", path: "/audit", icon: ScrollText },
   { name: "Data Import", path: "/import", icon: Upload },
   { name: "Razorpay Sync", path: "/razorpay", icon: CreditCard },
-  { name: "Evaluation", path: "/evaluation", icon: ChartNoAxesCombined }
+  { name: "Evaluation", path: "/evaluation", icon: BarChart3 }
 ];
 
 export function Sidebar() {

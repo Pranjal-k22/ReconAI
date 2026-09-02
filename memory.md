@@ -107,7 +107,19 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 - Vitest + Supertest for Express API integration testing (`server/tests/`).
 - Benchmark evaluation script for precision/recall testing against ground truth.
 
+## Frontend Architecture & Conventions
+- ReconAI frontend is React + Vite + JavaScript + Tailwind CSS.
+- Frontend uses centralized Axios API modules (`client/src/api/`).
+- Dashboard is 100% API-driven; benchmark metrics and financial totals are never hard-coded.
+- Null financial values display as unavailable (`—`), never `₹0`.
+- Deterministic confidence is labeled "Evidence Confidence".
+- Gemini output is labeled "Advisory only"; Fallback analysis is visually distinguished with a "Deterministic Fallback" badge.
+- Razorpay credentials are never entered or exposed in the frontend.
+- Human review decisions preserve the original deterministic classification for auditability.
+- Primary hackathon demo path: Dashboard -> Run -> Exceptions -> ORD-000116 -> AI -> Human Review -> Audit -> Evaluation.
+
 ## Critical Notes For Future Agents
 - React uses JavaScript (JSX), not TypeScript.
 - Money is ALWAYS integer paise in backend models and API payloads.
 - Always check `memory.md`, `implemented.md`, `folderstr.md`, and `docs/PROGRESS.md` before making changes.
+
