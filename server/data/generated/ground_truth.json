@@ -1,0 +1,1542 @@
+[
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000001",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000001-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000001-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000002",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000002-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000002-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000003",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000003-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000003-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000004",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000004-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000004-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000005",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000005-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000005-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000006",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000006-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000006-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000007",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000007-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000007-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000008",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000008-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000008-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000009",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000009-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000009-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000010",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000010-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000010-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000011",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000011-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000011-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000012",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000012-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000012-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000013",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000013-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000013-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000014",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000014-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000014-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000015",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000015-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000015-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000016",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000016-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000016-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000017",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000017-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000017-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000018",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000018-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000018-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000019",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000019-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000019-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000020",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000020-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000020-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000021",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000021-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000021-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000022",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000022-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000022-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000023",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000023-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000023-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000024",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000024-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000024-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000025",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000025-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000025-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000026",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000026-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000026-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000027",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000027-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000027-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000028",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000028-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000028-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000029",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000029-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000029-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000030",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000030-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000030-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000031",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000031-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000031-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000032",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000032-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000032-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000033",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000033-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000033-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000034",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000034-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000034-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000035",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000035-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000035-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000036",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000036-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000036-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000037",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000037-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000037-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000038",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000038-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000038-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000039",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000039-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000039-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000040",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000040-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000040-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000041",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000041-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000041-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000042",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000042-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000042-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000043",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000043-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000043-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000044",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000044-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000044-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000045",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000045-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000045-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000046",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000046-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000046-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000047",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000047-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000047-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000048",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000048-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000048-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000049",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000049-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000049-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000050",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000050-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000050-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000051",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000051-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000051-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000052",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000052-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000052-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000053",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000053-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000053-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000054",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000054-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000054-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000055",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000055-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000055-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000056",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000056-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000056-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000057",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000057-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000057-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000058",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000058-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000058-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000059",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000059-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000059-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000060",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000060-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000060-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000061",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000061-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000061-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000062",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000062-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000062-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000063",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000063-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000063-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000064",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000064-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000064-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000065",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000065-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000065-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000066",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000066-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000066-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000067",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000067-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000067-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000068",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000068-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000068-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000069",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000069-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000069-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000070",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000070-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000070-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000071",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000071-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000071-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000072",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000072-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000072-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000073",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000073-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000073-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000074",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000074-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000074-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000075",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000075-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000075-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000076",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000076-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000076-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000077",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000077-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000077-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000078",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000078-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000078-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000079",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000079-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000079-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000080",
+    "expectedClassification": "MATCHED",
+    "expectedPaymentIds": [
+      "PAY-000080-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000080-A"
+    ],
+    "expectedRequiresReview": false,
+    "notes": "Clean 3-way exact match benchmark scenario"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000081",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000081-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000081-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹199 vs Gateway Payment ₹99"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000082",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000082-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000082-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹1499 vs Gateway Payment ₹1399"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000083",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000083-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000083-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹799 vs Gateway Payment ₹699"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000084",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000084-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000084-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹499 vs Gateway Payment ₹399"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000085",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000085-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000085-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹1499 vs Gateway Payment ₹1399"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000086",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000086-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000086-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹14999 vs Gateway Payment ₹14899"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000087",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000087-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000087-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹999 vs Gateway Payment ₹899"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000088",
+    "expectedClassification": "AMOUNT_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000088-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000088-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Amount mismatch: Order amount ₹199 vs Gateway Payment ₹99"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000089",
+    "expectedClassification": "MISSING_SETTLEMENT",
+    "expectedPaymentIds": [
+      "PAY-000089-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Captured gateway payment absent from bank settlement payout"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000090",
+    "expectedClassification": "MISSING_SETTLEMENT",
+    "expectedPaymentIds": [
+      "PAY-000090-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Captured gateway payment absent from bank settlement payout"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000091",
+    "expectedClassification": "MISSING_SETTLEMENT",
+    "expectedPaymentIds": [
+      "PAY-000091-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Captured gateway payment absent from bank settlement payout"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000092",
+    "expectedClassification": "MISSING_SETTLEMENT",
+    "expectedPaymentIds": [
+      "PAY-000092-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Captured gateway payment absent from bank settlement payout"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000093",
+    "expectedClassification": "MISSING_SETTLEMENT",
+    "expectedPaymentIds": [
+      "PAY-000093-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Captured gateway payment absent from bank settlement payout"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000094",
+    "expectedClassification": "MISSING_SETTLEMENT",
+    "expectedPaymentIds": [
+      "PAY-000094-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Captured gateway payment absent from bank settlement payout"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000095",
+    "expectedClassification": "DUPLICATE_PAYMENT",
+    "expectedPaymentIds": [
+      "PAY-000095-A",
+      "PAY-000095-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000095-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Two captured gateway payments linked to single merchant order"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000096",
+    "expectedClassification": "DUPLICATE_PAYMENT",
+    "expectedPaymentIds": [
+      "PAY-000096-A",
+      "PAY-000096-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000096-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Two captured gateway payments linked to single merchant order"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000097",
+    "expectedClassification": "DUPLICATE_PAYMENT",
+    "expectedPaymentIds": [
+      "PAY-000097-A",
+      "PAY-000097-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000097-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Two captured gateway payments linked to single merchant order"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000098",
+    "expectedClassification": "DUPLICATE_PAYMENT",
+    "expectedPaymentIds": [
+      "PAY-000098-A",
+      "PAY-000098-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000098-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Two captured gateway payments linked to single merchant order"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000099",
+    "expectedClassification": "DUPLICATE_PAYMENT",
+    "expectedPaymentIds": [
+      "PAY-000099-A",
+      "PAY-000099-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000099-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Two captured gateway payments linked to single merchant order"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000100",
+    "expectedClassification": "FEE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000100-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000100-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Actual gateway fee in settlement differs from benchmark fee policy"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000101",
+    "expectedClassification": "FEE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000101-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000101-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Actual gateway fee in settlement differs from benchmark fee policy"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000102",
+    "expectedClassification": "FEE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000102-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000102-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Actual gateway fee in settlement differs from benchmark fee policy"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000103",
+    "expectedClassification": "FEE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000103-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000103-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Actual gateway fee in settlement differs from benchmark fee policy"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000104",
+    "expectedClassification": "FEE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000104-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000104-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Actual gateway fee in settlement differs from benchmark fee policy"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000105",
+    "expectedClassification": "REFUND_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000105-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000105-A",
+      "SETREC-000105-B"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Refund amount mismatch between gateway (₹500) and settlement payout (₹300)"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000106",
+    "expectedClassification": "REFUND_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000106-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000106-A",
+      "SETREC-000106-B"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Refund amount mismatch between gateway (₹500) and settlement payout (₹300)"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000107",
+    "expectedClassification": "REFUND_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000107-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000107-A",
+      "SETREC-000107-B"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Refund amount mismatch between gateway (₹500) and settlement payout (₹300)"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000108",
+    "expectedClassification": "REFUND_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000108-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000108-A",
+      "SETREC-000108-B"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Refund amount mismatch between gateway (₹500) and settlement payout (₹300)"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000109",
+    "expectedClassification": "MISSING_PAYMENT",
+    "expectedPaymentIds": [],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Merchant order exists without gateway payment or bank settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000110",
+    "expectedClassification": "MISSING_PAYMENT",
+    "expectedPaymentIds": [],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Merchant order exists without gateway payment or bank settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000111",
+    "expectedClassification": "MISSING_PAYMENT",
+    "expectedPaymentIds": [],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Merchant order exists without gateway payment or bank settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000112",
+    "expectedClassification": "MISSING_PAYMENT",
+    "expectedPaymentIds": [],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Merchant order exists without gateway payment or bank settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000113",
+    "expectedClassification": "REFERENCE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000113-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000113-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Reference mismatch: Payment references ORD-99000113 instead of ORD-000113"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000114",
+    "expectedClassification": "REFERENCE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000114-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000114-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Reference mismatch: Payment references ORD-99000114 instead of ORD-000114"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000115",
+    "expectedClassification": "REFERENCE_MISMATCH",
+    "expectedPaymentIds": [
+      "PAY-000115-A"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000115-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Reference mismatch: Payment references ORD-99000115 instead of ORD-000115"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000116",
+    "expectedClassification": "AMBIGUOUS",
+    "expectedPaymentIds": [
+      "PAY-000116-A",
+      "PAY-000116-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000116-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Primary graceful-failure demo scenario: Ambiguous payments and unlinked settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000117",
+    "expectedClassification": "AMBIGUOUS",
+    "expectedPaymentIds": [
+      "PAY-000117-A",
+      "PAY-000117-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000117-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Primary graceful-failure demo scenario: Ambiguous payments and unlinked settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000118",
+    "expectedClassification": "AMBIGUOUS",
+    "expectedPaymentIds": [
+      "PAY-000118-A",
+      "PAY-000118-B"
+    ],
+    "expectedSettlementRecordIds": [
+      "SETREC-000118-A"
+    ],
+    "expectedRequiresReview": true,
+    "notes": "Primary graceful-failure demo scenario: Ambiguous payments and unlinked settlement"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000119",
+    "expectedClassification": "INVALID_DATA",
+    "expectedPaymentIds": [
+      "PAY-000119-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Reconciliation-invalid payload: Conflicting currency USD vs INR and UNKNOWN statuses"
+  },
+  {
+    "datasetVersion": "RECONAI_DEMO_V1",
+    "merchantOrderId": "ORD-000120",
+    "expectedClassification": "INVALID_DATA",
+    "expectedPaymentIds": [
+      "PAY-000120-A"
+    ],
+    "expectedSettlementRecordIds": [],
+    "expectedRequiresReview": true,
+    "notes": "Reconciliation-invalid payload: Conflicting currency USD vs INR and UNKNOWN statuses"
+  }
+]

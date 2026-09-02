@@ -1,0 +1,22 @@
+{
+  "datasetVersion": "RECONAI_DEMO_V1",
+  "seed": "RECONAI_DEMO_2026",
+  "importBatchId": "BATCH-DEMO-V1",
+  "scenarioCount": 120,
+  "merchantOrderCount": 120,
+  "gatewayPaymentCount": 124,
+  "settlementRecordCount": 112,
+  "groundTruthCount": 120,
+  "distribution": {
+    "MATCHED": 80,
+    "AMOUNT_MISMATCH": 8,
+    "MISSING_SETTLEMENT": 6,
+    "DUPLICATE_PAYMENT": 5,
+    "FEE_MISMATCH": 5,
+    "REFUND_MISMATCH": 4,
+    "MISSING_PAYMENT": 4,
+    "REFERENCE_MISMATCH": 3,
+    "AMBIGUOUS": 3,
+    "INVALID_DATA": 2
+  }
+}
