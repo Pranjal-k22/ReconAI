@@ -8,6 +8,8 @@ import { notFoundHandler } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import reconciliationRoutes from "./routes/reconciliationRoutes.js";
+import exceptionRoutes from "./routes/exceptionRoutes.js";
+import auditRoutes from "./routes/auditRoutes.js";
 
 const env = getEnv();
 const app = express();
@@ -36,6 +38,8 @@ app.use("/api", apiLimiter);
 // API Routes
 app.use("/api", healthRoutes);
 app.use("/api/reconciliation", reconciliationRoutes);
+app.use("/api/exceptions", exceptionRoutes);
+app.use("/api/audit", auditRoutes);
 
 // 404 Handler for unmatched routes
 app.use(notFoundHandler);

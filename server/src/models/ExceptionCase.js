@@ -124,6 +124,7 @@ const exceptionCaseSchema = new mongoose.Schema(
 
 exceptionCaseSchema.index({ runId: 1, status: 1 });
 exceptionCaseSchema.index({ severity: 1, status: 1 });
+exceptionCaseSchema.index({ runId: 1, resultId: 1 }, { unique: true });
 
 export const ExceptionCase =
   mongoose.models.ExceptionCase ||

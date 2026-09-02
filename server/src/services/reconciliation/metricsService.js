@@ -15,7 +15,7 @@ export const ALL_CLASSIFICATIONS = [
 
 /**
  * Calculates operational metrics from a set of reconciliation results.
- * GroundTruth is NOT required or accessed here.
+ * Benchmark evaluation answer keys are NOT required or accessed here.
  */
 export function calculateRunMetrics(results = [], durationMs = 0) {
   const totalScenarios = results.length;

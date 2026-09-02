@@ -33,13 +33,22 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 - **Application Business Identifiers**: Strings (`ORD-100001`, `pay_ABC123`, `set_rec_001`, `RUN-001`, `RES-001`, `EXC-001`, `AUD-001`) indexed for high throughput queries.
 - **Settlement Id Granularity**: `settlementRecordId` is unique per line item; `settlementId` groups multiple line items per batch payout.
 - **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
-- **Ground Truth Isolation**: `GroundTruth` model is evaluation-only and strictly isolated from production reconciliation import paths (`groundTruthIsolationGuard.test.js` enforces zero imports in `server/src/services/reconciliation/`).
+- **Ground Truth Isolation**: `GroundTruth` model is evaluation-only and strictly isolated from production reconciliation import paths (`groundTruthIsolationGuard.test.js` enforces zero imports in `server/src/services/reconciliation/`). GroundTruth is imported ONLY in `server/src/services/evaluation/evaluationService.js`.
 - **Pure In-Memory Reconciliation Engine**: Engine (`reconcileScenario`) is 100% pure, deterministic, and in-memory (`server/src/services/reconciliation/matchingEngine.js`). It never queries/mutates MongoDB, never calls Gemini or Razorpay.
+- **Reconciliation Run Persistence & Unique Compound Index**: Runs persist exactly one `ReconciliationResult` document per scenario. Compound index `{ runId: 1, merchantOrderId: 1 }` prevents duplicate results within a run.
+- **Run Resolution Safety Gate Rule**: Only `classification === "MATCHED"` AND `confidence >= 0.95` AND `requiresReview === false` may auto-reconcile (`safetyGateService.js`). All anomaly classifications (`AMOUNT_MISMATCH`, `AMBIGUOUS`, etc.) FORCE `allowedAutomaticResolution = false` and `requiresHumanReview = true` regardless of confidence score.
+- **ExceptionCase & Deterministic Classification Preservation**: Every result requiring review generates an `ExceptionCase`. Human review decisions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) change workflow state (`resolutionStatus`, `humanDecision`, `requiresReview`), but NEVER alter original `ReconciliationResult.classification`. `APPROVE_MATCH` is a human operational resolution, not a system reclassification.
+- **Compound Unique Index on ExceptionCase**: `{ runId: 1, resultId: 1 }` uniquely identifies an exception case per run.
+- **Centralized Append-Only Audit Trail**: `auditService.js` centrally writes all audit events. The REST API exposes `GET /api/audit` and `GET /api/audit/:eventId` only; no UPDATE or DELETE routes exist.
+- **Recursive Audit Secret Sanitization**: All audit fields (`before`, `after`, `metadata`) undergo recursive key sanitization redacting secret keys (`GEMINI_API_KEY`, `RAZORPAY_KEY_SECRET`, `authorization`, etc.) to `"[REDACTED]"`.
+- **Primary Demo Ambiguous Failure Case**: `ORD-000116` is classified as `AMBIGUOUS` (`confidence = 0.45`). During live demonstration, `KEEP_EXCEPTION` is applied, preserving its `UNDER_REVIEW` state and `AMBIGUOUS` classification for hackathon presentation.
+- **Operational vs Evaluation Metrics**: Operational metrics (`metricsService.js`) calculate counts, financial totals, throughput, and rates without GroundTruth. Benchmark evaluation (`evaluationService.js`) calculates accuracy, precision, recall, and F1 by comparing results against GroundTruth.
 - **Evidence Hierarchy Rule**: Amount alone can NEVER establish a match between transactions. Match hierarchy requires direct order reference (`merchantOrderId`) or entity linkage (`settlementRecord.entityId === gatewayPayment.gatewayPaymentId`).
 - **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`. Missing values (`MISSING_PAYMENT`) keep `actualAmountPaise = null` and `differencePaise = null` (missing values are never faked as 0).
 - **Deterministic Confidence Model**: Confidence (0.00 - 1.00) measures evidence strength, not financial permission. All anomaly classifications require review (`requiresReview = true`).
 - **Primary Ambiguous Demo Scenario**: `ORD-000116` with two payment candidates and unlinked settlement is deterministically classified as `AMBIGUOUS` (`requiresReview = true`, `confidence = 0.45`). Engine never guesses.
 - **Synthetic Fee Policy**: Standard synthetic fee (2% gross + 18% GST on fee) encapsulated in `server/src/services/finance/syntheticFeePolicy.js`.
+- Engine Version: `RECON_ENGINE_V1`.
 - AI / Deterministic Separation: Gemini AI cannot perform primary matching or classification.
 
 ## Financial Safety Rules

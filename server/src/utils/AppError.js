@@ -21,6 +21,10 @@ export class AppError extends Error {
     return new AppError(message, 400, "BAD_REQUEST", details);
   }
 
+  static conflict(message = "Resource state conflict", details = null) {
+    return new AppError(message, 409, "CONFLICT", details);
+  }
+
   static rateLimited(message = "Too many requests, please try again later", details = null) {
     return new AppError(message, 429, "RATE_LIMITED", details);
   }

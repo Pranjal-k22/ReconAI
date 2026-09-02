@@ -39,16 +39,49 @@
 - [x] AuditLog (`server/src/models/AuditLog.js`)
 - [x] GroundTruth (`server/src/models/GroundTruth.js`)
 
-### Reconciliation Engine
+### Reconciliation Engine & Orchestration
 - [x] Data Normalization Service (`server/src/services/reconciliation/normalizationService.js`)
 - [x] Candidate Matcher & Evidence Hierarchy (`server/src/services/reconciliation/candidateMatcher.js`)
 - [x] Deterministic Anomaly Classifier (`server/src/services/reconciliation/anomalyClassifier.js`)
 - [x] Deterministic Confidence Engine (`server/src/services/reconciliation/confidenceEngine.js`)
 - [x] Pure Reconciliation Matching Engine (`server/src/services/reconciliation/matchingEngine.js`)
 - [x] Synthetic Fee Policy (`server/src/services/finance/syntheticFeePolicy.js`)
-- [x] GroundTruth Architecture Isolation Guard (`server/tests/reconciliation/groundTruthIsolationGuard.test.js`)
-- [x] 120-Scenario Benchmark Compatibility Test (`server/tests/reconciliation/benchmarkCompatibility.test.js` - 100% 120/120 match rate)
-- [ ] Safety Gate & Auto-reconciliation Persistence Policy
+- [x] Reconciliation Run Batch Orchestration (`server/src/services/reconciliation/reconciliationService.js`)
+- [x] ReconciliationResult Bulk Persistence & Compound Index (`runId + merchantOrderId`)
+- [x] Operational Metrics & Financial Totals (`server/src/services/reconciliation/metricsService.js`)
+- [x] Benchmark Evaluation Service (`server/src/services/evaluation/evaluationService.js`)
+- [x] Accuracy / Precision / Recall / F1 & Per-Class Breakdown Calculation
+- [x] Reconciliation REST APIs (`POST /runs`, `GET /runs`, `GET /runs/:runId`, `GET /runs/:runId/results`, `GET /runs/:runId/metrics`, `GET /runs/:runId/evaluation`)
+- [x] Zod Run Creation Validator (`server/src/validators/reconciliationValidators.js`)
+- [x] Safety Gate & Scenario Grouping Isolation Tests (`server/tests/reconciliation/safetyGate.test.js`)
+- [x] Extended GroundTruth Architecture Isolation Guard (`server/tests/reconciliation/groundTruthIsolationGuard.test.js`)
+- [x] Evaluation & False-Positive Test Suite (`server/tests/evaluation/evaluationService.test.js`)
+- [x] Supertest API Integration Test Suite (`server/tests/routes/reconciliationRoutes.test.js`)
+- **[x] Live MongoDB Atlas Batch Run Executed & Verified (120 results persisted, 80 MATCHED, 40 OPEN, 100.00% accuracy)
+- [x] Evaluation Methodology Documentation (`docs/EVALUATION.md`)
+
+### Exception Management, Human Review & Safety Gates
+- [x] Safety Gate Policy Service (`server/src/services/exceptions/safetyGateService.js`)
+- [x] Deterministic Severity & Financial Impact Service (`server/src/services/exceptions/severityService.js`)
+- [x] Exception Case Management Service (`server/src/services/exceptions/exceptionService.js`)
+- [x] Compound Unique Index on ExceptionCase (`runId + resultId`)
+- [x] Human Review Service (`server/src/services/exceptions/humanReviewService.js`)
+- [x] Deterministic Classification Preservation Invariant (Original classification NEVER altered by human decisions)
+- [x] Exception REST APIs (`GET /exceptions`, `GET /exceptions/summary`, `GET /exceptions/:id`, `PATCH /exceptions/:id/decision`)
+- [x] Zod Human Decision Request Validator (`server/src/validators/exceptionValidators.js`)
+- [x] Exception Service & Human Review Test Suites (`server/tests/exceptions/`)
+
+### Audit Trail System
+- [x] Central Audit Service (`server/src/services/audit/auditService.js`)
+- [x] Recursive Secret & Credential Sanitization (`[REDACTED]`)
+- [x] Reconciliation Run Batch Audit Integration (`RECONCILIATION_STARTED`, `MATCH_CREATED`, `EXCEPTION_CREATED`, `RECONCILIATION_COMPLETED`)
+- [x] Human Decision Audit Logging (`HUMAN_DECISION`)
+- [x] Audit Query REST APIs (`GET /audit`, `GET /audit/:eventId`)
+- [x] Application Append-Only Audit Guarantee (No UPDATE/DELETE endpoints)
+- [x] Audit Test Suite (`server/tests/audit/auditService.test.js`, `server/tests/routes/auditRoutes.test.js`)
+- [x] Live Step 8 Audited Benchmark Execution on MongoDB Atlas (120 Results, 40 ExceptionCases, 122 Audit Logs)
+- [x] Live Human Review Demonstration Executed (`ORD-000116`, `KEEP_EXCEPTION`, classification `AMBIGUOUS` preserved)
+- [x] Exception Workflow Documentation (`docs/EXCEPTION_WORKFLOW.md`)
 
 ### AI Service
 - [ ] Gemini API Integration & Advisory Exception Investigator

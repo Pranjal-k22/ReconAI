@@ -88,13 +88,16 @@ ReconciliationRun (runId)
 ReconciliationResult (resultId, linked to runId)
      │
      ▼
-ExceptionCase (exceptionId, linked to runId & resultId)
-
-
-All Important System Actions
+Safety Gate (Allowed Auto Resolution vs Locked Exception)
      │
      ▼
-AuditLog (eventId, append-only)
+ExceptionCase (exceptionId, linked to runId & resultId)
+     │
+     ▼
+Human Review & Decision (APPROVE_MATCH / KEEP_EXCEPTION / MARK_RESOLVED)
+     │
+     ▼
+AuditLog (eventId, append-only centralized audit trail)
 
 
 GroundTruth (datasetVersion + merchantOrderId)

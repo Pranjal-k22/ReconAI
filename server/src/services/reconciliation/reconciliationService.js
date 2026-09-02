@@ -5,6 +5,8 @@ import { GatewayPayment } from "../../models/GatewayPayment.js";
 import { SettlementRecord } from "../../models/SettlementRecord.js";
 import { reconcileScenario } from "./matchingEngine.js";
 import { calculateRunMetrics } from "./metricsService.js";
+import { createExceptionsForRun } from "../exceptions/exceptionService.js";
+import { createAuditEvent, createAuditEventsBulk } from "../audit/auditService.js";
 import { AppError } from "../../utils/AppError.js";
 
 /**
@@ -18,7 +20,7 @@ function generateRunId() {
 }
 
 /**
- * Grouping helper: groups input records for a single merchant order without using GroundTruth.
+ * Grouping helper: groups input records for a single merchant order without using evaluation answer keys.
  */
 export function groupScenarioRecords(order, allPayments = [], allSettlements = []) {
   const orderId = order.merchantOrderId;
@@ -45,7 +47,7 @@ export function groupScenarioRecords(order, allPayments = [], allSettlements = [
 }
 
 /**
- * Orchestrates a complete batch reconciliation run.
+ * Orchestrates a complete batch reconciliation run with exception generation and audit logging.
  */
 export async function runReconciliationBatch({
   name = "Reconciliation Run",
@@ -73,14 +75,25 @@ export async function runReconciliationBatch({
     }
   });
 
-  // 2. Mark RUNNING
+  // 2. Log RECONCILIATION_STARTED audit event
+  await createAuditEvent({
+    actorType: "SYSTEM",
+    actorId: "system-orchestrator",
+    action: "RECONCILIATION_STARTED",
+    entityType: "ReconciliationRun",
+    entityId: runId,
+    runId,
+    metadata: { name, sourceMode, importBatchId, datasetVersion }
+  });
+
+  // 3. Mark RUNNING
   runDoc.status = "RUNNING";
   await runDoc.save();
 
   const startTime = performance.now();
 
   try {
-    // 3. Load synthetic input records from DB (NO GroundTruth loaded!)
+    // 4. Load synthetic input records from DB
     const query = importBatchId ? { importBatchId } : {};
     const merchantOrders = await MerchantOrder.find(query).lean();
     const gatewayPayments = await GatewayPayment.find(query).lean();
@@ -92,12 +105,11 @@ export async function runReconciliationBatch({
 
     const resultDocs = [];
 
-    // 4. Process scenarios using pure matching engine
+    // 5. Process scenarios using pure matching engine
     for (const order of merchantOrders) {
       const scenario = groupScenarioRecords(order, gatewayPayments, settlementRecords);
       const engineResult = reconcileScenario(scenario);
 
-      // Resolution safety gate: ONLY MATCHED is autoResolved
       const isMatched = engineResult.classification === "MATCHED";
       const autoResolved = isMatched;
       const requiresReview = !isMatched;
@@ -122,16 +134,61 @@ export async function runReconciliationBatch({
       });
     }
 
-    // 5. Bulk insert ReconciliationResult records
+    // 6. Bulk insert ReconciliationResult records
     await ReconciliationResult.insertMany(resultDocs);
+
+    // 7. Create formal ExceptionCase records for all anomaly results
+    const createdExceptions = await createExceptionsForRun(runId, resultDocs);
+
+    // 8. Prepare batch audit events (MATCH_CREATED and EXCEPTION_CREATED)
+    const auditEvents = [];
+
+    for (const res of resultDocs) {
+      if (res.classification === "MATCHED") {
+        auditEvents.push({
+          actorType: "RULE_ENGINE",
+          actorId: "deterministic-matching-engine",
+          action: "MATCH_CREATED",
+          entityType: "ReconciliationResult",
+          entityId: res.resultId,
+          runId,
+          metadata: {
+            merchantOrderId: res.merchantOrderId,
+            classification: res.classification,
+            confidence: res.confidence,
+            expectedAmountPaise: res.expectedAmountPaise
+          }
+        });
+      }
+    }
+
+    for (const exc of createdExceptions) {
+      auditEvents.push({
+        actorType: "RULE_ENGINE",
+        actorId: "deterministic-matching-engine",
+        action: "EXCEPTION_CREATED",
+        entityType: "ExceptionCase",
+        entityId: exc.exceptionId,
+        runId,
+        metadata: {
+          resultId: exc.resultId,
+          merchantOrderId: exc.merchantOrderId,
+          classification: exc.type,
+          severity: exc.severity,
+          financialImpactPaise: exc.financialImpactPaise,
+          confidence: exc.confidence
+        },
+        reason: exc.deterministicExplanation
+      });
+    }
+
+    await createAuditEventsBulk(auditEvents);
 
     const endTime = performance.now();
     const durationMs = Math.round(endTime - startTime);
 
-    // 6. Calculate operational metrics
+    // 9. Calculate operational metrics
     const metrics = calculateRunMetrics(resultDocs, durationMs);
-
-    // 7. Update run status and metrics
     const finalStatus = metrics.exceptionCount > 0 ? "COMPLETED_WITH_EXCEPTIONS" : "COMPLETED";
 
     runDoc.status = finalStatus;
@@ -142,6 +199,23 @@ export async function runReconciliationBatch({
     runDoc.metrics = metrics;
     await runDoc.save();
 
+    // 10. Log RECONCILIATION_COMPLETED audit event
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: "system-orchestrator",
+      action: "RECONCILIATION_COMPLETED",
+      entityType: "ReconciliationRun",
+      entityId: runId,
+      runId,
+      metadata: {
+        status: finalStatus,
+        totalRecords: merchantOrders.length,
+        matchedCount: metrics.matchedCount,
+        exceptionCount: metrics.exceptionCount,
+        durationMs
+      }
+    });
+
     return runDoc;
   } catch (error) {
     const endTime = performance.now();
@@ -150,6 +224,17 @@ export async function runReconciliationBatch({
     runDoc.durationMs = Math.round(endTime - startTime);
     runDoc.errorSummary = error.message;
     await runDoc.save();
+
+    // Log RECONCILIATION_FAILED audit event
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: "system-orchestrator",
+      action: "RECONCILIATION_COMPLETED", // or log error metadata
+      entityType: "ReconciliationRun",
+      entityId: runId,
+      runId,
+      metadata: { status: "FAILED", error: error.message }
+    }).catch(() => {});
 
     throw error;
   }

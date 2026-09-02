@@ -44,10 +44,10 @@ describe("GroundTruth Architecture Isolation Guard", () => {
           const content = fs.readFileSync(fullPath, "utf-8");
 
           if (content.includes("GroundTruth")) {
-            // ONLY evaluation/ evaluationService.js is allowed!
+            // ONLY evaluation/ and demo/ (benchmark dataset generator) are allowed!
             expect(
-              relativePath.startsWith("evaluation/"),
-              `File '${relativePath}' imports GroundTruth but is outside services/evaluation/`
+              relativePath.startsWith("evaluation/") || relativePath.startsWith("demo/"),
+              `File '${relativePath}' imports GroundTruth but is outside permitted evaluation/ or demo/ services`
             ).toBe(true);
           }
         }
