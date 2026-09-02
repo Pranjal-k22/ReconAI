@@ -118,8 +118,16 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 - Human review decisions preserve the original deterministic classification for auditability.
 - Primary hackathon demo path: Dashboard -> Run -> Exceptions -> ORD-000116 -> AI -> Human Review -> Audit -> Evaluation.
 
+## Submission Readiness & Verification
+- Project Status: Step 12 Completed — Final QA, deployment readiness, and documentation overhaul complete.
+- Test Baseline: 170/170 Vitest unit/integration tests passing across 41 test files.
+- Frontend Build: Production bundle verified (`npm run build` passing with 0 errors). SPA routing rewrite configured (`client/vercel.json`).
+- Pre-Deployment Benchmark: Run `RUN-20260902122249-2EZ2` verified with 120 processed scenarios, 80 MATCHED, 40 Exceptions, 100% GroundTruth accuracy, ₹10,03,095.82 total processed, ₹7,17,020.00 auto-reconciled, ₹2,86,075.82 under review. Sum invariant verified (`auto + review = total`).
+- Hackathon Deliverables: Complete documentation package in `docs/` (`DEMO_SCRIPT.md`, `JUDGING_CRITERIA.md`, `SUBMISSION_CHECKLIST.md`, `API.md`, `TESTING.md`, `PITCH.md`).
+
 ## Critical Notes For Future Agents
 - React uses JavaScript (JSX), not TypeScript.
 - Money is ALWAYS integer paise in backend models and API payloads.
 - Always check `memory.md`, `implemented.md`, `folderstr.md`, and `docs/PROGRESS.md` before making changes.
+
 

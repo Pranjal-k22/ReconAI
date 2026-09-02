@@ -52,6 +52,7 @@ reconai/
 │   ├── .env.example
 │   ├── index.html
 │   ├── package.json
+│   ├── vercel.json
 │   └── vite.config.js
 │
 ├── server/
@@ -63,6 +64,7 @@ reconai/
 │   │       ├── merchant_orders.csv
 │   │       └── settlements.csv
 │   ├── scripts/
+│   │   ├── executeFreshRun.js
 │   │   ├── generateDemoData.js
 │   │   ├── resetDemo.js
 │   │   ├── seedDemoData.js
@@ -202,13 +204,19 @@ reconai/
 │
 ├── docs/
 │   ├── AI_INVESTIGATION.md
+│   ├── API.md
 │   ├── ARCHITECTURE.md
 │   ├── DATASET.md
+│   ├── DEMO_SCRIPT.md
 │   ├── EVALUATION.md
 │   ├── EXCEPTION_WORKFLOW.md
+│   ├── JUDGING_CRITERIA.md
+│   ├── PITCH.md
 │   ├── PROGRESS.md
 │   ├── RAZORPAY_INTEGRATION.md
-│   └── RECONCILIATION_ENGINE.md
+│   ├── RECONCILIATION_ENGINE.md
+│   ├── SUBMISSION_CHECKLIST.md
+│   └── TESTING.md
 ├── .gitignore
 ├── folderstr.md
 ├── implemented.md
