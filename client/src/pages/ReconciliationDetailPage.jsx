@@ -103,8 +103,8 @@ export default function ReconciliationDetailPage() {
     return <ErrorState message={error} onRetry={fetchRunDetail} />;
   }
 
-  const totalValue = metrics?.financialTotalsPaise?.totalExpectedOrderPaise ?? null;
-  const reviewValue = metrics?.financialTotalsPaise?.valueUnderReviewPaise ?? null;
+  const totalValue = metrics?.totalAmountProcessedPaise ?? null;
+  const reviewValue = metrics?.amountUnderReviewPaise ?? null;
 
   return (
     <div className="space-y-6">
@@ -163,7 +163,7 @@ export default function ReconciliationDetailPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           title="Processed Records"
-          value={metrics?.totalProcessed ?? run?.processedRecords ?? 0}
+          value={metrics?.processedScenarios ?? metrics?.totalScenarios ?? run?.processedRecords ?? 0}
           color="indigo"
         />
         <MetricCard
@@ -173,7 +173,7 @@ export default function ReconciliationDetailPage() {
         />
         <MetricCard
           title="Needs Review"
-          value={metrics?.needsHumanReviewCount ?? run?.needsHumanReviewCount ?? 0}
+          value={metrics?.manualReviewCount ?? metrics?.exceptionCount ?? run?.needsHumanReviewCount ?? 0}
           color="amber"
         />
         <MetricCard

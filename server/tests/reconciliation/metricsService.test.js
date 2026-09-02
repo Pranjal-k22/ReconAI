@@ -47,4 +47,35 @@ describe("metricsService", () => {
     expect(metrics.throughputRecordsPerSecond).toBe(0);
     expect(metrics.totalAmountProcessedPaise).toBe(0);
   });
+
+  it("strictly computes financial totals from MerchantOrder values (expectedAmountPaise) and verifies sum invariant", () => {
+    const mockResults = [
+      {
+        classification: "MATCHED",
+        autoResolved: true,
+        requiresReview: false,
+        expectedAmountPaise: 100000,
+        actualAmountPaise: 100000,
+        differencePaise: 0
+      },
+      {
+        classification: "AMOUNT_MISMATCH",
+        autoResolved: false,
+        requiresReview: true,
+        expectedAmountPaise: 200000,
+        actualAmountPaise: 150000, // actual payment amount differs from order amount
+        differencePaise: -50000
+      }
+    ];
+
+    const metrics = calculateRunMetrics(mockResults, 100);
+
+    // Expected: order 1 (100000) + order 2 (200000) = 300000
+    // Auto: order 1 = 100000
+    // Review: order 2 = 200000 (NOT actual 150000)
+    expect(metrics.totalAmountProcessedPaise).toBe(300000);
+    expect(metrics.autoReconciledAmountPaise).toBe(100000);
+    expect(metrics.amountUnderReviewPaise).toBe(200000);
+    expect(metrics.autoReconciledAmountPaise + metrics.amountUnderReviewPaise).toBe(metrics.totalAmountProcessedPaise);
+  });
 });

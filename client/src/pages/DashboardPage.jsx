@@ -59,11 +59,12 @@ export default function DashboardPage() {
       const run = runs[0] || null;
       setLatestRun(run);
 
-      if (run) {
-        // 2. Fetch metrics & evaluation for latest run
+      if (run && run.runId) {
+        const targetRunId = run.runId;
+        // 2. Fetch metrics & evaluation for latest run using targetRunId
         const [mRes, eRes, excRes] = await Promise.allSettled([
-          getRunMetrics(run.runId),
-          getRunEvaluation(run.runId),
+          getRunMetrics(targetRunId),
+          getRunEvaluation(targetRunId),
           getExceptionSummary()
         ]);
 
@@ -111,15 +112,15 @@ export default function DashboardPage() {
     return <ErrorState title="Dashboard Error" message={error} onRetry={loadDashboardData} />;
   }
 
-  // Derived values from backend metrics
-  const totalProcessed = metrics?.totalProcessed ?? latestRun?.processedRecords ?? 0;
+  // Derived values from backend metrics (matching backend metricsService schema)
+  const totalProcessed = metrics?.processedScenarios ?? metrics?.totalScenarios ?? latestRun?.processedRecords ?? 0;
   const autoReconciled = metrics?.autoReconciledCount ?? 0;
-  const needsReview = metrics?.needsHumanReviewCount ?? 0;
+  const needsReview = metrics?.manualReviewCount ?? metrics?.exceptionCount ?? 0;
   const autoRate = metrics?.autoReconciliationRate ?? 0;
 
-  const totalValuePaise = metrics?.financialTotalsPaise?.totalExpectedOrderPaise ?? null;
-  const autoValuePaise = metrics?.financialTotalsPaise?.autoReconciledValuePaise ?? null;
-  const reviewValuePaise = metrics?.financialTotalsPaise?.valueUnderReviewPaise ?? null;
+  const totalValuePaise = metrics?.totalAmountProcessedPaise ?? null;
+  const autoValuePaise = metrics?.autoReconciledAmountPaise ?? null;
+  const reviewValuePaise = metrics?.amountUnderReviewPaise ?? null;
 
   // Accuracy from evaluation
   const accuracyPct = evaluation?.overallMetrics?.accuracy ?? 1.0;
@@ -128,7 +129,7 @@ export default function DashboardPage() {
   const f1Pct = evaluation?.overallMetrics?.f1Score ?? 1.0;
 
   // Chart data formatting
-  const distributionData = Object.entries(metrics?.byClassification || {}).map(([key, value]) => ({
+  const distributionData = Object.entries(metrics?.classificationBreakdown || metrics?.byClassification || {}).map(([key, value]) => ({
     name: formatEnumLabel(key),
     count: typeof value === "number" ? value : value?.count || 0
   }));
