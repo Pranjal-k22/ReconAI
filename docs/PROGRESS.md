@@ -1,10 +1,10 @@
 # ReconAI Development Progress
 
 ## Project Status
-Step 9 Completed — Implemented Gemini Advisory Exception Investigator with safe structured output validation (Zod schema `aiAnalysisOutputSchema`), provider infrastructure service (`geminiService.js` with `@google/genai` SDK and 15s timeout), business investigator (`exceptionInvestigator.js`), and deterministic fallback generator (`fallbackExplanation.js`). Enforced strict safety boundaries: Gemini is advisory only and NEVER alters financial truth, classification, confidence, severity, status, or human decisions. Enforced prompt injection safety boundary (all fields treated as untrusted data), advisory next-step allow-list (`ALLOWED_RECOMMENDED_NEXT_STEPS`), server-side safety overrides, and append-only audit event logging (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`). Built investigation REST API (`POST /api/exceptions/:exceptionId/investigate`). Verified pure engine separation (zero AI calls during batch runs) and primary ambiguous scenario `ORD-000116` state preservation. Documented architecture in `docs/AI_INVESTIGATION.md`. 150/150 Vitest tests passing across 35 test files.
+Step 10 Completed — Implemented Razorpay Test Mode Read-Only Integration Adapter (`razorpayClient.js`, `razorpayNormalizer.js`, `paymentSyncService.js`, `settlementSyncService.js`, `razorpayStatusService.js`). Enforced strict read-only safety (GET requests only; zero money-moving operations), `RAZORPAY_MODE=test` safety guard blocking `rzp_live_` keys, Basic Auth credential protection, paginated payment fetching (`/v1/payments`), customer PII stripping (`email`, `contact`, `vpa`, `card` payload stripped), deterministic settlement record IDs (`RZPREC-hash`), signed net amount calculations (`credit` vs `debit`), and bulk upsert idempotency (`bulkWrite`). Built sync REST APIs (`POST /api/razorpay/sync/payments`, `POST /api/razorpay/sync/settlements`) and capability status endpoint (`GET /api/integrations/status`). Enforced audit trail logging (`RAZORPAY_SYNC_STARTED`, `RAZORPAY_SYNC_COMPLETED`, `RAZORPAY_SYNC_FAILED`). Documented architecture in `docs/RAZORPAY_INTEGRATION.md`. 169/169 Vitest tests passing across 41 test files.
 
 ## Current Step
-Step 9: Gemini Advisory Exception Investigator with Safe Structured Output & Deterministic Fallback.
+Step 10: Razorpay Test Mode Read-Only Integration, Payment Sync, Settlement Recon Sync, and Graceful Degradation.
 
 ## Completed Steps
 - [x] Initialized mandatory project memory context (`memory.md`, `implemented.md`, `folderstr.md`, `docs/PROGRESS.md`).
@@ -52,10 +52,18 @@ Step 9: Gemini Advisory Exception Investigator with Safe Structured Output & Det
 - [x] Built Investigation REST API (`POST /api/exceptions/:exceptionId/investigate`).
 - [x] Implemented AI Audit Integration (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`).
 - [x] Documented AI Investigator architecture and safety policy in `docs/AI_INVESTIGATION.md`.
+- [x] Implemented Razorpay Test Mode Client (`razorpayClient.js`) & Safety Guard (`validateTestModeSafety()`).
+- [x] Implemented Razorpay Normalizer & PII Stripper (`razorpayNormalizer.js`).
+- [x] Implemented Payment Sync Service (`paymentSyncService.js`) with count/skip pagination and bulk upsert.
+- [x] Implemented Settlement Recon Sync Service (`settlementSyncService.js`) with deterministic line item IDs (`RZPREC-hash`).
+- [x] Implemented Integration Status Service (`razorpayStatusService.js`).
+- [x] Built Sync REST APIs (`POST /api/razorpay/sync/payments`, `POST /api/razorpay/sync/settlements`, `GET /api/integrations/status`).
+- [x] Implemented Razorpay Audit Logging (`RAZORPAY_SYNC_STARTED`, `RAZORPAY_SYNC_COMPLETED`, `RAZORPAY_SYNC_FAILED`).
+- [x] Built Razorpay Isolation Architecture Guard (`razorpayIsolationGuard.test.js`).
+- [x] Documented Razorpay Read-Only Integration Architecture (`docs/RAZORPAY_INTEGRATION.md`).
 
 ## Pending Steps
-- [ ] Step 10: Implement CSV Ingestion Services & Razorpay Sync Adapter.
-- [ ] Step 11: Build React UI Pages (Dashboard, Runs, Exceptions, AI Investigation, Audit Trail, Evaluation Metrics).
+- [ ] Step 11: Implement CSV Ingestion Services & Build React UI Pages.
 - [ ] Step 12: End-to-End Testing, Accuracy Metrics Verification, and Demo Run.
 
 ## Known Issues
@@ -71,13 +79,16 @@ None.
 - **Classification Preservation Invariant**: Human review decisions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) update workflow status fields (`resolutionStatus`, `requiresReview`), but NEVER change original `ReconciliationResult.classification`.
 - **Centralized Append-Only Audit Trail**: All audit events pass through `auditService.js` with recursive credential sanitization. No UPDATE/DELETE routes exist for `/api/audit`.
 - **Advisory AI Boundary & Fallback Semantics**: Gemini AI cannot perform primary matching or classification. AI investigation is triggered on-demand per exception, uses minimal untrusted evidence payloads, strictly rejects forbidden actions via Zod, and falls back to deterministic explanations without workflow interruption.
+- **Razorpay Read-Only & Safety Guard**: Razorpay integration is strictly read-only and Test Mode only (`RAZORPAY_MODE=test`). `rzp_live_` keys trigger safety blocks. Customer PII is stripped. Sync never automatically launches reconciliation runs or alters synthetic benchmark data.
 
 ## Last Verification
-- Vitest Test Suite: PASS (35/35 test files passed, 150/150 tests passed).
-- AI Separation Invariant: VERIFIED PASS (`aiSeparation.test.js` proves zero AI calls during primary matching).
-- Strict Financial Truth Invariant: VERIFIED PASS (`exceptionInvestigator.test.js` proves protected fields cannot be mutated by AI).
-- Deterministic Fallback & Quota Degradation: VERIFIED PASS.
-- Prompt Injection Safety Boundary: VERIFIED PASS.
+- Vitest Test Suite: PASS (41/41 test files passed, 169/169 tests passed).
+- Razorpay Isolation Guard: VERIFIED PASS (`razorpayIsolationGuard.test.js` proves zero imports of `GroundTruth`, `syntheticFeePolicy`, or `matchingEngine`).
+- PII Stripping Invariant: VERIFIED PASS (`razorpayNormalizer.test.js` proves email, phone, VPA, and card payloads are stripped).
+- Merchant ID Safety Invariant: VERIFIED PASS (`razorpayNormalizer.test.js` proves Razorpay `order_id` is NOT automatically set as `merchantOrderId`).
+- Signed Net Amount & Deterministic Settlement ID: VERIFIED PASS.
+- Test Mode Safety Guard: VERIFIED PASS (`validateTestModeSafety()` blocks `rzp_live_` keys).
+- AI Separation Invariant: VERIFIED PASS (`aiSeparation.test.js`).
 - Live MongoDB Atlas Audited Run Executed: PASS (runId: `RUN-20260902113400-FA3I`, 120 results, 40 ExceptionCases, 122 Audit Logs).
 - Benchmark Accuracy: 120/120 (100.00%).
 - GroundTruth Isolation Guard: VERIFIED PASS.

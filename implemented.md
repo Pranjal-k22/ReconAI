@@ -98,8 +98,25 @@
 - [x] AI Investigation Architecture Documentation (`docs/AI_INVESTIGATION.md`)
 
 ### Razorpay & Import Services
+- [x] Razorpay Test Mode configuration (`server/src/config/env.js`)
+- [x] Test/live credential safety guard (`validateTestModeSafety()`)
+- [x] Razorpay Basic Auth HTTP client (`server/src/services/razorpay/razorpayClient.js`)
+- [x] Payment pagination & sync service (`server/src/services/razorpay/paymentSyncService.js`)
+- [x] Payment normalization & PII stripping (`server/src/services/razorpay/razorpayNormalizer.js`)
+- [x] Payment upsert & idempotency by `gatewayPaymentId`
+- [x] Settlement recon pagination & sync service (`server/src/services/razorpay/settlementSyncService.js`)
+- [x] Settlement normalization & signed net amount calculation (`credit` / `debit` convention)
+- [x] Deterministic settlement record IDs (`RZPREC-hash`)
+- [x] Settlement upsert & idempotency by `settlementRecordId`
+- [x] PII data minimization (`email`, `contact`, `vpa`, `card` payload stripped)
+- [x] Razorpay sync audit events (`RAZORPAY_SYNC_STARTED`, `RAZORPAY_SYNC_COMPLETED`, `RAZORPAY_SYNC_FAILED`)
+- [x] Razorpay payment sync API (`POST /api/razorpay/sync/payments`)
+- [x] Razorpay settlement sync API (`POST /api/razorpay/sync/settlements`)
+- [x] Integration status API (`GET /api/integrations/status`)
+- [x] Graceful Razorpay failure handling & degradation
+- [ ] Live Razorpay Test Mode API verification — Credentials unavailable/not tested
+- [x] Razorpay Integration Documentation (`docs/RAZORPAY_INTEGRATION.md`)
 - [ ] CSV Importers (Orders, Payments, Settlements)
-- [ ] Razorpay Sync Service
 
 ## Frontend
 

@@ -150,9 +150,13 @@ ReconAI features a deterministic benchmark dataset of 120 synthetic financial sc
 - **3** `AMBIGUOUS`
 - **2** `INVALID_DATA`
 
-### Razorpay Adapter
-- Acts as a live/test synchronization adapter to fetch live test-mode payments and settlements.
-- Network or API failures in the Razorpay adapter fall back gracefully without disrupting the synthetic benchmark.
+### Razorpay Test Mode Read-Only Adapter
+- **Read-Only Ingestion**: Operates as a server-side read-only synchronization adapter fetching payments (`/v1/payments`) and settlement recon line items (`/v1/settlements/recon/combined`) from Razorpay Test Mode.
+- **Safety Guard**: `RAZORPAY_MODE=test` safety guard blocks synchronization if a live key (`rzp_live_...`) is configured.
+- **Data Minimization**: Automatically strips customer PII (`email`, `contact`, `vpa`, `card` payload) before saving to MongoDB `rawData`.
+- **Signed Net Amount**: Calculates net payouts based on provider debit/credit evidence.
+- **Idempotency**: Bulk upserts records using globally unique provider payment IDs and deterministic hash-based settlement record IDs (`RZPREC-hash`).
+- **Graceful Failure**: Network or API failures in the Razorpay adapter log `RAZORPAY_SYNC_FAILED` audit events without disrupting synthetic benchmark execution or system health.
 
 ---
 

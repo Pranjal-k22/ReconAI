@@ -62,6 +62,18 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
   - AI cannot modify `classification`, `confidence`, `severity`, `financialImpactPaise`, `status`, `humanDecision`, `requiresReview`, or `resolutionStatus`.
   - AI investigation logs append-only audit events (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`).
   - Primary ambiguous scenario `ORD-000116` remains human-controlled (`AMBIGUOUS`, `confidence = 0.45`, `status = UNDER_REVIEW`, `humanDecision = KEEP_EXCEPTION`) regardless of AI investigation output.
+- **Razorpay Test Mode Read-Only Adapter Boundary**:
+  - Razorpay integration is strictly Test Mode (`RAZORPAY_MODE=test`) and read-only (GET requests only).
+  - Safety guard `validateTestModeSafety()` blocks synchronization if a live Key ID (`rzp_live_...`) is configured.
+  - Razorpay credentials (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`) are optional during server startup and strictly server-side (Basic Auth). Secrets are never exposed to client or logs.
+  - Payments fetched from `/v1/payments` with count/skip pagination (max 1000 sync limit).
+  - Customer PII (`email`, `contact`, `vpa`, `card_id`, `card` payload) is stripped prior to saving in `rawData`.
+  - Razorpay `order_id` is preserved as provider metadata; `GatewayPayment.merchantOrderId` is left `null` unless explicit safe mapping exists.
+  - Settlement recon fetched from `/v1/settlements/recon/combined`.
+  - Settlement records use deterministic IDs (`RZPREC-hash`) and signed net amount conventions (`credit > 0` positive net, `debit > 0` negative net).
+  - Razorpay records use actual provider fee/tax values and NEVER use `syntheticFeePolicy.js`.
+  - Razorpay synchronization does NOT automatically trigger reconciliation execution.
+  - Razorpay failure logs `RAZORPAY_SYNC_FAILED` audit events without affecting synthetic benchmark runs.
 
 ## Financial Safety Rules
 - All money amounts stored as integer paise (1 INR = 100 paise) to prevent floating-point rounding errors.

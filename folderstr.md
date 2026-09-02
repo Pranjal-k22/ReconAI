@@ -45,6 +45,7 @@ reconai/
 │   │   │   ├── auditController.js
 │   │   │   ├── exceptionController.js
 │   │   │   ├── healthController.js
+│   │   │   ├── razorpayController.js
 │   │   │   └── reconciliationController.js
 │   │   ├── middleware/
 │   │   │   ├── errorHandler.js
@@ -65,6 +66,8 @@ reconai/
 │   │   │   ├── auditRoutes.js
 │   │   │   ├── exceptionRoutes.js
 │   │   │   ├── healthRoutes.js
+│   │   │   ├── integrationRoutes.js
+│   │   │   ├── razorpayRoutes.js
 │   │   │   └── reconciliationRoutes.js
 │   │   ├── services/
 │   │   │   ├── ai/
@@ -87,6 +90,12 @@ reconai/
 │   │   │   │   └── severityService.js
 │   │   │   ├── finance/
 │   │   │   │   └── syntheticFeePolicy.js
+│   │   │   ├── razorpay/
+│   │   │   │   ├── paymentSyncService.js
+│   │   │   │   ├── razorpayClient.js
+│   │   │   │   ├── razorpayNormalizer.js
+│   │   │   │   ├── razorpayStatusService.js
+│   │   │   │   └── settlementSyncService.js
 │   │   │   └── reconciliation/
 │   │   │       ├── anomalyClassifier.js
 │   │   │       ├── candidateMatcher.js
@@ -101,6 +110,7 @@ reconai/
 │   │   │   └── money.js
 │   │   ├── validators/
 │   │   │   ├── exceptionValidators.js
+│   │   │   ├── razorpayValidators.js
 │   │   │   └── reconciliationValidators.js
 │   │   ├── app.js
 │   │   └── server.js
@@ -129,6 +139,12 @@ reconai/
 │   │   │   ├── merchantOrder.test.js
 │   │   │   ├── reconciliationModels.test.js
 │   │   │   └── settlementRecord.test.js
+│   │   ├── razorpay/
+│   │   │   ├── paymentSyncService.test.js
+│   │   │   ├── razorpayClient.test.js
+│   │   │   ├── razorpayIsolationGuard.test.js
+│   │   │   ├── razorpayNormalizer.test.js
+│   │   │   └── settlementSyncService.test.js
 │   │   ├── reconciliation/
 │   │   │   ├── aiSeparation.test.js
 │   │   │   ├── benchmarkCompatibility.test.js
@@ -143,6 +159,7 @@ reconai/
 │   │   │   ├── aiInvestigationRoutes.test.js
 │   │   │   ├── auditRoutes.test.js
 │   │   │   ├── exceptionRoutes.test.js
+│   │   │   ├── razorpayRoutes.test.js
 │   │   │   └── reconciliationRoutes.test.js
 │   │   ├── envInvariant.test.js
 │   │   ├── health.test.js
@@ -158,6 +175,7 @@ reconai/
 │   ├── EVALUATION.md
 │   ├── EXCEPTION_WORKFLOW.md
 │   ├── PROGRESS.md
+│   ├── RAZORPAY_INTEGRATION.md
 │   └── RECONCILIATION_ENGINE.md
 ├── .gitignore
 ├── folderstr.md
