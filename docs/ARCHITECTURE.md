@@ -68,7 +68,52 @@ ReconAI evaluates every candidate match against a strict safety gate:
 
 ---
 
-## 3. Reconciliation Classifications & Rules Engine
+## 3. Domain Data Model & Entity Relationships
+
+```text
+MerchantOrder (merchantOrderId)
+     │
+     │ linked via merchantOrderId
+     ▼
+GatewayPayment (gatewayPaymentId)
+     │
+     │ linked via payment/entity IDs
+     ▼
+SettlementRecord (settlementRecordId, grouped by settlementId)
+
+
+ReconciliationRun (runId)
+     │
+     ▼
+ReconciliationResult (resultId, linked to runId)
+     │
+     ▼
+ExceptionCase (exceptionId, linked to runId & resultId)
+
+
+All Important System Actions
+     │
+     ▼
+AuditLog (eventId, append-only)
+
+
+GroundTruth (datasetVersion + merchantOrderId)
+     │
+     ▼
+Evaluation Benchmark Engine ONLY (Isolated from Production Reconciliation)
+```
+
+### Key Data Layer Specifications:
+- **Integer Paise Precision**: All money fields (`amountPaise`, `grossAmountPaise`, `feePaise`, `taxPaise`, `netAmountPaise`, `financialImpactPaise`, `differencePaise`) operate strictly as safe integers.
+- **Application Business Identifiers**: Entities use readable application string keys (`ORD-100001`, `pay_ABC123`, `set_rec_001`, `RUN-001`, `EXC-001`, `AUD-001`) indexed for high throughput queries.
+- **Settlement Id Granularity**: `settlementRecordId` is unique per payout line item; `settlementId` groups multiple entries belonging to one batch payout.
+- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
+- **AI / Deterministic Evidence Separation**: `deterministicExplanation` stores rule-engine proofs; `aiExplanation` stores advisory Gemini insights.
+- **Ground Truth Isolation Guard**: `GroundTruth` model is strictly prohibited from production reconciliation import paths.
+
+---
+
+## 4. Reconciliation Classifications & Rules Engine
 
 | Classification | Category | Description | Safety Action |
 | :--- | :--- | :--- | :--- |
@@ -87,7 +132,7 @@ ReconAI evaluates every candidate match against a strict safety gate:
 
 ---
 
-## 4. Ground Truth & Benchmark Dataset Strategy
+## 5. Ground Truth & Benchmark Dataset Strategy
 
 ### 120-Record Benchmark Distribution
 ReconAI features a deterministic benchmark dataset of 120 synthetic financial scenarios designed for transparent hackathon judging:
@@ -108,7 +153,7 @@ ReconAI features a deterministic benchmark dataset of 120 synthetic financial sc
 
 ---
 
-## 5. Technology Stack Specifications
+## 6. Technology Stack Specifications
 
 - **Frontend**: React.js, Vite, JavaScript, Tailwind CSS, Axios, Lucide React, Recharts.
 - **Backend**: Node.js, Express.js, JavaScript, Mongoose, Zod, Multer, Pino, Helmet, CORS.

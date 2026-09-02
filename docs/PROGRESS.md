@@ -1,40 +1,45 @@
 # ReconAI Development Progress
 
 ## Project Status
-Step 2 Completed — Monorepo initialized (`client/` React + Vite + Tailwind CSS, `server/` Node.js + Express API), Health API (`GET /api/health`) verified with Vitest + Supertest, and frontend build verified.
+Step 4 Completed — Created 8 core financial Mongoose models (`MerchantOrder`, `GatewayPayment`, `SettlementRecord`, `ReconciliationRun`, `ReconciliationResult`, `ExceptionCase`, `AuditLog`, `GroundTruth`) with integer-paise validation, safe integer checks, domain business ID indexing, difference convention (`actual - expected`), AI/deterministic explanation isolation, and evaluation isolation guard on GroundTruth. 61/61 Vitest unit and integration tests passing. Live MongoDB Atlas connection verified.
 
 ## Current Step
-Step 2: Initialize Full-Stack Project Foundation.
+Step 4: Financial MongoDB Domain Models, Validation, and Indexes.
 
 ## Completed Steps
 - [x] Initialized mandatory project memory context (`memory.md`, `implemented.md`, `folderstr.md`, `docs/PROGRESS.md`).
 - [x] Documented core project rules & financial safety principles (integer paise, deterministic matching priority, advisory AI boundaries).
 - [x] Created system architecture documentation (`docs/ARCHITECTURE.md`) and project overview (`README.md`).
-- [x] Created root monorepo `package.json` with `concurrently` scripts & root `.gitignore`.
-- [x] Initialized React + Vite + Tailwind CSS client application in `client/`.
-- [x] Initialized Node.js + Express API backend in `server/` with `GET /api/health`.
-- [x] Configured Vitest + Supertest integration test suite for backend API (`server/tests/health.test.js`).
-- [x] Verified backend test execution (100% pass) and client production build (`vite build` pass).
+- [x] Initialized React + Vite + Tailwind CSS client application (`client/`) and Node.js + Express API (`server/`).
+- [x] Created Zod schema for environment validation (`server/src/config/env.js`).
+- [x] Implemented Mongoose connection module with state tracking (`server/src/config/database.js`).
+- [x] Configured Pino logger with secret key & authorization header redaction (`server/src/config/logger.js`).
+- [x] Created operational error architecture (`AppError`, `errorHandler`, `notFoundHandler`, `asyncHandler`).
+- [x] Configured API rate limiter (`server/src/middleware/rateLimiter.js`).
+- [x] Enforced strict MongoDB startup invariant (`server/src/server.js`).
+- [x] Verified live MongoDB Atlas database connection (`reconai` database on Cluster0).
+- [x] Created 8 Mongoose models in `server/src/models/` with integer paise validation and index optimization.
+- [x] Updated system architecture documentation (`docs/ARCHITECTURE.md`) with Domain Data Model relationships.
+- [x] Built model schema unit test suite (`server/tests/models/`): 61/61 tests passed across 11 test files.
 
 ## Pending Steps
-- [ ] Step 3: Implement Backend Foundation, Database Integration (MongoDB Mongoose models) & Financial Utilities (Integer Paise logic).
-- [ ] Step 4: Implement Core Deterministic Reconciliation Engine & Anomaly Classifier.
-- [ ] Step 5: Implement Gemini AI Exception Investigator (Advisory post-exception root cause analysis).
-- [ ] Step 6: Implement CSV Ingestion Services, Razorpay Sync Adapter, and 120-Record Benchmark Data Generator.
-- [ ] Step 7: Build React UI Pages (Dashboard, Runs, Exceptions, AI Investigation, Audit Trail, Evaluation Metrics).
-- [ ] Step 8: End-to-End Testing, Accuracy Metrics Verification, and Demo Run.
+- [ ] Step 5: Implement Core Deterministic Reconciliation Engine (Data Normalization, Candidate Matcher, Matching Engine, Anomaly Classifier, Safety Gate).
+- [ ] Step 6: Implement Gemini AI Exception Investigator (Advisory post-exception root cause analysis).
+- [ ] Step 7: Implement CSV Ingestion Services, Razorpay Sync Adapter, and 120-Record Benchmark Data Generator.
+- [ ] Step 8: Build React UI Pages (Dashboard, Runs, Exceptions, AI Investigation, Audit Trail, Evaluation Metrics).
+- [ ] Step 9: End-to-End Testing, Accuracy Metrics Verification, and Demo Run.
 
 ## Known Issues
 None.
 
 ## Important Architecture Decisions
-- **Monorepo Structure**: Independent `/client` and `/server` packages orchestrated via root package scripts (`concurrently`).
-- **Express App/Server Separation**: `app.js` handles middleware and route mounting; `server.js` handles HTTP server lifecycle (enabling clean Supertest execution without port binding locks).
-- **Deterministic Priority**: Google Gemini is strictly prohibited from direct matching or mutating financial records. Primary reconciliation is 100% deterministic.
-- **Integer Paise Representation**: All financial amounts in backend models, calculators, and API contracts are stored in integer paise (e.g., ₹1,499.00 = 149900).
-- **Ground Truth Isolation**: Evaluation module reads ground truth separately; production engine never reads ground truth fields.
+- **Integer Paise Enforced**: All model monetary fields enforce `Number.isSafeInteger` and operating strictly in integer paise.
+- **Business Identifier Strategy**: Domain entity keys (`merchantOrderId`, `gatewayPaymentId`, `settlementRecordId`, `runId`, `resultId`, `exceptionId`, `eventId`) indexed independently of MongoDB `_id`.
+- **Settlement Id Distinction**: `settlementRecordId` is unique line-item key; `settlementId` groups multiple entries per payout batch.
+- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
+- **Ground Truth Isolation**: `GroundTruth` model has code-level architecture comment prohibiting import into production reconciliation services.
+- **AI / Deterministic Separation**: `deterministicExplanation` stores rule proofs; `aiExplanation` stores advisory Gemini insights.
 
 ## Last Verification
-- `npm test` in `server`: 1/1 test passed (`tests/health.test.js` - HTTP 200 `{ success: true, service: "reconai-api", status: "healthy" }`).
-- `npm run build` in `client`: Production build succeeded (`dist/` built in 36.5s).
-- `node src/server.js`: Server started cleanly on port 5000.
+- Live MongoDB Atlas Connection: VERIFIED (`reconai` database on Cluster0).
+- `npm test` in `server`: 11/11 test files passed, 61/61 tests passed.

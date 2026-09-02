@@ -3,23 +3,25 @@ import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import { logger } from "./config/logger.js";
 import app from "./app.js";
 
-// Validate environment early
-const env = validateEnv();
-
 let server = null;
 let isShuttingDown = false;
 
 const startServer = async () => {
   try {
-    // Attempt database connection if URI is available
-    if (env.MONGODB_URI) {
+    // Step 1: Validate environment variables early
+    const env = validateEnv();
+
+    // Step 2: In dev & prod, MongoDB connection is mandatory before listening
+    if (env.NODE_ENV !== "test" || env.MONGODB_URI) {
+      if (!env.MONGODB_URI) {
+        logger.error("❌ Fatal Startup Error: MONGODB_URI is required to start ReconAI API Server.");
+        process.exit(1);
+      }
       await connectDatabase(env.MONGODB_URI);
-    } else {
-      logger.warn("⚠️ MONGODB_URI not provided. Server starting without database connection.");
     }
 
+    // Step 3: Start HTTP Server only after database connection succeeds
     const PORT = env.PORT || 5000;
-
     server = app.listen(PORT, () => {
       logger.info(`🚀 ReconAI API Server running on port ${PORT} [${env.NODE_ENV}]`);
     });
@@ -43,7 +45,6 @@ const handleGracefulShutdown = async (signal) => {
       process.exit(0);
     });
 
-    // Force exit after 10 seconds if shutdown hangs
     setTimeout(() => {
       logger.error("Forced exit: Shutdown timed out.");
       process.exit(1);

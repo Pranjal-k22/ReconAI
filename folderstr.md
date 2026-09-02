@@ -25,19 +25,49 @@ reconai/
 ├── server/
 │   ├── src/
 │   │   ├── config/
+│   │   │   ├── database.js
+│   │   │   ├── env.js
+│   │   │   └── logger.js
 │   │   ├── controllers/
 │   │   │   └── healthController.js
 │   │   ├── middleware/
+│   │   │   ├── errorHandler.js
+│   │   │   ├── notFound.js
+│   │   │   └── rateLimiter.js
 │   │   ├── models/
+│   │   │   ├── helpers/
+│   │   │   │   └── validators.js
+│   │   │   ├── AuditLog.js
+│   │   │   ├── ExceptionCase.js
+│   │   │   ├── GatewayPayment.js
+│   │   │   ├── GroundTruth.js
+│   │   │   ├── MerchantOrder.js
+│   │   │   ├── ReconciliationResult.js
+│   │   │   ├── ReconciliationRun.js
+│   │   │   └── SettlementRecord.js
 │   │   ├── routes/
 │   │   │   └── healthRoutes.js
 │   │   ├── services/
 │   │   ├── utils/
+│   │   │   ├── AppError.js
+│   │   │   ├── asyncHandler.js
+│   │   │   └── money.js
 │   │   ├── validators/
 │   │   ├── app.js
 │   │   └── server.js
 │   ├── tests/
-│   │   └── health.test.js
+│   │   ├── models/
+│   │   │   ├── auditLog.test.js
+│   │   │   ├── exceptionCase.test.js
+│   │   │   ├── gatewayPayment.test.js
+│   │   │   ├── groundTruth.test.js
+│   │   │   ├── merchantOrder.test.js
+│   │   │   ├── reconciliationModels.test.js
+│   │   │   └── settlementRecord.test.js
+│   │   ├── envInvariant.test.js
+│   │   ├── health.test.js
+│   │   ├── infrastructure.test.js
+│   │   └── money.test.js
 │   ├── .env.example
 │   └── package.json
 │

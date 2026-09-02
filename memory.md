@@ -17,12 +17,22 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 
 ## Architecture Decisions
 - Full-stack monorepo structure with `client/` and `server/` managed by root `package.json` with `concurrently`.
+- Centralized Zod environment validation (`server/src/config/env.js`).
+- Database connection lifecycle management (`server/src/config/database.js`).
+- **MongoDB Startup Invariant**: MongoDB connection is mandatory before HTTP server startup in `development` and `production` modes (`MONGODB_URI` required). Server refuses to start without a valid DB connection.
+- **Test Environment Independence**: In `NODE_ENV=test`, Express `app.js` can be imported by Supertest without triggering DB connection or HTTP listener locks.
+- **Domain Data Layer**: 8 Mongoose models in `server/src/models/`: `MerchantOrder`, `GatewayPayment`, `SettlementRecord`, `ReconciliationRun`, `ReconciliationResult`, `ExceptionCase`, `AuditLog`, `GroundTruth`.
+- **Application Business Identifiers**: Strings (`ORD-100001`, `pay_ABC123`, `set_rec_001`, `RUN-001`, `RES-001`, `EXC-001`, `AUD-001`) indexed for high throughput queries.
+- **Settlement Id Granularity**: `settlementRecordId` is unique per line item; `settlementId` groups multiple line items per batch payout.
+- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
+- **Ground Truth Isolation**: `GroundTruth` model is evaluation-only and strictly isolated from production reconciliation import paths.
+- **AI / Deterministic Separation**: `deterministicExplanation` stores rule proofs; `aiExplanation` stores advisory Gemini insights.
 - Deterministic reconciliation engine runs locally in Node.js service layers.
 - Strict isolation: Gemini AI cannot perform reconciliation matching.
-- Ground truth dataset is stored separately to evaluate engine accuracy.
 
 ## Financial Safety Rules
 - All money amounts stored as integer paise (1 INR = 100 paise) to prevent floating-point rounding errors.
+- Financial arithmetic uses integer math utilities (`rupeesToPaise`, `paiseToRupees`, `formatINR`, `isValidPaise`, `safeAddPaise`, `safeSubtractPaise`).
 - Any discrepancy (amount mismatch, fee discrepancy, missing record, status conflict) triggers an Anomaly flag.
 - Financial records are immutable; audit trails record every human/AI action.
 
@@ -50,8 +60,9 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 ## Environment & Server Conventions
 - Server Port: `process.env.PORT || 5000`.
 - Client Dev Server: `http://localhost:5173`.
-- Health Endpoint: `GET /api/health` -> `{ success: true, service: "reconai-api", status: "healthy" }`.
-- Environment Variables: `PORT`, `NODE_ENV`, `CLIENT_URL`, `MONGODB_URI`, `GEMINI_API_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `DEMO_MODE`.
+- Environment Validation: Zod schema (`server/src/config/env.js`). Required in Dev/Prod: `PORT`, `NODE_ENV`, `CLIENT_URL`, `MONGODB_URI`. Optional: `GEMINI_API_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`.
+- Health Endpoint: `GET /api/health` -> `200 OK` (healthy) when `database.status === "connected"`; `503 Service Unavailable` (degraded) when disconnected.
+- API Error Format: `{ success: false, error: { code: string, message: string, details?: any } }`.
 
 ## Testing Conventions
 - Vitest + Supertest for Express API integration testing (`server/tests/`).
