@@ -155,25 +155,25 @@ export default function EvaluationPage() {
           <div className="grid grid-cols-2 gap-4 text-center">
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
               <span className="text-xs font-semibold uppercase text-emerald-800">True Positives (TP)</span>
-              <p className="text-2xl font-bold text-emerald-900 mt-1">{confusionMatrix.truePositives ?? 40}</p>
+              <p className="text-2xl font-bold text-emerald-900 mt-1">{tp}</p>
               <p className="text-[10px] text-emerald-700 mt-0.5">Correctly Flagged Exceptions</p>
             </div>
 
             <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
               <span className="text-xs font-semibold uppercase text-blue-800">True Negatives (TN)</span>
-              <p className="text-2xl font-bold text-blue-900 mt-1">{confusionMatrix.trueNegatives ?? 80}</p>
+              <p className="text-2xl font-bold text-blue-900 mt-1">{tn}</p>
               <p className="text-[10px] text-blue-700 mt-0.5">Correctly Auto-Reconciled Matches</p>
             </div>
 
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
               <span className="text-xs font-semibold uppercase text-slate-600">False Positives (FP)</span>
-              <p className="text-2xl font-bold text-slate-800 mt-1">{confusionMatrix.falsePositives ?? 0}</p>
+              <p className="text-2xl font-bold text-slate-800 mt-1">{fp}</p>
               <p className="text-[10px] text-slate-500 mt-0.5">Unnecessary Human Flagging</p>
             </div>
 
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
               <span className="text-xs font-semibold uppercase text-slate-600">False Negatives (FN)</span>
-              <p className="text-2xl font-bold text-slate-800 mt-1">{confusionMatrix.falseNegatives ?? 0}</p>
+              <p className="text-2xl font-bold text-slate-800 mt-1">{fn}</p>
               <p className="text-[10px] text-slate-500 mt-0.5">Missed Financial Anomalies</p>
             </div>
           </div>
@@ -216,7 +216,7 @@ export default function EvaluationPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {Object.entries(perClassMetrics).map(([className, classData]) => (
+              {Object.entries(classDataMap).map(([className, classData]) => (
                 <tr key={className} className="hover:bg-slate-50/80 transition-colors">
                   <td className="px-4 py-3">
                     <ClassificationBadge classification={className} />
