@@ -23,6 +23,17 @@ reconai/
 │   └── vite.config.js
 │
 ├── server/
+│   ├── data/
+│   │   └── generated/
+│   │       ├── dataset_summary.json
+│   │       ├── gateway_payments.csv
+│   │       ├── ground_truth.json
+│   │       ├── merchant_orders.csv
+│   │       └── settlements.csv
+│   ├── scripts/
+│   │   ├── generateDemoData.js
+│   │   ├── resetDemo.js
+│   │   └── seedDemoData.js
 │   ├── src/
 │   │   ├── config/
 │   │   │   ├── database.js
@@ -48,6 +59,10 @@ reconai/
 │   │   ├── routes/
 │   │   │   └── healthRoutes.js
 │   │   ├── services/
+│   │   │   └── demo/
+│   │   │       ├── benchmarkGenerator.js
+│   │   │       ├── csvExporter.js
+│   │   │       └── prng.js
 │   │   ├── utils/
 │   │   │   ├── AppError.js
 │   │   │   ├── asyncHandler.js
@@ -56,6 +71,8 @@ reconai/
 │   │   ├── app.js
 │   │   └── server.js
 │   ├── tests/
+│   │   ├── demo/
+│   │   │   └── benchmarkGenerator.test.js
 │   │   ├── models/
 │   │   │   ├── auditLog.test.js
 │   │   │   ├── exceptionCase.test.js
@@ -73,6 +90,7 @@ reconai/
 │
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── DATASET.md
 │   └── PROGRESS.md
 ├── .gitignore
 ├── folderstr.md

@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import { connectDatabase, disconnectDatabase } from "../src/config/database.js";
 import { generateBenchmarkData, BENCHMARK_CONSTANTS } from "../src/services/demo/benchmarkGenerator.js";
 import { MerchantOrder } from "../src/models/MerchantOrder.js";

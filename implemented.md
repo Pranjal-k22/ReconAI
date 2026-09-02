@@ -7,15 +7,18 @@
 - [x] Step 3: Backend Hardening, Environment Validation & Financial Utilities
 - [x] Step 3.1: Fix MongoDB Startup Invariant & Live Atlas Verification
 - [x] Step 4: Financial MongoDB Domain Models, Validation, and Indexes
-  - `MerchantOrder` model (`server/src/models/MerchantOrder.js`)
-  - `GatewayPayment` model (`server/src/models/GatewayPayment.js`)
-  - `SettlementRecord` model (`server/src/models/SettlementRecord.js`)
-  - `ReconciliationRun` model (`server/src/models/ReconciliationRun.js`)
-  - `ReconciliationResult` model (`server/src/models/ReconciliationResult.js`)
-  - `ExceptionCase` model (`server/src/models/ExceptionCase.js`)
-  - `AuditLog` model (`server/src/models/AuditLog.js`)
-  - `GroundTruth` model (`server/src/models/GroundTruth.js`)
-  - Model Schema Validation Unit Test Suite (`server/tests/models/`)
+- [x] Step 5: Deterministic 120-Scenario Synthetic Benchmark Generator
+  - [x] Deterministic synthetic benchmark generator (`server/src/services/demo/benchmarkGenerator.js`)
+  - [x] 120-scenario benchmark distribution (80 MATCHED, 8 AMOUNT_MISMATCH, 6 MISSING_SETTLEMENT, 5 DUPLICATE_PAYMENT, 5 FEE_MISMATCH, 4 REFUND_MISMATCH, 4 MISSING_PAYMENT, 3 REFERENCE_MISMATCH, 3 AMBIGUOUS, 2 INVALID_DATA)
+  - [x] Seeded PRNG (`server/src/services/demo/prng.js`)
+  - [x] GroundTruth benchmark dataset generator
+  - [x] CSV & JSON export module (`server/src/services/demo/csvExporter.js`, `server/data/generated/`)
+  - [x] Dataset invariant validation
+  - [x] Deterministic seed validation (`RECONAI_DEMO_2026`)
+  - [x] Safe dataset-scoped demo seed script (`server/scripts/seedDemoData.js`)
+  - [x] Safe dataset-scoped demo reset script (`server/scripts/resetDemo.js`)
+  - [x] Generator test suite (`server/tests/demo/benchmarkGenerator.test.js`)
+  - [x] Live MongoDB Atlas seed & idempotency verified (120 Orders, 124 Payments, 112 Settlements, 120 GroundTruth)
 
 ## Backend
 
@@ -67,4 +70,4 @@
 - [x] MongoDB startup invariant test (`server/tests/envInvariant.test.js`)
 - [x] Integer Paise money utilities test suite (`server/tests/money.test.js`)
 - [x] Mongoose Domain Models validation test suite (`server/tests/models/`)
-- [ ] Synthetic 120-record generator & ground truth benchmark suite
+- [x] Synthetic 120-record generator & ground truth benchmark suite (`server/tests/demo/benchmarkGenerator.test.js`)

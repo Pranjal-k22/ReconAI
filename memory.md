@@ -22,6 +22,14 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 - **MongoDB Startup Invariant**: MongoDB connection is mandatory before HTTP server startup in `development` and `production` modes (`MONGODB_URI` required). Server refuses to start without a valid DB connection.
 - **Test Environment Independence**: In `NODE_ENV=test`, Express `app.js` can be imported by Supertest without triggering DB connection or HTTP listener locks.
 - **Domain Data Layer**: 8 Mongoose models in `server/src/models/`: `MerchantOrder`, `GatewayPayment`, `SettlementRecord`, `ReconciliationRun`, `ReconciliationResult`, `ExceptionCase`, `AuditLog`, `GroundTruth`.
+- **Benchmark Dataset Strategy**:
+  - Dataset Version: `RECONAI_DEMO_V1`
+  - Seed: `RECONAI_DEMO_2026`
+  - Import Batch ID: `BATCH-DEMO-V1`
+  - Size: 120 deterministic scenarios (80 MATCHED, 8 AMOUNT_MISMATCH, 6 MISSING_SETTLEMENT, 5 DUPLICATE_PAYMENT, 5 FEE_MISMATCH, 4 REFUND_MISMATCH, 4 MISSING_PAYMENT, 3 REFERENCE_MISMATCH, 3 AMBIGUOUS, 2 INVALID_DATA).
+  - Synthetic Fee Policy: 2% fee + 18% GST on fee.
+  - Primary ambiguous demo scenario ID: `ORD-000116`.
+  - Database cleanup & reset operations MUST be scoped strictly to `importBatchId: "BATCH-DEMO-V1"` and `datasetVersion: "RECONAI_DEMO_V1"`.
 - **Application Business Identifiers**: Strings (`ORD-100001`, `pay_ABC123`, `set_rec_001`, `RUN-001`, `RES-001`, `EXC-001`, `AUD-001`) indexed for high throughput queries.
 - **Settlement Id Granularity**: `settlementRecordId` is unique per line item; `settlementId` groups multiple line items per batch payout.
 - **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
@@ -50,12 +58,6 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
 ## AI Restrictions
 - Gemini AI is restricted to exception analysis, context summarization, and resolution recommendations.
 - Gemini MUST NEVER alter financial match status directly without safety rule validation.
-
-## Dataset Strategy
-- Synthetic 120-record benchmark dataset (Orders, Payments, Settlements) with known ground truth for reliable evaluation and instant demo path.
-
-## Razorpay Strategy
-- Razorpay API test mode client for syncing live payments and settlements when keys are present; graceful fallback to generated test data.
 
 ## Environment & Server Conventions
 - Server Port: `process.env.PORT || 5000`.
