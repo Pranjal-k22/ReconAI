@@ -132,3 +132,16 @@ In the synthetic benchmark dataset, `ORD-000116` represents a primary ambiguous 
   - `REFERENCE_MISMATCH`: 3
   - `AMBIGUOUS`: 3
   - `INVALID_DATA`: 2
+
+---
+
+## Track 4 Phase 2A Metric Semantics & Operational Invariants
+
+- **AI Advisory Boundary Principle**: **AI investigation does NOT equal financial resolution.** Gemini AI API provides root-cause explanations (`aiExplanation`) and recommendations, but exception status remains **`OPEN`** or **`UNDER_REVIEW`** until an explicit human review decision is applied (`APPROVE_MATCH`, `KEEP_EXCEPTION`, or `MARK_RESOLVED`).
+- **Unresolved Exceptions Definition**: An exception is defined as `unresolved` at controller run completion if its `ExceptionCase.status` is in `("OPEN", "UNDER_REVIEW")`.
+- **Human Review Actions**:
+  - `APPROVE_MATCH` → Sets status to `RESOLVED` (human decision: `APPROVE_MATCH`), removed from unresolved queue.
+  - `KEEP_EXCEPTION` → Retains status as `OPEN` / `UNDER_REVIEW`, remains in unresolved queue for merchant/gateway resolution.
+  - `MARK_RESOLVED` → Sets status to `RESOLVED` (human decision: `MARK_RESOLVED`), removed from unresolved queue.
+- **Original Classification Preservation**: Human review decisions update resolution workflow state (`status`), but NEVER change `ReconciliationResult.classification`.
+

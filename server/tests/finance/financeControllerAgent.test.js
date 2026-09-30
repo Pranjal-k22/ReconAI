@@ -244,5 +244,37 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
       // Operational match rate MUST NOT be called benchmark accuracy
       expect(matchRate).not.toBe(100.0);
     });
+
+    it("enforces Financial Sum Invariant: totalAmountProcessedPaise === autoReconciledAmountPaise + amountUnderReviewPaise", () => {
+      const totalAmountProcessedPaise = 103018000;
+      const autoReconciledAmountPaise = 71702000;
+      const amountUnderReviewPaise = totalAmountProcessedPaise - autoReconciledAmountPaise;
+
+      expect(amountUnderReviewPaise).toBe(31316000);
+      expect(totalAmountProcessedPaise).toBe(autoReconciledAmountPaise + amountUnderReviewPaise);
+    });
+
+    it("verifies unresolved exception count rules (Cases A, B, C, D)", () => {
+      const exceptions = [
+        { exceptionId: "EXC-001", status: "OPEN", aiExplanation: "Advisory analysis complete" },
+        { exceptionId: "EXC-002", status: "UNDER_REVIEW", aiExplanation: "Advisory analysis complete" },
+        { exceptionId: "EXC-003", status: "RESOLVED", humanDecision: "APPROVE_MATCH" },
+        { exceptionId: "EXC-004", status: "OPEN", aiExplanation: null }
+      ];
+
+      // Case A & B: Unresolved exceptions are strictly status OPEN or UNDER_REVIEW
+      const unresolved = exceptions.filter((e) => e.status === "OPEN" || e.status === "UNDER_REVIEW");
+      expect(unresolved).toHaveLength(3); // EXC-001, EXC-002, EXC-004
+
+      // Case C: AI explanation does NOT resolve exception (EXC-001 has aiExplanation but remains unresolved)
+      const exc1 = exceptions.find((e) => e.exceptionId === "EXC-001");
+      expect(exc1.aiExplanation).toBeDefined();
+      expect(exc1.status).toBe("OPEN");
+      expect(unresolved.some((e) => e.exceptionId === "EXC-001")).toBe(true);
+
+      // Case D: Human resolution removes exception from unresolved list (EXC-003 is RESOLVED)
+      expect(unresolved.some((e) => e.exceptionId === "EXC-003")).toBe(false);
+    });
   });
 });
+

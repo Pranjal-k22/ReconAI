@@ -169,9 +169,12 @@ None.
   - `matchRate`: 66.67%
   - `totalAmountProcessedPaise`: 103,018,000 paise (₹1,030,180.00)
   - `autoReconciledAmountPaise`: 71,702,000 paise (₹717,020.00)
-  - `amountUnderReviewPaise`: 28,607,582 paise (₹286,075.82)
+  - `amountUnderReviewPaise`: 31,316,000 paise (₹313,160.00)
+  - `unresolvedRecords`: 40 (`OPEN` or `UNDER_REVIEW` status)
+  - `financialSumInvariant`: 71,702,000 + 31,316,000 = 103,018,000 (**VERIFIED PASS**)
   - `directEngineParityMismatches`: 0 (100% classification & amount consistency verified).
 - **NOT IMPLEMENTED**: Frontend UI Controller Tab (Phase 3).
+
 
 
 

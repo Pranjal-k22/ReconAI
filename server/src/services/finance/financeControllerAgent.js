@@ -170,9 +170,10 @@ export async function runFinanceControllerBatch({
       } else {
         exceptionRecords++;
         manualReviewRecords++;
-        amountUnderReviewPaise += res.expectedAmountPaise || 0;
       }
     }
+
+    amountUnderReviewPaise = Math.max(0, totalInputAmountPaise - autoReconciledAmountPaise);
 
     controllerDoc.processedRecords = results.length;
     controllerDoc.matchedRecords = matchedRecords;
@@ -183,6 +184,7 @@ export async function runFinanceControllerBatch({
     controllerDoc.amountUnderReviewPaise = amountUnderReviewPaise;
     controllerDoc.progressPercent = 80;
     await controllerDoc.save();
+
 
     await createAuditEvent({
       actorType: "SYSTEM",
@@ -269,10 +271,10 @@ export async function runFinanceControllerBatch({
 
 
 
-    // Fetch unresolved exceptions (OPEN or UNDER_REVIEW)
+    // Fetch unresolved exceptions (OPEN or UNDER_REVIEW status)
     const openExceptions = await ExceptionCase.find({
       runId: reconRun.runId,
-      resolutionStatus: { $in: ["OPEN", "UNDER_REVIEW"] }
+      status: { $in: ["OPEN", "UNDER_REVIEW"] }
     }).lean();
 
     const unresolvedRecords = openExceptions.length;
@@ -285,19 +287,21 @@ export async function runFinanceControllerBatch({
       logger.info({ runId, error: err.message }, "Benchmark evaluation skipped or unavailable.");
     }
 
-
-    // Unresolved exceptions summary payload
+    // Unresolved exceptions summary payload with explicit operational fields
     const unresolvedExceptionsSummary = openExceptions.map((exc) => ({
       exceptionId: exc.exceptionId,
       merchantOrderId: exc.merchantOrderId,
       type: exc.type,
       severity: exc.severity,
       financialImpactPaise: exc.financialImpactPaise,
-      resolutionStatus: exc.resolutionStatus,
+      currentStatus: exc.status,
+      aiInvestigated: !!exc.aiExplanation,
+      deterministicExplanation: exc.deterministicExplanation,
       aiExplanation: exc.aiExplanation || null,
       aiRecommendation: exc.aiRecommendation || null,
       createdAt: exc.createdAt
     }));
+
 
     const reportPayload = {
       runId,

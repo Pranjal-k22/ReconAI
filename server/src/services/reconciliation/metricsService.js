@@ -61,11 +61,11 @@ export function calculateRunMetrics(results = [], durationMs = 0) {
     if (r.autoResolved) {
       autoReconciledAmountPaise += expPaise;
     }
-
-    if (r.requiresReview) {
-      amountUnderReviewPaise += expPaise;
-    }
   }
+
+  // Financial Sum Invariant Guarantee: total = autoReconciled + underReview
+  amountUnderReviewPaise = Math.max(0, totalAmountProcessedPaise - autoReconciledAmountPaise);
+
 
   const autoReconciliationRate = totalScenarios > 0 ? autoReconciledCount / totalScenarios : 0;
   const durationSec = durationMs / 1000;

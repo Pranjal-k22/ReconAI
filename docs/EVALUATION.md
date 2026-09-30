@@ -13,20 +13,22 @@ To prevent evaluation leakage and maintain strict system integrity:
 ---
 
 ## Operational Metrics (No GroundTruth Required)
-Operational metrics are calculated dynamically from persisted `ReconciliationResult` records:
+Operational metrics are calculated dynamically from persisted `ReconciliationResult` and `ExceptionCase` records:
 
 - **`totalScenarios`**: Count of merchant order scenarios processed in the run.
 - **`matchedCount`**: Count of clean `MATCHED` scenarios.
 - **`exceptionCount`**: Count of scenarios flagged with `requiresReview = true`.
 - **`autoReconciledCount`**: Count of scenarios where `autoResolved = true`.
 - **`manualReviewCount`**: Count of scenarios routed to human/AI review.
+- **`unresolvedRecords`**: Count of `ExceptionCase` records in `OPEN` or `UNDER_REVIEW` status. (*Note: AI investigation does NOT equal financial resolution; a human decision is required for resolution.*)
 - **`autoReconciliationRate`**: $\frac{\text{autoReconciledCount}}{\text{totalScenarios}}$
 - **`throughputRecordsPerSecond`**: $\frac{\text{processedRecords}}{\text{durationSeconds}}$
-- **Financial Value**:
-  - `totalAmountProcessedPaise`: $\sum \text{expectedAmountPaise}$
-  - `autoReconciledAmountPaise`: $\sum \text{expectedAmountPaise}$ for `MATCHED`
-  - `amountUnderReviewPaise`: $\sum \text{expectedAmountPaise}$ for anomalies
-  - Note: $\text{total} = \text{autoReconciled} + \text{underReview}$.
+- **Financial Value Invariant**:
+  - `totalAmountProcessedPaise`: Total gross order amount ($\sum \text{expectedAmountPaise}$)
+  - `autoReconciledAmountPaise`: Total gross order amount for clean `MATCHED` scenarios
+  - `amountUnderReviewPaise`: Total gross order amount for anomaly scenarios ($\text{totalAmountProcessedPaise} - \text{autoReconciledAmountPaise}$)
+  - **Financial Sum Invariant**: $\text{totalAmountProcessedPaise} = \text{autoReconciledAmountPaise} + \text{amountUnderReviewPaise}$
+
 
 ---
 
@@ -70,16 +72,19 @@ All metrics are computed dynamically at runtime:
 ## Current Measured Benchmark Results (`RECONAI_DEMO_V1`)
 
 ### Operational Metrics
-- **Run ID**: `RUN-20260902112807-3KYM`
+- **Run ID**: `FCRUN-20260930112205-FLIR`
 - **Status**: `COMPLETED_WITH_EXCEPTIONS`
 - **Total Scenarios**: 120
 - **Matched Count**: 80
 - **Exception Count**: 40
+- **Unresolved Exceptions**: 40 (`OPEN` or `UNDER_REVIEW` status)
 - **Auto Reconciliation Rate**: **66.67%** (80 / 120)
-- **Throughput**: **253.16 records/sec** (474 ms total execution time)
+- **Throughput**: **12.51 records/sec** (live database persisted with automated AI investigation dispatch)
 - **Total Amount Processed**: ₹1,030,180.00 (103,018,000 paise)
 - **Auto-Reconciled Amount**: ₹717,020.00 (71,702,000 paise)
 - **Amount Under Review**: ₹313,160.00 (31,316,000 paise)
+- **Financial Sum Invariant**: ₹7,17,020.00 + ₹3,13,160.00 = ₹10,30,180.00 (**PASS**)
+
 
 
 ### Operational Classification Breakdown

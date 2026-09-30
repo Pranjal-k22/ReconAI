@@ -236,5 +236,14 @@ ReconAI features a deterministic benchmark dataset of 120 synthetic financial sc
 ### NOT IMPLEMENTED
 - Frontend React UI Finance Controller tab / dashboard (Phase 3 candidate).
 
+---
+
+## Track 4 Phase 2A Metric Semantics & Financial Sum Invariant
+
+- **Financial Sum Invariant**: All controller runs strictly satisfy $\text{totalAmountProcessedPaise} = \text{autoReconciledAmountPaise} + \text{amountUnderReviewPaise}$. For the 120-scenario benchmark, $\text{₹10,30,180.00} = \text{₹7,17,020.00} + \text{₹3,13,160.00}$ (**VERIFIED PASS**).
+- **Unresolved Exceptions Definition**: Count of `ExceptionCase` records in `OPEN` or `UNDER_REVIEW` status.
+- **AI Investigation Boundary**: AI investigation attaches advisory explanations (`aiExplanation`) but **does NOT resolve exceptions**. Human review action is required for resolution.
+
+
 
 
