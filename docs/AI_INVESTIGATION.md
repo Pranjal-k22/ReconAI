@@ -177,3 +177,17 @@ During AI investigation of `ORD-000116`:
 - Gemini explanations depend on the quality of evidence provided in reconciliation reason strings.
 - Gemini recommendations are advisory only; human finance reviewers retain full authority over financial decisions.
 - Live Gemini API requests require a valid `GEMINI_API_KEY` environment variable.
+
+---
+
+## Track 4 Phase 4 — Safety & Audit Verification
+
+- **Phase Status**: VERIFIED & HARDENED (PASS).
+- **Verified Safety Boundaries**:
+  - **Zero Execution Authority**: Verified that Gemini cannot mutate `classification`, `confidence`, `expectedAmountPaise`, `actualAmountPaise`, `differencePaise`, `financialImpactPaise`, `status`, `autoResolved`, or `humanDecision`.
+  - **Zod Schema Contract**: Verified `aiAnalysisOutputSchema` strictly rejects forbidden execution actions (`REFUND_CUSTOMER`, `CAPTURE_PAYMENT`, `MARK_AS_MATCHED`, `APPROVE_TRANSACTION`, `APPROVE_MATCH`, etc.).
+  - **Prompt Injection Defense**: Input fields inside transaction records are wrapped as untrusted data string literals inside prompt structure.
+  - **Data Minimization & PII Exclusion**: Customer email, phone, VPA, and card payloads are excluded from AI prompts and audit logs.
+  - **Deterministic Fallback**: On missing API key, timeout, or provider failure, system falls back to `fallbackExplanation.js` without altering financial state or crashing batch execution. Logged as `AI_INVESTIGATION_FAILED` with `fallbackUsed: true`.
+  - **Security Suite Evidence**: Verified by `server/tests/finance/controllerSafetyAndHardening.test.js` (196/196 backend unit & security tests passing).
+

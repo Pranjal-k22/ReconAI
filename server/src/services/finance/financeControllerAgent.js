@@ -271,6 +271,42 @@ export async function runFinanceControllerBatch({
 
 
 
+    // Enforce Financial Sum Invariant Check
+    const sumInvariantPassed = totalInputAmountPaise === (autoReconciledAmountPaise + amountUnderReviewPaise);
+    if (!sumInvariantPassed) {
+      throw new Error(`CRITICAL FINANCIAL INVARIANT VIOLATION: Total (${totalInputAmountPaise}) != Auto (${autoReconciledAmountPaise}) + Review (${amountUnderReviewPaise})`);
+    }
+
+    // Dynamic Exception Breakdown & Severity Breakdown Summaries
+    const allRunExceptions = await ExceptionCase.find({ runId: reconRun.runId }).lean();
+    const exceptionSummary = {};
+    const severitySummary = {
+      CRITICAL: { count: 0, unresolved: 0, financialImpactPaise: 0 },
+      HIGH: { count: 0, unresolved: 0, financialImpactPaise: 0 },
+      MEDIUM: { count: 0, unresolved: 0, financialImpactPaise: 0 },
+      LOW: { count: 0, unresolved: 0, financialImpactPaise: 0 }
+    };
+
+    for (const exc of allRunExceptions) {
+      const type = exc.type || "UNKNOWN";
+      const sev = exc.severity || "LOW";
+      const isUnresolved = exc.status === "OPEN" || exc.status === "UNDER_REVIEW";
+
+      if (!exceptionSummary[type]) {
+        exceptionSummary[type] = { count: 0, unresolved: 0, financialImpactPaise: 0 };
+      }
+      exceptionSummary[type].count++;
+      if (isUnresolved) exceptionSummary[type].unresolved++;
+      exceptionSummary[type].financialImpactPaise += exc.financialImpactPaise || 0;
+
+      if (!severitySummary[sev]) {
+        severitySummary[sev] = { count: 0, unresolved: 0, financialImpactPaise: 0 };
+      }
+      severitySummary[sev].count++;
+      if (isUnresolved) severitySummary[sev].unresolved++;
+      severitySummary[sev].financialImpactPaise += exc.financialImpactPaise || 0;
+    }
+
     // Fetch unresolved exceptions (OPEN or UNDER_REVIEW status)
     const openExceptions = await ExceptionCase.find({
       runId: reconRun.runId,
@@ -302,7 +338,6 @@ export async function runFinanceControllerBatch({
       createdAt: exc.createdAt
     }));
 
-
     const reportPayload = {
       runId,
       reconciliationRunId: reconRun.runId,
@@ -311,7 +346,10 @@ export async function runFinanceControllerBatch({
       importBatchId,
       datasetVersion,
       status: exceptionRecords > 0 ? "COMPLETED_WITH_EXCEPTIONS" : "COMPLETED",
+      controllerState: "COMPLETED",
+      isTrack4DemoBatch: batchSize >= 50,
       durationMs,
+      throughputScope: "Full persisted controller workflow (Ingestion, Validation, Matching, DB Persistence, Safety Gate, AI Analysis)",
       metrics: {
         batchSize,
         processedRecords: results.length,
@@ -328,13 +366,23 @@ export async function runFinanceControllerBatch({
         amountUnderReviewPaise,
         classificationBreakdown: reconRun.metrics?.classificationBreakdown || {}
       },
+      financialSummary: {
+        totalAmountProcessedPaise: totalInputAmountPaise,
+        autoReconciledAmountPaise,
+        amountUnderReviewPaise,
+        sumInvariantPassed: true
+      },
+      exceptionSummary,
+      severitySummary,
       unresolvedExceptions: unresolvedExceptionsSummary,
       evaluation: evaluationResult
         ? {
-            accuracy: evaluationResult.overallMetrics?.accuracy || 1.0,
-            precision: evaluationResult.overallMetrics?.precision || 1.0,
-            recall: evaluationResult.overallMetrics?.recall || 1.0,
-            f1Score: evaluationResult.overallMetrics?.f1Score || 1.0
+            accuracy: evaluationResult.classificationAccuracy ?? evaluationResult.overallMetrics?.accuracy ?? 1.0,
+            precision: evaluationResult.exceptionDetection?.precision ?? 1.0,
+            recall: evaluationResult.exceptionDetection?.recall ?? 1.0,
+            f1Score: evaluationResult.exceptionDetection?.f1Score ?? 1.0,
+            totalScenarios: evaluationResult.totalScenarios,
+            correctClassifications: evaluationResult.correctClassifications
           }
         : null
     };

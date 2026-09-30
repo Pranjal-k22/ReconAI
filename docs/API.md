@@ -172,20 +172,59 @@ Triggers READ-ONLY settlement reconciliation fetch and sync from Razorpay Test M
 
 ---
 
-## Track 4 Phase 1 Architecture Plan (Proposed Phase 2 Endpoints)
+---
 
-### `POST /api/finance-controller/run` (PLANNED)
-Triggers autonomous Track 4 Finance Controller agent batch execution.
+## 6. Finance Controller REST APIs
 
-### `GET /api/finance-controller/runs` (PLANNED)
+### `POST /api/finance-controller/run`
+Triggers autonomous Track 4 Finance Controller agent batch execution across synthetic scenarios.
+
+**Request Body:**
+```json
+{
+  "batchSize": 120,
+  "triggerSource": "DEMO_BENCHMARK",
+  "enableAiInvestigation": true
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "runId": "FCRUN-20260930112205-FLIR",
+    "status": "COMPLETED_WITH_EXCEPTIONS",
+    "durationMs": 9592,
+    "metrics": {
+      "batchSize": 120,
+      "processedRecords": 120,
+      "matchedRecords": 80,
+      "exceptionRecords": 40,
+      "autoResolvedRecords": 80,
+      "manualReviewRecords": 40,
+      "unresolvedRecords": 40,
+      "matchRate": 66.67,
+      "exceptionRate": 33.33,
+      "throughput": 12.51,
+      "totalAmountProcessedPaise": 103018000,
+      "autoReconciledAmountPaise": 71702000,
+      "amountUnderReviewPaise": 31316000
+    }
+  }
+}
+```
+
+### `GET /api/finance-controller/runs`
 Lists historical controller agent batch runs.
 
-### `GET /api/finance-controller/runs/:runId` (PLANNED)
+### `GET /api/finance-controller/runs/:runId`
 Retrieves status, state history, and metrics for a specific controller run.
 
-### `GET /api/finance-controller/runs/:runId/report` (PLANNED)
-Retrieves the complete Track 4 Finance Controller Report (match rate, unresolved exception list, throughput, financial summary).
+### `GET /api/finance-controller/runs/:runId/report`
+Retrieves the complete Track 4 Finance Controller Report (13 operational metrics, financial sum invariant, unresolved exception list, dynamic classification & severity summaries, throughput semantics, and benchmark accuracy evaluation).
 
-### `GET /api/finance-controller/runs/:runId/status` (PLANNED)
-Lightweight polling endpoint for active controller state machine status.
+### `GET /api/finance-controller/runs/:runId/status`
+Lightweight status endpoint for controller state machine execution.
+
 

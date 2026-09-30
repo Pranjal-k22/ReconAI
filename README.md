@@ -5,13 +5,14 @@
 [![Stack](https://img.shields.io/badge/Stack-React%20%7C%20Node.js%20%7C%20MongoDB%20%7C%20Gemini-indigo.svg)](#technology-stack)
 [![Status](https://img.shields.io/badge/Status-Hackathon%20Submission%20Ready-emerald.svg)](#verified-benchmark-results)
 [![Accuracy](https://img.shields.io/badge/Benchmark%20Accuracy-100%25%20(120%2F120)-blue.svg)](#verified-benchmark-results)
-[![Tests](https://img.shields.io/badge/Vitest-170%2F170%20Passing-brightgreen.svg)](#test-suite--verification)
+[![Tests](https://img.shields.io/badge/Vitest-196%2F196%20Passing-brightgreen.svg)](#test-suite--verification)
 
 ---
 
 ## Pitch
 
-**ReconAI** automatically reconciles merchant orders, payment gateway records, and settlement payouts using deterministic evidence, while routing uncertain financial cases through AI-assisted advisory investigation and human review with a complete append-only audit trail.
+**ReconAI** is a **Verification-First AI Finance Controller**. It closes a finance-ops reconciliation loop over a synthetic benchmark batch, reports operational match rate and throughput, and explicitly identifies exceptions that remain unresolved for human review backed by an append-only audit trail.
+
 
 ---
 
@@ -88,9 +89,9 @@ Measured against pre-seeded synthetic benchmark dataset (`RECONAI_DEMO_V1`):
 | **Exception Precision** | **100.00%** | Zero False Positives |
 | **Exception Recall** | **100.00%** | Zero False Negatives |
 | **F1 Score** | **100.00%** | Harmonic Mean |
-| **Total Value Processed** | **₹10,03,095.82** | 100,309,582 paise |
+| **Total Value Processed** | **₹10,30,180.00** | 103,018,000 paise |
 | **Auto-Reconciled Value** | **₹7,17,020.00** | 71,702,000 paise (80 MATCHED orders) |
-| **Held Under Review Value** | **₹2,86,075.82** | 28,607,582 paise (40 Anomaly orders) |
+| **Held Under Review Value** | **₹3,13,160.00** | 31,316,000 paise (40 Anomaly orders) |
 
 *Note: These 100% metrics are measured against our isolated synthetic GroundTruth benchmark dataset to prove algorithmic correctness, not claimed as universal real-world performance.*
 

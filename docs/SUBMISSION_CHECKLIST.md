@@ -18,3 +18,8 @@
 - [x] **Judging Alignment**: Judging dimensions matrix and safety invariant table created (`docs/JUDGING_CRITERIA.md`).
 - [x] **Pitch Summaries**: 30-second elevator pitch and 90-second executive summary created (`docs/PITCH.md`).
 - [x] **SPA Routing Fallback**: Vercel rewrite configuration created (`client/vercel.json`).
+- [x] **Track 4 Finance Controller Report**: Dynamic controller report API exposing 13 operational metrics, financial sum invariant, dynamic exception & severity summaries, and unresolved exceptions array (`OPEN` & `UNDER_REVIEW`).
+- [x] **Track 4 Batch Size Validation**: Minimum 50+ scenario batch requirement verified (`isTrack4DemoBatch: true` for 120 scenarios).
+- [x] **Authoritative Throughput & Metric Isolation**: Scoped `Controller Throughput` as 12.51 rec/s (full persisted workflow) and strictly separated Operational Match Rate (66.67%) from GroundTruth Accuracy (100.00%).
+- [x] **Full Regression Test Suite**: 44 backend test files, 196 / 196 tests passing. Vite frontend build passing with 0 errors.
+

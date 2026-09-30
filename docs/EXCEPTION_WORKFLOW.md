@@ -145,3 +145,15 @@ In the synthetic benchmark dataset, `ORD-000116` represents a primary ambiguous 
   - `MARK_RESOLVED` → Sets status to `RESOLVED` (human decision: `MARK_RESOLVED`), removed from unresolved queue.
 - **Original Classification Preservation**: Human review decisions update resolution workflow state (`status`), but NEVER change `ReconciliationResult.classification`.
 
+---
+
+## Track 4 Phase 4 — Safety & Audit Hardening Verification
+
+- **Phase Status**: VERIFIED & HARDENED (PASS).
+- **Verified Exception & Safety Invariants**:
+  - **Safety Gate Integration**: Finance Controller Agent invokes `evaluateSafetyGate` directly. Verified that non-MATCHED classifications (e.g. `AMOUNT_MISMATCH`, `AMBIGUOUS`, `DUPLICATE_PAYMENT`) are locked out from auto-resolution regardless of confidence score.
+  - **Human Review Control**: AI investigation does NOT resolve exceptions. All 40 benchmark exceptions remain `OPEN` / `UNDER_REVIEW` until human decisions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) are executed.
+  - **Original Classification Preservation**: Verified that applying human decisions changes `status` to `APPROVED` or `RESOLVED`, but `classification` remains immutably preserved (e.g., `AMBIGUOUS`).
+  - **Append-Only Audit Guarantee**: Verified zero `UPDATE` or `DELETE` API paths exist for audit events. Sensitive keys (`password`, `token`, `authorization`, `GEMINI_API_KEY`, `RAZORPAY_KEY_SECRET`) are recursively redacted to `"[REDACTED]"`.
+
+
