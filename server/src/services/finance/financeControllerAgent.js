@@ -4,7 +4,9 @@ import { GatewayPayment } from "../../models/GatewayPayment.js";
 import { SettlementRecord } from "../../models/SettlementRecord.js";
 import { ReconciliationResult } from "../../models/ReconciliationResult.js";
 import { ExceptionCase } from "../../models/ExceptionCase.js";
+import { calculateRunMetrics } from "../reconciliation/metricsService.js";
 import { runReconciliationBatch } from "../reconciliation/reconciliationService.js";
+
 import { evaluateReconciliationRun } from "../evaluation/evaluationService.js";
 import { investigateException } from "../ai/exceptionInvestigator.js";
 import { createAuditEvent } from "../audit/auditService.js";
@@ -252,9 +254,20 @@ export async function runFinanceControllerBatch({
     const durationMs = Math.round(endTime - startTime);
     const durationSec = durationMs / 1000 || 0.001;
 
+    const runMetrics = calculateRunMetrics(results, durationMs);
+
+    matchedRecords = runMetrics.matchedCount;
+    exceptionRecords = runMetrics.exceptionCount;
+    autoResolvedRecords = runMetrics.autoReconciledCount;
+    manualReviewRecords = runMetrics.manualReviewCount;
+    autoReconciledAmountPaise = runMetrics.autoReconciledAmountPaise;
+    amountUnderReviewPaise = runMetrics.amountUnderReviewPaise;
+
     const matchRate = parseFloat(((matchedRecords / batchSize) * 100).toFixed(2));
     const exceptionRate = parseFloat(((exceptionRecords / batchSize) * 100).toFixed(2));
-    const throughput = parseFloat((results.length / durationSec).toFixed(2));
+    const throughput = parseFloat(runMetrics.throughputRecordsPerSecond.toFixed(2));
+
+
 
     // Fetch unresolved exceptions (OPEN or UNDER_REVIEW)
     const openExceptions = await ExceptionCase.find({
