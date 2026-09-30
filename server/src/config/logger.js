@@ -34,3 +34,5 @@ export const httpLogger = pinoHttp({
     return `${req.method} ${req.url} - ${res.statusCode} ERROR: ${err.message}`;
   }
 });
+
+export default logger;

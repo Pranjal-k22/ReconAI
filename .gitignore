@@ -26,3 +26,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Local Manual Setup Documentation Folder
+manual-setup/
