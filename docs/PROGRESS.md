@@ -173,7 +173,39 @@ None.
   - `unresolvedRecords`: 40 (`OPEN` or `UNDER_REVIEW` status)
   - `financialSumInvariant`: 71,702,000 + 31,316,000 = 103,018,000 (**VERIFIED PASS**)
   - `directEngineParityMismatches`: 0 (100% classification & amount consistency verified).
-- **NOT IMPLEMENTED**: Frontend UI Controller Tab (Phase 3).
+
+---
+
+## Track 4 Phase 3 — Finance Controller Frontend
+
+- **Phase Status**: IMPLEMENTATION & VERIFICATION COMPLETE (PASS).
+- **Frontend Route**: `/finance-controller`
+- **Components Created/Updated**:
+  - `client/src/pages/FinanceControllerPage.jsx`
+  - `client/src/api/financeControllerApi.js`
+  - `client/src/components/layout/Sidebar.jsx`
+  - `client/src/App.jsx`
+- **API Integration**:
+  - `POST /api/finance-controller/run` (Triggers Track 4 autonomous agent execution)
+  - `GET /api/finance-controller/runs` (Fetches historical controller runs list)
+  - `GET /api/finance-controller/runs/:runId` (Fetches run metadata and status)
+  - `GET /api/finance-controller/runs/:runId/report` (Fetches complete controller report)
+  - `GET /api/finance-controller/runs/:runId/status` (Polls state machine status)
+- **UI & Metric Highlights**:
+  - **State Machine Pipeline**: IDLE → INGESTING → VALIDATING → RECONCILING → SAFETY_EVALUATION → EXCEPTION_PROCESSING → REPORTING → COMPLETED / FAILED
+  - **Metric Distinction**: Operational Match Rate (66.67%) clearly separated from Benchmark Accuracy (100.00%) with explanatory tooltips.
+  - **Integer Paise Financial Sum Invariant**: ₹10,30,180.00 Total = ₹7,17,020.00 Auto-Reconciled + ₹3,13,160.00 Under Review.
+  - **Unresolved Exceptions Table**: Displays 40 unresolved exceptions with "AI ADVISORY ONLY" safety labels and direct navigation to human review workflow (`/exceptions/:id`).
+  - **Advisory AI Drawer**: Explains Gemini/Fallback root causes with clear disclaimer that AI analysis does not modify financial reconciliation state.
+  - **Audit & Evaluation Links**: Direct navigation to `/audit` and `/evaluation`.
+- **Test & Build Results**:
+  - Backend Vitest Suite: 42 test files, 183/183 tests passed (0 failed).
+  - Frontend Vite Production Build: Completed cleanly with 0 errors.
+- **Safety Invariants**:
+  - NO payment execution authority.
+  - NO Gemini financial authority.
+  - NO GroundTruth participation in production reconciliation.
+  - Phase 4 started: NO. Stopped: YES.
 
 
 

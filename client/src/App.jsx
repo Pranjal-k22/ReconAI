@@ -4,6 +4,7 @@ import { ToastProvider } from "./components/common/ToastContext";
 import { AppLayout } from "./components/layout/AppLayout";
 
 import DashboardPage from "./pages/DashboardPage";
+import FinanceControllerPage from "./pages/FinanceControllerPage";
 import ReconciliationRunsPage from "./pages/ReconciliationRunsPage";
 import ReconciliationDetailPage from "./pages/ReconciliationDetailPage";
 import ExceptionsPage from "./pages/ExceptionsPage";
@@ -21,6 +22,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<AppLayout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="finance-controller" element={<FinanceControllerPage />} />
             <Route path="runs" element={<ReconciliationRunsPage />} />
             <Route path="runs/:runId" element={<ReconciliationDetailPage />} />
             <Route path="exceptions" element={<ExceptionsPage />} />

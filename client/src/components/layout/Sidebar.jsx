@@ -2,6 +2,7 @@ import React from "react";
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
+  Bot,
   GitCompareArrows,
   TriangleAlert,
   ScrollText,
@@ -13,6 +14,7 @@ import {
 
 export const navItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
+  { name: "AI Finance Controller", path: "/finance-controller", icon: Bot },
   { name: "Reconciliation Runs", path: "/runs", icon: GitCompareArrows },
   { name: "Exceptions", path: "/exceptions", icon: TriangleAlert },
   { name: "Audit Trail", path: "/audit", icon: ScrollText },
