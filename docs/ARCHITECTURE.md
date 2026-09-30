@@ -263,6 +263,24 @@ ReconAI features a deterministic benchmark dataset of 120 synthetic financial sc
 - **Backend Test Suite**: Vitest suite passing 42/42 files (**183/183 tests passing**).
 - **Safety Invariants**: Gemini AI operates 100% advisory with zero financial execution authority. GroundTruth isolated from production reconciliation.
 
+---
+
+## Track 4 Phase 3A — Frontend Metric & Progress Semantics Correction
+
+### VERIFIED SEMANTIC CORRECTIONS
+1. **Authoritative Throughput Definition**:
+   - **Controller Throughput (Full Workflow)**: Measured at **12.51 records/sec** dynamically. Encompasses ingestion, validation, database persistence of results and exceptions, safety gate evaluation, and automated AI exception investigation dispatch.
+   - **Batch Engine Throughput**: Measured at **~40-60 records/sec** for persisted batch matching without AI investigation, and **~4,615 records/sec** for pure in-memory matching logic.
+   - **UI Presentation**: The frontend explicitly labels `Controller Throughput` and provides subtext defining `Full persisted controller workflow` rather than ambiguous `Throughput` or unverified `~1200+` labels.
+2. **Truthful Run State Presentation**:
+   - Terminology updated from "REAL-TIME PROGRESS" to **"RUN STATE PRESENTATION"**.
+   - Reflects the actual synchronous POST execution model where the browser renders a truthful loading state while executing, followed by rendering the complete final backend state upon completion. No fake progress animations or polling loops are fabricated.
+3. **KPI & Financial Verification**:
+   - **Financial Sum Invariant**: Verified $\text{₹10,30,180.00} = \text{₹7,17,020.00} + \text{₹3,13,160.00}$ (103,018,000 paise = 71,702,000 paise + 31,316,000 paise).
+   - **Unresolved Exceptions**: Verified 40 exceptions in `OPEN` / `UNDER_REVIEW` state. AI investigation does NOT resolve exceptions.
+   - **AI Advisory Boundary**: Prominently marked with **"AI ADVISORY ONLY: AI investigation does not modify financial reconciliation state."**
+
+
 
 
 

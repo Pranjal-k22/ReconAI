@@ -307,10 +307,11 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Throughput</span>
-                  <span className="font-medium text-slate-800">
-                    {latestRun.recordsPerSecond ? `${latestRun.recordsPerSecond} rec/s` : "—"}
+                  <span className="text-slate-500 block font-medium">Batch Engine Throughput</span>
+                  <span className="font-medium text-slate-800 block">
+                    {latestRun.recordsPerSecond ? `${latestRun.recordsPerSecond} rec/s` : latestRun.metrics?.throughputRecordsPerSecond ? `${latestRun.metrics.throughputRecordsPerSecond.toFixed(2)} rec/s` : "—"}
                   </span>
+                  <span className="text-[10px] text-slate-400 block">Persisted batch matching</span>
                 </div>
               </div>
 

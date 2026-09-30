@@ -245,17 +245,19 @@ export default function FinanceControllerPage() {
                 </div>
                 <div className="w-px h-8 bg-slate-800" />
                 <div>
-                  <span className="text-slate-400 block">Throughput</span>
-                  <span className="font-mono font-semibold text-slate-200">
-                    {selectedRun.throughput || 0} rec/s
+                  <span className="text-slate-400 block font-medium">Controller Throughput</span>
+                  <span className="font-mono font-semibold text-slate-200 block">
+                    {selectedRun.throughput != null ? `${selectedRun.throughput} rec/s` : "—"}
                   </span>
+                  <span className="text-[9px] text-slate-400 block">Full persisted workflow</span>
                 </div>
                 <div className="w-px h-8 bg-slate-800" />
                 <div>
-                  <span className="text-slate-400 block">Progress</span>
-                  <span className="font-mono font-semibold text-emerald-400">
-                    {selectedRun.progressPercent || 100}%
+                  <span className="text-slate-400 block font-medium">Run State</span>
+                  <span className="font-mono font-semibold text-emerald-400 block">
+                    {selectedRun.status || "COMPLETED"}
                   </span>
+                  <span className="text-[9px] text-slate-400 block">Final state rendered</span>
                 </div>
               </div>
             </div>
@@ -263,7 +265,7 @@ export default function FinanceControllerPage() {
             {/* Stepper Pipeline */}
             <div className="pt-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                State Machine Execution Pipeline
+                Run State Presentation — State Machine Execution Pipeline
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">

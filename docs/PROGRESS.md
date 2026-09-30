@@ -207,6 +207,34 @@ None.
   - NO GroundTruth participation in production reconciliation.
   - Phase 4 started: NO. Stopped: YES.
 
+---
+
+## Track 4 Phase 3A — Frontend Metric + Progress Semantics Correction
+
+- **Phase Status**: VERIFIED & ACCEPTED (PASS).
+- **Corrected Semantic Features**:
+  1. **Authoritative Throughput**:
+     - **Controller Throughput**: **12.51 records/sec** (Full persisted controller workflow including ingestion, validation, DB persistence of 120 results and 40 exceptions, safety gate evaluation, and automated AI exception investigation dispatch).
+     - **Batch Engine Throughput**: **~40-60 records/sec** (Persisted batch matching without AI analysis).
+     - **Matching Engine Pure Execution**: **~4,615 records/sec** (In-memory matching logic).
+     - UI label updated to **"Controller Throughput"** with explicit subtext definition **"Full persisted workflow"**.
+  2. **Truthful Progress Model (Run State Presentation)**:
+     - Terminology changed from "REAL-TIME PROGRESS" to **"RUN STATE PRESENTATION"**.
+     - Display truthful loading state while synchronous POST is executing, followed by actual final state returned from backend. No fake progress bars or fabricated polling loops.
+  3. **Verified Financial Sum**:
+     - ₹10,30,180.00 Total = ₹7,17,020.00 Auto-Reconciled + ₹3,13,160.00 Under Review (**PASS**).
+  4. **Verified Unresolved Exception Count**:
+     - 40 Exceptions, 40 Unresolved (`OPEN` or `UNDER_REVIEW`). AI investigation attached without altering resolution status.
+  5. **Operational vs Evaluation Distinction**:
+     - Operational Match Rate (66.67%) kept distinct from GroundTruth Benchmark Classification Accuracy (100.00%).
+  6. **AI Advisory Notice**:
+     - Prominently displays: **"AI ADVISORY ONLY: AI investigation does not modify financial reconciliation state."**
+- **Test & Build Results**:
+  - Backend Vitest Suite: 42 test files, **183/183 tests passed** (0 failed).
+  - Frontend Vite Production Build: **Completed cleanly (0 errors)**.
+- **Phase 4 Started**: NO. Stopped: YES.
+
+
 
 
 

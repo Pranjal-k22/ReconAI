@@ -34,9 +34,10 @@ This script guides the live presenter through demonstrating ReconAI to hackathon
 > - **80 auto-reconciled** (exact match confidence = 100%, 0 anomalies)
 > - **40 exceptions flagged** into the human review queue
 > - **66.67% auto-reconciliation rate**
-> - **Gross processed value**: ₹10,03,095.82
+> - **Controller Throughput**: 12.51 records/sec (Full persisted controller workflow)
+> - **Gross processed value**: ₹10,30,180.00
 > - **Automatically reconciled value**: ₹7,17,020.00
-> - **Held under review**: ₹2,86,075.82"
+> - **Held under review**: ₹3,13,160.00"
 
 ---
 
