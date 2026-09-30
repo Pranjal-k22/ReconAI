@@ -27,3 +27,33 @@
 | Can live Razorpay keys (`rzp_live_`) be used in Test Mode? | **NO** | `validateTestModeSafety()` throws AppError exception on `rzp_live_` keys. |
 | Can GroundTruth answer keys influence matching decisions? | **NO** | GroundTruth imports forbidden in `server/src/services/reconciliation/` (`groundTruthIsolationGuard.test.js`). |
 | Can audit trail records be modified or deleted via API? | **NO** | Audit API provides `GET /api/audit` and `GET /api/audit/:id` only. |
+
+---
+
+## Track 4 Phase 0 Baseline Audit
+
+- **Audit Date**: 2026-09-30
+- **Actual Baseline Status**: PASS
+- **Verified Tests**: 41 backend test files passed (170/170 tests). Frontend production build passed.
+- **Verified Benchmark**: 120 synthetic scenarios (`RECONAI_DEMO_V1`, seed `RECONAI_DEMO_2026`), 100.00% accuracy, precision, recall, and F1 score against GroundTruth.
+- **Track 4 Requirement Matrix**:
+  | Requirement | Current Implementation | Evidence | Status | Gap |
+  | :--- | :--- | :--- | :--- | :--- |
+  | Finance-ops loop | End-to-end reconciliation flow from data ingestion to human decision and audit logging. | `reconciliationService.js`, `humanReviewService.js`, `auditService.js` | VERIFIED | Baseline loop complete |
+  | 50+ record synthetic batch | 120 deterministic synthetic scenarios. | `benchmarkGenerator.js` | VERIFIED | 120 scenarios verified |
+  | Agentic/orchestrated workflow | Batch reconciliation & on-demand Gemini AI investigator. | `reconciliationService.js`, `exceptionInvestigator.js` | PARTIAL | Standalone agent state-machine pending |
+  | Match rate | 66.67% auto-reconciled (80/120), 33.33% routed to exceptions (40/120). | `metricsService.js` | VERIFIED | 100% classification match rate |
+  | Throughput | Pure in-memory matching engine runs 120 scenarios in ~26ms. | `benchmarkCompatibility.test.js` | VERIFIED | Measured |
+  | Accuracy/evaluation | Dynamic GroundTruth calculation (100% accuracy/precision/recall/F1). | `evaluationService.js` | VERIFIED | GroundTruth strictly isolated |
+  | Exception reporting | Severity, financial impact, and discrepancy reason tracking. | `exceptionService.js`, `severityService.js` | VERIFIED | Fully satisfied |
+  | Unresolved exception reporting | Open exception tracking and filtering by resolution status. | `exceptionController.js` | VERIFIED | Fully satisfied |
+  | Human review | Approvals and resolution actions preserving original classification. | `humanReviewService.js` | VERIFIED | Fully satisfied |
+  | Audit trail | Centralized append-only audit trail redacting sensitive keys. | `auditService.js`, `AuditLog.js` | VERIFIED | Zero update/delete endpoints |
+  | Graceful failure | Fallback explanations for AI timeouts/errors; Razorpay error handling. | `fallbackExplanation.js`, `razorpayClient.js` | VERIFIED | Fully satisfied |
+  | Financial safety | Integer paise arithmetic, confidence safety gate, anomaly lockout, test mode guard. | `money.js`, `safetyGateService.js`, `razorpayClient.js` | VERIFIED | Invariants enforced |
+  | Explainability | Rule-based proof + Zod-validated Gemini structured advisory output. | `matchingEngine.js`, `aiSchemas.js` | VERIFIED | Fully satisfied |
+  | GroundTruth isolation | GroundTruth imports forbidden in reconciliation services. | `groundTruthIsolationGuard.test.js` | VERIFIED | Strictly isolated |
+  | Production/demo readiness | Full test suite passing (170/170 tests), Vite build passing (0 errors). | Vitest & Vite build output | VERIFIED | Baseline verified |
+- **Preserved Invariants**: Integer paise representation, deterministic primary matching, anomaly lockout, confidence safety gate, human review requirement, classification preservation, append-only audit trail, advisory-only AI boundary, read-only Razorpay guard.
+- **Phase 1 Recommendation**: Build autonomous Track 4 Agent Controller loop without mutating baseline safety invariants.
+

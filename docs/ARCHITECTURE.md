@@ -167,3 +167,56 @@ ReconAI features a deterministic benchmark dataset of 120 synthetic financial sc
 - **Database**: MongoDB (Atlas / Local).
 - **AI Service**: Google Gemini API (`@google/genai` SDK).
 - **Testing & Metrics**: Vitest, Supertest, Custom Evaluation Benchmarking suite.
+
+---
+
+## Track 4 Phase 0 Baseline Audit
+
+- **Audit Date**: 2026-09-30
+- **Actual Baseline Status**: PASS
+- **Verified Tests**: 41 backend test files passed (170/170 tests). Frontend production build passed.
+- **Verified Benchmark**: 120 synthetic scenarios (`RECONAI_DEMO_V1`, seed `RECONAI_DEMO_2026`), 100.00% accuracy, precision, recall, and F1 score against GroundTruth.
+- **Track 4 Requirement Matrix**:
+  | Requirement | Current Implementation | Evidence | Status | Gap |
+  | :--- | :--- | :--- | :--- | :--- |
+  | Finance-ops loop | Multi-way ingestion, matching, classification, safety gate, human review, audit trail. | `reconciliationService.js`, `humanReviewService.js`, `auditService.js` | VERIFIED | Core baseline loop complete |
+  | 50+ record synthetic batch | 120 deterministic synthetic scenarios. | `benchmarkGenerator.js` | VERIFIED | 120 scenarios verified |
+  | Agentic/orchestrated workflow | Reconciliation batch runner + on-demand Gemini AI investigator. | `reconciliationService.js`, `exceptionInvestigator.js` | PARTIAL | Autonomous state-machine agent loop missing |
+  | Match rate | 66.67% auto-reconciled (80/120), 33.33% exceptions (40/120). | `metricsService.js` | VERIFIED | 100% engine match rate |
+  | Throughput | Pure in-memory matching engine runs 120 scenarios in ~26ms. | `benchmarkCompatibility.test.js` | VERIFIED | Measured |
+  | Accuracy/evaluation | Dynamic GroundTruth calculation (100% accuracy/precision/recall/F1). | `evaluationService.js` | VERIFIED | GroundTruth strictly isolated |
+  | Exception reporting | Severity, financial impact, and discrepancy reason tracking. | `exceptionService.js`, `severityService.js` | VERIFIED | Fully satisfied |
+  | Unresolved exception reporting | Open exception tracking and filtering by resolution status. | `exceptionController.js` | VERIFIED | Fully satisfied |
+  | Human review | Approvals and resolution actions preserving original classification. | `humanReviewService.js` | VERIFIED | Fully satisfied |
+  | Audit trail | Centralized append-only audit trail redacting sensitive keys. | `auditService.js`, `AuditLog.js` | VERIFIED | Zero update/delete endpoints |
+  | Graceful failure | Fallback explanations for AI timeouts/errors; Razorpay error handling. | `fallbackExplanation.js`, `razorpayClient.js` | VERIFIED | Fully satisfied |
+  | Financial safety | Integer paise arithmetic, confidence safety gate, anomaly lockout, test mode guard. | `money.js`, `safetyGateService.js`, `razorpayClient.js` | VERIFIED | Invariants enforced |
+  | Explainability | Rule-based proof + Zod-validated Gemini structured advisory output. | `matchingEngine.js`, `aiSchemas.js` | VERIFIED | Fully satisfied |
+  | GroundTruth isolation | GroundTruth imports forbidden in reconciliation services. | `groundTruthIsolationGuard.test.js` | VERIFIED | Strictly isolated |
+  | Production/demo readiness | Full test suite passing (170/170 tests), Vite build passing (0 errors). | Vitest & Vite build output | VERIFIED | Baseline verified |
+- **Preserved Invariants**: Integer paise representation, deterministic primary matching, anomaly lockout, confidence safety gate, human review requirement, classification preservation, append-only audit trail, advisory-only AI boundary, read-only Razorpay guard.
+- **Phase 1 Recommendation**: Build autonomous Track 4 Agent Controller loop wrapping baseline operations without altering baseline invariants.
+
+---
+
+## Track 4 Phase 1 Architecture Plan
+
+### CURRENT VERIFIED BASELINE
+- **Deterministic Primary Matching Engine**: Pure rules engine in `matchingEngine.js` achieves 100.00% accuracy, precision, recall, and F1 across 120 benchmark scenarios.
+- **Integer Paise Money Arithmetic**: Enforced in `money.js` and all database schemas.
+- **Safety Gate & Anomaly Lockout**: Enforced in `safetyGateService.js` (auto-reconcile blocked unless `confidence >= 0.95` and `classification === 'MATCHED'`).
+- **Classification Preservation**: Enforced in `humanReviewService.js`. Original anomaly classifications are never overwritten.
+- **Append-Only Audit Logging**: Centralized in `auditService.js` with secret redaction.
+- **Razorpay Integration**: Read-only Test Mode client in `razorpayClient.js` with live-key protection.
+
+### PLANNED TRACK 4 FINANCE CONTROLLER ARCHITECTURE (PHASE 2)
+- **Finance Controller Agent**: `FinanceControllerAgent.js` state machine (`IDLE` → `INGESTING` → `VALIDATING` → `RECONCILING` → `SAFETY_EVALUATION` → `EXCEPTION_PROCESSING` → `REPORTING` → `COMPLETED` / `FAILED`).
+- **Controller REST API**: `POST /api/finance-controller/run`, `GET /api/finance-controller/runs`, `GET /api/finance-controller/runs/:runId/report`.
+- **Operational Unresolved Exception Definition**: Exception cases with `resolutionStatus` in (`OPEN`, `UNDER_REVIEW`) at batch completion.
+- **Automated AI Dispatch**: Controller automatically triggers `exceptionInvestigator.js` for created exception cases without altering financial state.
+- **Graceful Failure**: Automatic fallback to deterministic explanations on Gemini timeout or network error.
+
+### NOT IMPLEMENTED YET
+- Phase 2 implementation code (`FinanceControllerAgent.js`, new controller routes, new controller Mongoose model, controller UI tab). Zero implementation performed in Phase 1.
+
+

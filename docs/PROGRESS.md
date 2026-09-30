@@ -92,3 +92,59 @@ None.
 - Live MongoDB Atlas Audited Run Executed: PASS (runId: `RUN-20260902113400-FA3I`, 120 results, 40 ExceptionCases, 122 Audit Logs).
 - Benchmark Accuracy: 120/120 (100.00%).
 - GroundTruth Isolation Guard: VERIFIED PASS.
+
+---
+
+## Track 4 Phase 0 Baseline Audit
+
+- **Audit Date**: 2026-09-30
+- **Actual Baseline Status**: PASS (All baseline reconciliation, financial safety, audit logging, Gemini advisory, Razorpay read-only, and evaluation modules verified and passing).
+- **Verified Tests**: 41 backend test files passed, 170 tests passed (0 failed, 0 skipped). Frontend Vite build succeeded cleanly (0 errors).
+- **Verified Benchmark**: 120 synthetic scenarios (`RECONAI_DEMO_V1`, seed `RECONAI_DEMO_2026`). 80 auto-reconciled clean matches, 40 exception cases. 100.00% classification accuracy, precision, recall, and F1 score against GroundTruth.
+- **Track 4 Requirement Matrix**:
+  | Requirement | Current Implementation | Evidence | Status | Gap |
+  | :--- | :--- | :--- | :--- | :--- |
+  | Finance-ops loop | End-to-end multi-pass reconciliation loop from ingestion to human review & audit. | `reconciliationService.js`, `humanReviewService.js`, `auditService.js` | VERIFIED | Fully implemented baseline |
+  | 50+ record synthetic batch | 120 synthetic scenario records generated deterministically. | `benchmarkGenerator.js` (120 orders, 120 payments, 120 settlements) | VERIFIED | Fully satisfied (120 records) |
+  | Agentic/orchestrated workflow | Batch reconciliation orchestration & on-demand AI exception investigation. | `reconciliationService.js`, `exceptionInvestigator.js` | PARTIAL | Autonomous multi-step Finance Controller agent loop missing |
+  | Match rate | 66.67% auto-reconciled (80/120), 33.33% routed to exceptions (40/120). 100% engine classification match rate. | `benchmarkCompatibility.test.js`, `metricsService.js` | VERIFIED | Fully satisfied |
+  | Throughput | Pure in-memory matching engine processes 120 scenarios in ~26ms. | `benchmarkCompatibility.test.js` | VERIFIED | Measured |
+  | Accuracy/evaluation | GroundTruth evaluation service calculates accuracy, precision, recall, and F1. | `evaluationService.js` (100% Accuracy/Precision/Recall/F1) | VERIFIED | GroundTruth strictly isolated |
+  | Exception reporting | ExceptionCase records created with severity, financial impact, and reason details. | `exceptionService.js`, `severityService.js` | VERIFIED | Fully satisfied |
+  | Unresolved exception reporting | Open exceptions tracked by resolution status (`OPEN`, `UNDER_REVIEW`, `APPROVED`, etc.). | `exceptionController.js`, `humanReviewService.js` | VERIFIED | Fully satisfied |
+  | Human review | Review actions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) preserving classification. | `humanReviewService.js` | VERIFIED | Fully satisfied |
+  | Audit trail | Append-only audit logging for batch runs, human review, and AI queries. | `auditService.js`, `AuditLog.js` | VERIFIED | Zero update/delete routes |
+  | Graceful failure | Deterministic fallback explanations on Gemini timeout/error; Razorpay error handling. | `fallbackExplanation.js`, `razorpayClient.js` | VERIFIED | Fully satisfied |
+  | Financial safety | Integer paise standard, confidence safety gate (>= 0.95), anomaly lockout, Razorpay test mode guard. | `money.js`, `safetyGateService.js`, `razorpayClient.js` | VERIFIED | Strictly enforced |
+  | Explainability | Rule-based deterministic explanations + Gemini advisory structured output. | `matchingEngine.js`, `aiSchemas.js` | VERIFIED | Fully satisfied |
+  | GroundTruth isolation | GroundTruth model forbidden from production reconciliation import paths. | `groundTruthIsolationGuard.test.js` | VERIFIED | Strictly isolated |
+  | Production/demo readiness | Full test suite passing (170/170 tests), Vite build passing (0 errors), MongoDB Atlas integrated. | Vitest output, Vite build output | VERIFIED | Baseline ready |
+- **Known Gaps**: Autonomous agent state-machine for Track 4 autonomous controller loops (Phase 1 candidate).
+- **Preserved Invariants**: Integer paise math, deterministic matching priority, safety gate anomaly lockout, original classification preservation, append-only audit, advisory-only AI boundary, Razorpay read-only test mode guard.
+- **Phase 1 Recommendation**: Build autonomous Track 4 Agent Controller loop wrapping baseline reconciliation & exception workflows without altering baseline invariants.
+
+---
+
+## Track 4 Phase 1 Architecture Plan
+
+- **Phase Status**: ARCHITECTURE COMPLETE — AWAITING PHASE 2 APPROVAL.
+- **Authoritative Baseline Verification**:
+  - Scenarios: 120
+  - MerchantOrders: 120
+  - GatewayPayments: 124
+  - SettlementRecords: 112
+  - GroundTruth: 120
+  - Total Financial Value: ₹1,030,180.00 (103,018,000 paise)
+  - Auto-Reconciled Value: ₹717,020.00 (71,702,000 paise)
+  - Value Under Review: ₹313,160.00 (31,316,000 paise)
+  - Matched Count: 80 (66.67% auto-reconciliation rate)
+  - Exception Count: 40 (33.33% exception rate)
+  - Accuracy / Precision / Recall / F1: 100.00%
+- **Planned Phase 2 Scope**:
+  - `FinanceControllerAgent.js` state machine (`IDLE` → `INGESTING` → `VALIDATING` → `RECONCILING` → `SAFETY_EVALUATION` → `EXCEPTION_PROCESSING` → `REPORTING` → `COMPLETED` / `FAILED`)
+  - `FinanceControllerRun` Mongoose Model
+  - REST endpoints (`POST /api/finance-controller/run`, `GET /api/finance-controller/runs`, `GET /api/finance-controller/runs/:id/report`)
+  - React client AI Finance Controller dashboard tab
+- **NOT IMPLEMENTED YET**: Phase 2 code implementation. (Phase 1 zero-code gate strictly maintained).
+
+

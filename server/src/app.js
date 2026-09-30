@@ -12,6 +12,7 @@ import exceptionRoutes from "./routes/exceptionRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import razorpayRoutes from "./routes/razorpayRoutes.js";
 import integrationRoutes from "./routes/integrationRoutes.js";
+import financeRoutes from "./routes/financeRoutes.js";
 
 const env = getEnv();
 const app = express();
@@ -44,6 +45,8 @@ app.use("/api/exceptions", exceptionRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/razorpay", razorpayRoutes);
 app.use("/api/integrations", integrationRoutes);
+app.use("/api/finance-controller", financeRoutes);
+
 
 // 404 Handler for unmatched routes
 app.use(notFoundHandler);

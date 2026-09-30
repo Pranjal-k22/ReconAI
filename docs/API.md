@@ -169,3 +169,23 @@ Triggers READ-ONLY payment fetch and sync from Razorpay Test Mode.
 
 ### `POST /api/razorpay/sync/settlements`
 Triggers READ-ONLY settlement reconciliation fetch and sync from Razorpay Test Mode.
+
+---
+
+## Track 4 Phase 1 Architecture Plan (Proposed Phase 2 Endpoints)
+
+### `POST /api/finance-controller/run` (PLANNED)
+Triggers autonomous Track 4 Finance Controller agent batch execution.
+
+### `GET /api/finance-controller/runs` (PLANNED)
+Lists historical controller agent batch runs.
+
+### `GET /api/finance-controller/runs/:runId` (PLANNED)
+Retrieves status, state history, and metrics for a specific controller run.
+
+### `GET /api/finance-controller/runs/:runId/report` (PLANNED)
+Retrieves the complete Track 4 Finance Controller Report (match rate, unresolved exception list, throughput, financial summary).
+
+### `GET /api/finance-controller/runs/:runId/status` (PLANNED)
+Lightweight polling endpoint for active controller state machine status.
+

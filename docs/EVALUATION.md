@@ -77,9 +77,10 @@ All metrics are computed dynamically at runtime:
 - **Exception Count**: 40
 - **Auto Reconciliation Rate**: **66.67%** (80 / 120)
 - **Throughput**: **253.16 records/sec** (474 ms total execution time)
-- **Total Amount Processed**: ₹1,003,095.82 (100,309,582 paise)
+- **Total Amount Processed**: ₹1,030,180.00 (103,018,000 paise)
 - **Auto-Reconciled Amount**: ₹717,020.00 (71,702,000 paise)
-- **Amount Under Review**: ₹286,075.82 (28,607,582 paise)
+- **Amount Under Review**: ₹313,160.00 (31,316,000 paise)
+
 
 ### Operational Classification Breakdown
 ```json
