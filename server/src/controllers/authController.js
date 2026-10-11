@@ -98,7 +98,7 @@ export async function issueServiceToken(req, res, next) {
     }
 
     // Verify machine credential against server-side service identity registry (timingSafeEqual)
-    const serviceProfile = authenticateServiceCredential({
+    const serviceProfile = await authenticateServiceCredential({
       serviceId,
       clientSecret
     });
@@ -157,7 +157,8 @@ export async function issueServiceToken(req, res, next) {
           role: serviceProfile.role,
           tenantId: serviceProfile.tenantId,
           customerId: serviceProfile.customerId,
-          scopes: serviceProfile.scopes
+          scopes: serviceProfile.scopes,
+          credentialVersion: serviceProfile.credentialVersion || 1
         }
       }
     });

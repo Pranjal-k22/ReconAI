@@ -163,3 +163,22 @@ If an identity attempts an unauthorized action or attempts to access a cross-ten
    }
    ```
 3. **No Information Leakage**: Error response payload strictly returns `{ "success": false, "error": { "code": "FORBIDDEN", "message": "Access denied." } }`. Zero internal tenant or database schema details are returned.
+
+---
+
+## 6. Machine-Service Principal Lifecycle & Persistent Revocation Guarantees
+
+Machine identities (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`) are managed and persisted in the `ServicePrincipal` MongoDB datastore:
+
+1. **Identity & Scope Binding**:
+   - `CUSTOMER_AI`: Bound strictly to a fixed customer (`customerId`) and merchant tenant (`tenantId`). Permitted scopes default to `["READ_CUSTOMER_EVIDENCE"]`.
+   - `SHOP_AI`: Bound strictly to a fixed merchant tenant (`tenantId`). Permitted scopes default to `["READ_STORE_EVIDENCE"]`.
+   - `PAYMENT_CONTROLLER`: System controller identity. Permitted scopes default to `["PROPOSE_ACTION", "APPEND_EVENT"]`. Strictly non-executing in Phase 3.
+2. **Durable Credential Storage**:
+   - Credential verification material is stored exclusively as salted `scrypt` hashes (`credentialHash` and `credentialSalt`). Plaintext machine secrets, bearer tokens, or signing keys are never stored or logged.
+3. **Restart-Safe Provisioning**:
+   - Environment variables supply credentials only during initial bootstrap when a service does not already exist. Server restarts never overwrite existing records, never reactivate disabled principals, never revert rotated credential versions, and never restore revoked scopes.
+4. **Immediate Invalidation Guarantees**:
+   - Disabling a service principal (`isActive: false`) or rotating its credential increments `credentialVersion`, causing existing service tokens to be rejected immediately (`HTTP 401 Unauthorized`) on the next request.
+   - Scope reduction or tenant reassignment immediately constrains active tokens to current server state on the next request, returning `HTTP 403 Forbidden` for removed permissions or old tenants with zero stale-privilege window.
+   - In production, persistent datastore unavailability triggers fail-closed denial (`HTTP 503 Service Unavailable`).

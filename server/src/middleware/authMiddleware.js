@@ -35,29 +35,26 @@ export async function authenticate(req, res, next) {
 
     // 2. Immediate Authorization-Lifetime Validation
     if (verified.identityType === IDENTITY_TYPES.SERVICE) {
-      const serviceState = getServiceAuthorizationState(verified.sub || verified.serviceId);
-      if (serviceState) {
-        if (serviceState.isActive === false) {
-          return next(AppError.unauthorized("Service principal has been disabled or unregistered"));
-        }
-
-        // Invalidate if credential was rotated since token was issued
-        if (
-          verified.credentialVersion &&
-          serviceState.credentialVersion &&
-          verified.credentialVersion < serviceState.credentialVersion
-        ) {
-          return next(AppError.unauthorized("Service credential has been rotated; re-authentication required"));
-        }
-
-        // Synchronize claims with current authoritative server state
-        verified.role = serviceState.role;
-        verified.tenantId = serviceState.tenantId;
-        verified.customerId = serviceState.customerId;
-        verified.scopes = serviceState.scopes;
-      } else if (process.env.NODE_ENV === "production") {
+      const serviceState = await getServiceAuthorizationState(verified.sub || verified.serviceId);
+      if (!serviceState || serviceState.isActive === false) {
         return next(AppError.unauthorized("Service principal has been disabled or unregistered"));
       }
+
+      // Invalidate if credential was rotated since token was issued
+      if (
+        verified.credentialVersion &&
+        serviceState.credentialVersion &&
+        verified.credentialVersion < serviceState.credentialVersion
+      ) {
+        return next(AppError.unauthorized("Service credential has been rotated; re-authentication required"));
+      }
+
+      // Synchronize claims with current authoritative server state
+      verified.serviceId = serviceState.serviceId;
+      verified.role = serviceState.role;
+      verified.tenantId = serviceState.tenantId;
+      verified.customerId = serviceState.customerId;
+      verified.scopes = serviceState.scopes;
     } else {
       const accountState = await getAccountAuthorizationState(verified.sub || verified.userId);
       if (accountState) {
