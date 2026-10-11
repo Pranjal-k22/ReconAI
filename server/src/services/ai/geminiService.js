@@ -37,7 +37,7 @@ export function isGeminiConfigured() {
  */
 export function getGeminiModel() {
   const env = getEnv();
-  return env.GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  return env.GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-1.5-flash";
 }
 
 /**
