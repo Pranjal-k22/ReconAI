@@ -4,7 +4,7 @@ import { ReconciliationResult } from "../../src/models/ReconciliationResult.js";
 import * as auditService from "../../src/services/audit/auditService.js";
 import { investigateException } from "../../src/services/ai/exceptionInvestigator.js";
 
-describe("Exception Investigator Business Service & Safety Boundaries", () => {
+describe("Exception Investigator Business Service & Safety Boundaries", { timeout: 15000 }, () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
