@@ -3,6 +3,11 @@ import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
+import {
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  isNonNegativeSafeInteger
+} from "../../models/helpers/validators.js";
 
 /**
  * Generates a stable unique Event ID.
@@ -15,42 +20,107 @@ export function generateEventId() {
 }
 
 /**
- * Recursively strips sensitive payment credentials and PII:
- * - Card numbers, PAN, CVV, expiry dates
- * - Passwords, API secrets, auth tokens
- * - Contact numbers, emails, customer VPAs
+ * Strict Allowlist of normalized evidence attributes for payment lifecycle events.
+ * Ambiguous generic 'amount' is explicitly removed; only unambiguous integer 'amountPaise'
+ * is accepted. Arbitrary customer PII (e.g. customerName, billingAddress, email,
+ * phone, notes, card tokens, raw provider bodies) is strictly dropped.
+ */
+export const ALLOWED_EVIDENCE_FIELDS = new Set([
+  // Core provider and merchant references (max 128 chars)
+  "merchantOrderId",
+  "gatewayPaymentId",
+  "sourceEventId",
+  "settlementId",
+  "refundId",
+  "disputeId",
+  "arn",
+  "rrn",
+  "upiTxnId",
+  "bankTransactionId",
+  "orderRef",
+  "paymentId",
+
+  // Normalized transaction metrics & status (unambiguous integer paise)
+  "amountPaise",
+  "currency",
+  "status",
+  "paymentMethod",
+  "method",
+  "bank",
+  "wallet",
+  "issuer",
+  "authCode",
+  "errorCode",
+  "errorDescription",
+  "discrepancyReason",
+
+  // Normalized timestamps (ISO string or epoch ms)
+  "occurredAt",
+  "authorizedAt",
+  "capturedAt",
+  "settledAt",
+  "refundedAt",
+  "disputedAt"
+]);
+
+/**
+ * Sanitizes and minimizes evidence payload against the strict allowlist.
+ * Enforces type validation, reasonable length limits, and integer minor units.
+ * Guarantees that unknown keys, unfamiliar customer aliases (e.g. customerName,
+ * billingAddress, customNotes), and sensitive credentials cannot be persisted.
  */
 export function sanitizeLifecyclePayload(payload = {}) {
-  if (!payload || typeof payload !== "object") return {};
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
 
-  const sanitized = Array.isArray(payload) ? [...payload] : { ...payload };
+  const sanitized = {};
 
-  const forbiddenKeys = new Set([
-    "card",
-    "card_number",
-    "card_id",
-    "pan",
-    "cvv",
-    "cvv2",
-    "expiry_month",
-    "expiry_year",
-    "password",
-    "secret",
-    "api_key",
-    "token",
-    "token_id",
-    "email",
-    "contact",
-    "phone",
-    "vpa",
-    "pin"
-  ]);
+  for (const [key, val] of Object.entries(payload)) {
+    // Only accept keys explicitly registered in ALLOWED_EVIDENCE_FIELDS
+    if (!ALLOWED_EVIDENCE_FIELDS.has(key)) {
+      continue;
+    }
 
-  for (const [key, val] of Object.entries(sanitized)) {
-    if (forbiddenKeys.has(key.toLowerCase())) {
-      delete sanitized[key];
-    } else if (val && typeof val === "object") {
-      sanitized[key] = sanitizeLifecyclePayload(val);
+    if (val === null || val === undefined) {
+      continue;
+    }
+
+    // Unambiguous monetary amount in integer paise
+    if (key === "amountPaise") {
+      if (isNonNegativeSafeInteger(val)) {
+        sanitized.amountPaise = val;
+      }
+      continue;
+    }
+
+    // Currency must match supported code
+    if (key === "currency") {
+      if (typeof val === "string" && isValidCurrency(val)) {
+        sanitized.currency = val;
+      }
+      continue;
+    }
+
+    // String attributes with reasonable length limits
+    if (typeof val === "string") {
+      const trimmed = val.trim();
+      if (key === "errorDescription") {
+        sanitized[key] = trimmed.slice(0, 256);
+      } else {
+        sanitized[key] = trimmed.slice(0, 128);
+      }
+      continue;
+    }
+
+    // Boolean or numeric codes
+    if (typeof val === "boolean") {
+      sanitized[key] = val;
+      continue;
+    }
+
+    // Timestamps
+    if (val instanceof Date) {
+      sanitized[key] = val.toISOString();
+      continue;
     }
   }
 
@@ -58,11 +128,34 @@ export function sanitizeLifecyclePayload(payload = {}) {
 }
 
 /**
- * Computes a deterministic SHA-256 hash of a payload object.
+ * Sanitizes provenance audit data to ensure no PII or raw provider payloads are stored.
+ */
+export function sanitizeProvenance(provenance = {}) {
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) return {};
+
+  const allowedProvenanceKeys = new Set(["ingressChannel", "sourceIp", "userAgent", "workerId", "receivedAt"]);
+  const clean = {};
+
+  for (const [key, val] of Object.entries(provenance)) {
+    if (allowedProvenanceKeys.has(key) && typeof val === "string") {
+      clean[key] = val.slice(0, 128).trim();
+    }
+  }
+
+  return clean;
+}
+
+/**
+ * Computes a deterministic SHA-256 hash of a normalized payload object.
  */
 export function calculatePayloadFingerprint(payload = {}) {
   // Sort keys deterministically
-  const sortedStr = JSON.stringify(payload, Object.keys(payload || {}).sort());
+  const keys = Object.keys(payload || {}).sort();
+  const sortedObj = {};
+  for (const k of keys) {
+    sortedObj[k] = payload[k];
+  }
+  const sortedStr = JSON.stringify(sortedObj);
   return crypto.createHash("sha256").update(sortedStr).digest("hex");
 }
 
@@ -89,7 +182,7 @@ export function generateDeduplicationKey({
 }
 
 /**
- * Appends a normalized payment lifecycle event with deterministic deduplication and PII scrubbing.
+ * Appends a normalized payment lifecycle event with deterministic deduplication and payload minimization.
  * If the event was already recorded, returns { isDuplicate: true, event: existingEvent } without error.
  */
 export async function appendLifecycleEvent({
@@ -122,13 +215,21 @@ export async function appendLifecycleEvent({
     throw AppError.badRequest("normalizedEventType is required");
   }
 
-  // 1. Sanitize payload
+  // Strict currency validation
+  if (typeof currency !== "string" || !isValidCurrency(currency)) {
+    throw AppError.badRequest(`Invalid or unsupported currency '${currency}'. Supported: ${SUPPORTED_CURRENCIES.join(", ")}`);
+  }
+
+  // 1. Sanitize & minimize payload using strict allowlist (rawPayload is never persisted)
   const normalizedPayload = sanitizeLifecyclePayload(rawPayload);
 
-  // 2. Compute fingerprint
+  // 2. Sanitize provenance
+  const cleanProvenance = sanitizeProvenance(provenance);
+
+  // 3. Compute deterministic fingerprint on final validated data
   const payloadFingerprint = calculatePayloadFingerprint(normalizedPayload);
 
-  // 3. Derive deterministic deduplication key
+  // 4. Derive deterministic deduplication key
   const deduplicationKey = generateDeduplicationKey({
     tenantId: tenantId.trim(),
     sourceSystem,
@@ -139,7 +240,7 @@ export async function appendLifecycleEvent({
     payloadFingerprint
   });
 
-  // 4. Check for existing duplicate event before write
+  // 5. Check for existing duplicate event before write
   const existing = await PaymentLifecycleEvent.findOne({ deduplicationKey });
   if (existing) {
     logger.info({ deduplicationKey, eventId: existing.eventId }, "Duplicate PaymentLifecycleEvent acknowledged");
@@ -162,13 +263,13 @@ export async function appendLifecycleEvent({
       settlementId: settlementId ? settlementId.trim() : null,
       refundId: refundId ? refundId.trim() : null,
       amountPaise,
-      currency: currency.toUpperCase(),
+      currency,
       providerOccurredAt: providerOccurredAt ? new Date(providerOccurredAt) : null,
       sourceObservedAt: sourceObservedAt ? new Date(sourceObservedAt) : null,
       ingestedAt: new Date(),
       normalizedPayload,
       payloadFingerprint,
-      provenance
+      provenance: cleanProvenance
     });
 
     // Record audit entry

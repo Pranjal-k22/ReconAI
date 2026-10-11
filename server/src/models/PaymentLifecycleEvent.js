@@ -1,5 +1,9 @@
 import mongoose from "mongoose";
-import { isNonNegativeSafeInteger } from "./helpers/validators.js";
+import {
+  isNonNegativeSafeInteger,
+  SUPPORTED_CURRENCIES,
+  isValidCurrency
+} from "./helpers/validators.js";
 
 /**
  * ReconAI 2.0 - PaymentLifecycleEvent Domain Model
@@ -118,8 +122,15 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      required: true,
-      uppercase: true,
+      required: [true, "currency is required"],
+      enum: {
+        values: SUPPORTED_CURRENCIES,
+        message: "currency '{VALUE}' is not supported. Supported: INR"
+      },
+      validate: {
+        validator: isValidCurrency,
+        message: "currency must be a valid 3-letter uppercase code from supported currencies (INR)"
+      },
       default: "INR"
     },
     providerOccurredAt: {

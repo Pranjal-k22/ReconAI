@@ -1,11 +1,24 @@
 import mongoose from "mongoose";
-import { isNonNegativeSafeInteger } from "./helpers/validators.js";
+import {
+  isNonNegativeSafeInteger,
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  sanitizeMetadata
+} from "./helpers/validators.js";
 
 /**
  * ReconAI 2.0 - PaymentCase Domain Model
  *
- * Represents a durable investigation and resolution case across the 8-dimensional
- * payment lifecycle state machine.
+ * Represents a durable investigation and resolution case across the 8 canonical
+ * orthogonal payment lifecycle dimensions:
+ * 1. Order state
+ * 2. Customer debit state
+ * 3. Authorization state
+ * 4. Capture state
+ * 5. Settlement state
+ * 6. Refund state
+ * 7. Dispute state
+ * 8. Resolution-case state
  */
 
 export const ORDER_STATES = [
@@ -17,6 +30,7 @@ export const ORDER_STATES = [
   "ORDER_FULFILLED",
   "UNKNOWN"
 ];
+export const ORDER_STATUSES = ORDER_STATES;
 
 export const CUSTOMER_DEBIT_STATES = [
   "DEBIT_NONE",
@@ -25,6 +39,7 @@ export const CUSTOMER_DEBIT_STATES = [
   "DEBIT_REVERSED",
   "UNKNOWN"
 ];
+export const CUSTOMER_DEBIT_STATUSES = CUSTOMER_DEBIT_STATES;
 
 export const AUTHORIZATION_STATES = [
   "AUTH_NONE",
@@ -34,6 +49,7 @@ export const AUTHORIZATION_STATES = [
   "AUTH_VOIDED",
   "UNKNOWN"
 ];
+export const AUTHORIZATION_STATUSES = AUTHORIZATION_STATES;
 
 export const CAPTURE_STATES = [
   "CAPTURE_NONE",
@@ -42,6 +58,7 @@ export const CAPTURE_STATES = [
   "CAPTURE_FAILED",
   "UNKNOWN"
 ];
+export const CAPTURE_STATUSES = CAPTURE_STATES;
 
 export const SETTLEMENT_STATES = [
   "SETTLEMENT_NONE",
@@ -50,6 +67,7 @@ export const SETTLEMENT_STATES = [
   "SETTLEMENT_ADJUSTED",
   "UNKNOWN"
 ];
+export const SETTLEMENT_STATUSES = SETTLEMENT_STATES;
 
 export const REFUND_STATES = [
   "REFUND_NONE",
@@ -60,6 +78,7 @@ export const REFUND_STATES = [
   "REFUND_FAILED",
   "UNKNOWN"
 ];
+export const REFUND_STATUSES = REFUND_STATES;
 
 export const DISPUTE_STATES = [
   "DISPUTE_NONE",
@@ -70,6 +89,7 @@ export const DISPUTE_STATES = [
   "DISPUTE_LOST",
   "UNKNOWN"
 ];
+export const DISPUTE_STATUSES = DISPUTE_STATES;
 
 export const RESOLUTION_CASE_STATES = [
   "CASE_DETECTED",
@@ -81,6 +101,7 @@ export const RESOLUTION_CASE_STATES = [
   "CASE_SAFE_HOLD",
   "CASE_EXTERNAL_ESCALATION"
 ];
+export const RESOLUTION_CASE_STATUSES = RESOLUTION_CASE_STATES;
 
 export const DISCREPANCY_CATEGORIES = [
   "FRONTEND_DROPPED_AFTER_SUCCESS",
@@ -164,62 +185,84 @@ const paymentCaseSchema = new mongoose.Schema(
       enum: DISCREPANCY_CATEGORIES,
       index: true
     },
-    // Dimension 1: Merchant Order State
-    orderState: {
+    // Canonical Dimension 1: Merchant Order State
+    orderStatus: {
       type: String,
       required: true,
-      enum: ORDER_STATES,
-      default: "UNKNOWN"
+      enum: ORDER_STATUSES,
+      default: "UNKNOWN",
+      alias: "orderState"
     },
-    // Dimension 2: Customer Debit Claim State
-    customerDebitState: {
+    // Canonical Dimension 2: Customer Debit Claim State
+    // Must default to UNKNOWN when no authoritative debit evidence exists
+    customerDebitStatus: {
       type: String,
       required: true,
-      enum: CUSTOMER_DEBIT_STATES,
-      default: "DEBIT_NONE"
+      enum: CUSTOMER_DEBIT_STATUSES,
+      default: "UNKNOWN",
+      alias: "customerDebitState"
     },
-    // Dimension 3: Gateway Authorization State
-    authorizationState: {
+    // Canonical Dimension 3: Gateway Authorization State
+    authorizationStatus: {
       type: String,
       required: true,
-      enum: AUTHORIZATION_STATES,
-      default: "AUTH_NONE"
+      enum: AUTHORIZATION_STATUSES,
+      default: "AUTH_NONE",
+      alias: "authorizationState"
     },
-    // Dimension 4: Gateway Capture State
-    captureState: {
+    // Canonical Dimension 4: Gateway Capture State
+    captureStatus: {
       type: String,
       required: true,
-      enum: CAPTURE_STATES,
-      default: "CAPTURE_NONE"
+      enum: CAPTURE_STATUSES,
+      default: "CAPTURE_NONE",
+      alias: "captureState"
     },
-    // Dimension 5: Settlement State
-    settlementState: {
+    // Canonical Dimension 5: Settlement State
+    settlementStatus: {
       type: String,
       required: true,
-      enum: SETTLEMENT_STATES,
-      default: "SETTLEMENT_NONE"
+      enum: SETTLEMENT_STATUSES,
+      default: "SETTLEMENT_NONE",
+      alias: "settlementState"
     },
-    // Dimension 6: Refund State
-    refundState: {
+    // Canonical Dimension 6: Refund State
+    refundStatus: {
       type: String,
       required: true,
-      enum: REFUND_STATES,
-      default: "REFUND_NONE"
+      enum: REFUND_STATUSES,
+      default: "REFUND_NONE",
+      alias: "refundState"
     },
-    // Dimension 7: Dispute / Chargeback State
-    disputeState: {
+    // Canonical Dimension 7: Dispute / Chargeback State
+    disputeStatus: {
       type: String,
       required: true,
-      enum: DISPUTE_STATES,
-      default: "DISPUTE_NONE"
+      enum: DISPUTE_STATUSES,
+      default: "DISPUTE_NONE",
+      alias: "disputeState"
     },
-    // Dimension 8: Case Resolution State
-    resolutionCaseState: {
+    // Canonical Dimension 8: Case Resolution State
+    resolutionCaseStatus: {
       type: String,
       required: true,
-      enum: RESOLUTION_CASE_STATES,
+      enum: RESOLUTION_CASE_STATUSES,
       default: "CASE_DETECTED",
-      index: true
+      index: true,
+      alias: "resolutionCaseState"
+    },
+    // Auxiliary Dimensions (optional supplementary fields)
+    reversalStatus: {
+      type: String,
+      default: null
+    },
+    reconStatus: {
+      type: String,
+      default: null
+    },
+    investigationStatus: {
+      type: String,
+      default: null
     },
     // Monetary integer paise
     expectedAmountPaise: {
@@ -238,10 +281,18 @@ const paymentCaseSchema = new mongoose.Schema(
         message: "actualAmountPaise must be a non-negative safe integer or null"
       }
     },
+    // Strict currency validation
     currency: {
       type: String,
-      required: true,
-      uppercase: true,
+      required: [true, "currency is required"],
+      enum: {
+        values: SUPPORTED_CURRENCIES,
+        message: "currency '{VALUE}' is not supported. Supported: INR"
+      },
+      validate: {
+        validator: isValidCurrency,
+        message: "currency must be a valid 3-letter uppercase code from supported currencies (INR)"
+      },
       default: "INR"
     },
     // Safe-Hold explicit flags
@@ -257,6 +308,7 @@ const paymentCaseSchema = new mongoose.Schema(
     },
     safeHoldReason: {
       type: String,
+      maxlength: [256, "safeHoldReason must not exceed 256 characters"],
       default: null
     },
     // Correlation & Deduplication metadata
@@ -278,9 +330,11 @@ const paymentCaseSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    // Sanitized, non-PII metadata
     metadata: {
       type: mongoose.Schema.Types.Mixed,
-      default: {}
+      default: {},
+      set: sanitizeMetadata
     }
   },
   {
@@ -288,9 +342,8 @@ const paymentCaseSchema = new mongoose.Schema(
   }
 );
 
-// Compound indexes for tenant-scoped querying and deduplication
 paymentCaseSchema.index({ tenantId: 1, caseId: 1 });
-paymentCaseSchema.index({ tenantId: 1, resolutionCaseState: 1 });
+paymentCaseSchema.index({ tenantId: 1, resolutionCaseStatus: 1 });
 paymentCaseSchema.index({ tenantId: 1, isSafeHold: 1 });
 paymentCaseSchema.index(
   { tenantId: 1, correlationKey: 1 },

@@ -2,6 +2,11 @@ import { PaymentCase } from "../../models/PaymentCase.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
+import {
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  sanitizeMetadata
+} from "../../models/helpers/validators.js";
 
 /**
  * Generates a stable, unique Payment Case ID.
@@ -15,8 +20,7 @@ export function generateCaseId() {
 
 /**
  * Validates and creates a new PaymentCase with tenant scoping and duplicate prevention.
- * If correlationKey is provided and a case already exists for { tenantId, correlationKey },
- * returns the existing case deterministically to prevent duplicate case creation.
+ * Supports canonical 8 dimensions independently with backward-compatible aliases.
  */
 export async function createPaymentCase({
   tenantId,
@@ -24,14 +28,25 @@ export async function createPaymentCase({
   merchantOrderId = null,
   gatewayPaymentId = null,
   discrepancyCategory,
-  orderState = "UNKNOWN",
-  customerDebitState = "DEBIT_NONE",
-  authorizationState = "AUTH_NONE",
-  captureState = "CAPTURE_NONE",
-  settlementState = "SETTLEMENT_NONE",
-  refundState = "REFUND_NONE",
-  disputeState = "DISPUTE_NONE",
-  resolutionCaseState = "CASE_DETECTED",
+  orderStatus,
+  orderState,
+  customerDebitStatus,
+  customerDebitState,
+  authorizationStatus,
+  authorizationState,
+  captureStatus,
+  captureState,
+  settlementStatus,
+  settlementState,
+  refundStatus,
+  refundState,
+  disputeStatus,
+  disputeState,
+  resolutionCaseStatus,
+  resolutionCaseState,
+  reversalStatus = null,
+  reconStatus = null,
+  investigationStatus = null,
   expectedAmountPaise = null,
   actualAmountPaise = null,
   currency = "INR",
@@ -50,6 +65,11 @@ export async function createPaymentCase({
     throw AppError.badRequest("discrepancyCategory is required");
   }
 
+  // Strict currency validation
+  if (typeof currency !== "string" || !isValidCurrency(currency)) {
+    throw AppError.badRequest(`Invalid or unsupported currency '${currency}'. Supported: ${SUPPORTED_CURRENCIES.join(", ")}`);
+  }
+
   // Idempotent case creation check by correlationKey
   if (correlationKey) {
     const existing = await PaymentCase.findOne({ tenantId, correlationKey });
@@ -61,6 +81,18 @@ export async function createPaymentCase({
 
   const caseId = generateCaseId();
 
+  // Resolve canonical 8 dimensions: customerDebitStatus defaults to UNKNOWN when not affirmatively evidenced
+  const resolvedOrderStatus = orderStatus || orderState || "UNKNOWN";
+  const resolvedCustomerDebitStatus = customerDebitStatus || customerDebitState || "UNKNOWN";
+  const resolvedAuthorizationStatus = authorizationStatus || authorizationState || "AUTH_NONE";
+  const resolvedCaptureStatus = captureStatus || captureState || "CAPTURE_NONE";
+  const resolvedSettlementStatus = settlementStatus || settlementState || "SETTLEMENT_NONE";
+  const resolvedRefundStatus = refundStatus || refundState || "REFUND_NONE";
+  const resolvedDisputeStatus = disputeStatus || disputeState || "DISPUTE_NONE";
+  const resolvedResolutionCaseStatus = resolutionCaseStatus || resolutionCaseState || "CASE_DETECTED";
+
+  const sanitizedMeta = sanitizeMetadata(metadata);
+
   try {
     const paymentCase = await PaymentCase.create({
       caseId,
@@ -69,22 +101,25 @@ export async function createPaymentCase({
       merchantOrderId: merchantOrderId ? merchantOrderId.trim() : null,
       gatewayPaymentId: gatewayPaymentId ? gatewayPaymentId.trim() : null,
       discrepancyCategory,
-      orderState,
-      customerDebitState,
-      authorizationState,
-      captureState,
-      settlementState,
-      refundState,
-      disputeState,
-      resolutionCaseState,
+      orderStatus: resolvedOrderStatus,
+      customerDebitStatus: resolvedCustomerDebitStatus,
+      authorizationStatus: resolvedAuthorizationStatus,
+      captureStatus: resolvedCaptureStatus,
+      settlementStatus: resolvedSettlementStatus,
+      refundStatus: resolvedRefundStatus,
+      disputeStatus: resolvedDisputeStatus,
+      resolutionCaseStatus: resolvedResolutionCaseStatus,
+      reversalStatus,
+      reconStatus,
+      investigationStatus,
       expectedAmountPaise,
       actualAmountPaise,
-      currency: currency.toUpperCase(),
+      currency,
       isSafeHold,
       safeHoldCode,
-      safeHoldReason,
+      safeHoldReason: safeHoldReason ? safeHoldReason.slice(0, 256) : null,
       correlationKey: correlationKey ? correlationKey.trim() : null,
-      metadata,
+      metadata: sanitizedMeta,
       detectedAt: new Date()
     });
 
@@ -92,14 +127,14 @@ export async function createPaymentCase({
     await createAuditEvent({
       actorType: "SYSTEM",
       actorId,
-      action: "CONTROLLER_RUN_STARTED", // Reusing established audit action or standard audit event
+      action: "CONTROLLER_RUN_STARTED",
       entityType: "PaymentCase",
       entityId: caseId,
       metadata: {
         tenantId,
         caseId,
         discrepancyCategory,
-        resolutionCaseState,
+        resolutionCaseStatus: resolvedResolutionCaseStatus,
         isSafeHold
       }
     });
@@ -156,10 +191,10 @@ export async function updatePaymentCaseSafeHold({
 
   paymentCase.isSafeHold = Boolean(isSafeHold);
   paymentCase.safeHoldCode = isSafeHold ? safeHoldCode : "NONE";
-  paymentCase.safeHoldReason = isSafeHold ? safeHoldReason : null;
+  paymentCase.safeHoldReason = isSafeHold && safeHoldReason ? safeHoldReason.slice(0, 256) : null;
 
   if (isSafeHold) {
-    paymentCase.resolutionCaseState = "CASE_SAFE_HOLD";
+    paymentCase.resolutionCaseStatus = "CASE_SAFE_HOLD";
   }
 
   await paymentCase.save();
@@ -186,6 +221,7 @@ export async function updatePaymentCaseSafeHold({
  */
 export async function listPaymentCases({
   tenantId,
+  resolutionCaseStatus,
   resolutionCaseState,
   isSafeHold,
   page = 1,
@@ -193,7 +229,8 @@ export async function listPaymentCases({
 } = {}) {
   const filter = {};
   if (tenantId) filter.tenantId = tenantId;
-  if (resolutionCaseState) filter.resolutionCaseState = resolutionCaseState;
+  const statusFilter = resolutionCaseStatus || resolutionCaseState;
+  if (statusFilter) filter.resolutionCaseStatus = statusFilter;
   if (typeof isSafeHold === "boolean") filter.isSafeHold = isSafeHold;
 
   const skip = (Math.max(1, page) - 1) * Math.max(1, limit);
