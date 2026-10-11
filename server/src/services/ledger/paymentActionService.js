@@ -2,6 +2,11 @@ import { PaymentAction, ACTION_TYPES, ACTION_STATUSES } from "../../models/Payme
 import { createAuditEvent } from "../audit/auditService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
+import {
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  sanitizeMetadata
+} from "../../models/helpers/validators.js";
 
 /**
  * Generates a stable unique Action ID.
@@ -29,7 +34,7 @@ export const PHASE_2_ALLOWED_STATUSES = new Set([
 /**
  * Records an intended, simulated, or held action in the action ledger.
  * Enforces tenant-scoped idempotency key uniqueness, strict non-executing status boundaries,
- * and integer-paise validation.
+ * currency validation, and integer-paise validation.
  */
 export async function recordProposedAction({
   tenantId,
@@ -74,6 +79,11 @@ export async function recordProposedAction({
     throw AppError.badRequest("reasonCode is required");
   }
 
+  // Strict currency validation
+  if (typeof currency !== "string" || !isValidCurrency(currency)) {
+    throw AppError.badRequest(`Invalid or unsupported currency '${currency}'. Supported: ${SUPPORTED_CURRENCIES.join(", ")}`);
+  }
+
   // Phase 2 Safety Guard: Strictly enforce non-executing intent statuses
   if (!PHASE_2_ALLOWED_STATUSES.has(actionStatus)) {
     throw AppError.badRequest(
@@ -96,6 +106,7 @@ export async function recordProposedAction({
   }
 
   const actionId = generateActionId();
+  const sanitizedMeta = sanitizeMetadata(metadata);
 
   try {
     const action = await PaymentAction.create({
@@ -106,13 +117,13 @@ export async function recordProposedAction({
       actionStatus,
       idempotencyKey: idempotencyKey.trim(),
       amountPaise,
-      currency: currency.toUpperCase(),
+      currency,
       initiatedByActorType,
-      initiatedByActorId: initiatedByActorId.trim(),
-      reasonCode: reasonCode.trim(),
+      initiatedByActorId: initiatedByActorId.trim().slice(0, 64),
+      reasonCode: reasonCode.trim().slice(0, 64),
       evidenceReferences,
       policyEvaluationResult,
-      metadata,
+      metadata: sanitizedMeta,
       proposedAt: new Date()
     });
 

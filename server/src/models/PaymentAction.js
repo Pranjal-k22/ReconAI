@@ -1,5 +1,10 @@
 import mongoose from "mongoose";
-import { isNonNegativeSafeInteger } from "./helpers/validators.js";
+import {
+  isNonNegativeSafeInteger,
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  sanitizeMetadata
+} from "./helpers/validators.js";
 
 /**
  * ReconAI 2.0 - PaymentAction Domain Model (Action Ledger)
@@ -92,8 +97,15 @@ const paymentActionSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      required: true,
-      uppercase: true,
+      required: [true, "currency is required"],
+      enum: {
+        values: SUPPORTED_CURRENCIES,
+        message: "currency '{VALUE}' is not supported. Supported: INR"
+      },
+      validate: {
+        validator: isValidCurrency,
+        message: "currency must be a valid 3-letter uppercase code from supported currencies (INR)"
+      },
       default: "INR"
     },
     initiatedByActorType: {
@@ -104,12 +116,14 @@ const paymentActionSchema = new mongoose.Schema(
     initiatedByActorId: {
       type: String,
       required: [true, "initiatedByActorId is required"],
-      trim: true
+      trim: true,
+      maxlength: [64, "initiatedByActorId must not exceed 64 characters"]
     },
     reasonCode: {
       type: String,
       required: [true, "reasonCode is required"],
-      trim: true
+      trim: true,
+      maxlength: [64, "reasonCode must not exceed 64 characters"]
     },
     evidenceReferences: {
       type: [String],
@@ -143,15 +157,18 @@ const paymentActionSchema = new mongoose.Schema(
     },
     failureReason: {
       type: String,
+      maxlength: [256, "failureReason must not exceed 256 characters"],
       default: null
     },
     safeHoldReason: {
       type: String,
+      maxlength: [256, "safeHoldReason must not exceed 256 characters"],
       default: null
     },
     metadata: {
       type: mongoose.Schema.Types.Mixed,
-      default: {}
+      default: {},
+      set: sanitizeMetadata
     }
   },
   {

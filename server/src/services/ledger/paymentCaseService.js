@@ -2,6 +2,11 @@ import { PaymentCase } from "../../models/PaymentCase.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
+import {
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  sanitizeMetadata
+} from "../../models/helpers/validators.js";
 
 /**
  * Generates a stable, unique Payment Case ID.
@@ -60,6 +65,11 @@ export async function createPaymentCase({
     throw AppError.badRequest("discrepancyCategory is required");
   }
 
+  // Strict currency validation
+  if (typeof currency !== "string" || !isValidCurrency(currency)) {
+    throw AppError.badRequest(`Invalid or unsupported currency '${currency}'. Supported: ${SUPPORTED_CURRENCIES.join(", ")}`);
+  }
+
   // Idempotent case creation check by correlationKey
   if (correlationKey) {
     const existing = await PaymentCase.findOne({ tenantId, correlationKey });
@@ -71,15 +81,17 @@ export async function createPaymentCase({
 
   const caseId = generateCaseId();
 
-  // Resolve canonical 8 dimensions with alias compatibility
+  // Resolve canonical 8 dimensions: customerDebitStatus defaults to UNKNOWN when not affirmatively evidenced
   const resolvedOrderStatus = orderStatus || orderState || "UNKNOWN";
-  const resolvedCustomerDebitStatus = customerDebitStatus || customerDebitState || "DEBIT_NONE";
+  const resolvedCustomerDebitStatus = customerDebitStatus || customerDebitState || "UNKNOWN";
   const resolvedAuthorizationStatus = authorizationStatus || authorizationState || "AUTH_NONE";
   const resolvedCaptureStatus = captureStatus || captureState || "CAPTURE_NONE";
   const resolvedSettlementStatus = settlementStatus || settlementState || "SETTLEMENT_NONE";
   const resolvedRefundStatus = refundStatus || refundState || "REFUND_NONE";
   const resolvedDisputeStatus = disputeStatus || disputeState || "DISPUTE_NONE";
   const resolvedResolutionCaseStatus = resolutionCaseStatus || resolutionCaseState || "CASE_DETECTED";
+
+  const sanitizedMeta = sanitizeMetadata(metadata);
 
   try {
     const paymentCase = await PaymentCase.create({
@@ -102,12 +114,12 @@ export async function createPaymentCase({
       investigationStatus,
       expectedAmountPaise,
       actualAmountPaise,
-      currency: currency.toUpperCase(),
+      currency,
       isSafeHold,
       safeHoldCode,
-      safeHoldReason,
+      safeHoldReason: safeHoldReason ? safeHoldReason.slice(0, 256) : null,
       correlationKey: correlationKey ? correlationKey.trim() : null,
-      metadata,
+      metadata: sanitizedMeta,
       detectedAt: new Date()
     });
 
@@ -179,7 +191,7 @@ export async function updatePaymentCaseSafeHold({
 
   paymentCase.isSafeHold = Boolean(isSafeHold);
   paymentCase.safeHoldCode = isSafeHold ? safeHoldCode : "NONE";
-  paymentCase.safeHoldReason = isSafeHold ? safeHoldReason : null;
+  paymentCase.safeHoldReason = isSafeHold && safeHoldReason ? safeHoldReason.slice(0, 256) : null;
 
   if (isSafeHold) {
     paymentCase.resolutionCaseStatus = "CASE_SAFE_HOLD";

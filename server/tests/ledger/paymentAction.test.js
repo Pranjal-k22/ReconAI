@@ -101,19 +101,34 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     await expect(badSchemaAction.validate()).rejects.toThrow();
   });
 
-  // Test 5: Rejection of unknown actionType
-  it("5. Rejects invalid or unapproved actionType", async () => {
+  // Test 5: Currency validation on PaymentAction
+  it("5. Currency validation: enforces INR and rejects lowercase or unsupported currencies", async () => {
+    const badCurrencyAction = new PaymentAction({
+      actionId: "ACT-BAD-CURR",
+      tenantId: "sh_merchant_alpha",
+      caseId: "CASE-001",
+      actionType: "WAIT_AND_MONITOR",
+      actionStatus: "PROPOSED",
+      idempotencyKey: "IDEM-CURR-01",
+      currency: "usd",
+      initiatedByActorType: "AI_PLANNER",
+      initiatedByActorId: "planner-1",
+      reasonCode: "TEST"
+    });
+    await expect(badCurrencyAction.validate()).rejects.toThrow(/currency/i);
+
     await expect(
       actionService.recordProposedAction({
         tenantId: "sh_merchant_alpha",
         caseId: "CASE-001",
-        actionType: "ILLEGAL_UNRESTRICTED_PAYOUT",
-        idempotencyKey: "IDEM-001",
+        actionType: "WAIT_AND_MONITOR",
+        idempotencyKey: "IDEM-SERVICE-CURR",
+        currency: "GBP",
         initiatedByActorType: "AI_PLANNER",
         initiatedByActorId: "planner-1",
         reasonCode: "TEST"
       })
-    ).rejects.toThrow(/Invalid actionType/);
+    ).rejects.toThrow(/Invalid or unsupported currency/i);
   });
 
   // Test 6: Scoped idempotency deduplication
@@ -171,8 +186,32 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     vi.restoreAllMocks();
   });
 
-  // Test 8: Integer-paise monetary amounts
-  it("8. Monetary amounts strictly enforce integer paise", async () => {
+  // Test 8: Metadata minimization on PaymentAction
+  it("8. Metadata minimization: strips customer PII and nested structures from PaymentAction", () => {
+    const actionDoc = new PaymentAction({
+      actionId: "ACT-META-001",
+      tenantId: "sh_merchant_alpha",
+      caseId: "CASE-001",
+      actionType: "SIMULATE_REFUND_CUSTOMER",
+      actionStatus: "SIMULATED",
+      idempotencyKey: "IDEM-META-01",
+      initiatedByActorType: "POLICY_ENGINE",
+      initiatedByActorId: "policy-1",
+      reasonCode: "POLICY_APPROVED",
+      metadata: {
+        simulationRunId: "SIM-882",
+        customerContact: "+919876543210",
+        nestedInfo: { key: "secret" }
+      }
+    });
+
+    expect(actionDoc.metadata.simulationRunId).toBe("SIM-882");
+    expect(actionDoc.metadata.customerContact).toBeUndefined();
+    expect(actionDoc.metadata.nestedInfo).toBeUndefined();
+  });
+
+  // Test 9: Integer-paise monetary amounts
+  it("9. Monetary amounts strictly enforce integer paise", async () => {
     const validAction = new PaymentAction({
       actionId: "ACT-MONEY-01",
       tenantId: "sh_merchant_alpha",
@@ -205,8 +244,8 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     await expect(negativeAction.validate()).rejects.toThrow();
   });
 
-  // Test 9: Static Architecture Guard: Proves zero code paths in Phase 2 trigger payment provider writes
-  it("9. Static Architecture Guard: ledger services contain ZERO payment provider write calls", () => {
+  // Test 10: Static Architecture Guard: Proves zero code paths in Phase 2 trigger payment provider writes
+  it("10. Static Architecture Guard: ledger services contain ZERO payment provider write calls", () => {
     const ledgerDir = path.resolve(__dirname, "../../src/services/ledger");
     const files = fs.readdirSync(ledgerDir).filter((f) => f.endsWith(".js"));
 

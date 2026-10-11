@@ -1,5 +1,10 @@
 import mongoose from "mongoose";
-import { isNonNegativeSafeInteger } from "./helpers/validators.js";
+import {
+  isNonNegativeSafeInteger,
+  SUPPORTED_CURRENCIES,
+  isValidCurrency,
+  sanitizeMetadata
+} from "./helpers/validators.js";
 
 /**
  * ReconAI 2.0 - PaymentCase Domain Model
@@ -189,11 +194,12 @@ const paymentCaseSchema = new mongoose.Schema(
       alias: "orderState"
     },
     // Canonical Dimension 2: Customer Debit Claim State
+    // Must default to UNKNOWN when no authoritative debit evidence exists
     customerDebitStatus: {
       type: String,
       required: true,
       enum: CUSTOMER_DEBIT_STATUSES,
-      default: "DEBIT_NONE",
+      default: "UNKNOWN",
       alias: "customerDebitState"
     },
     // Canonical Dimension 3: Gateway Authorization State
@@ -275,10 +281,18 @@ const paymentCaseSchema = new mongoose.Schema(
         message: "actualAmountPaise must be a non-negative safe integer or null"
       }
     },
+    // Strict currency validation
     currency: {
       type: String,
-      required: true,
-      uppercase: true,
+      required: [true, "currency is required"],
+      enum: {
+        values: SUPPORTED_CURRENCIES,
+        message: "currency '{VALUE}' is not supported. Supported: INR"
+      },
+      validate: {
+        validator: isValidCurrency,
+        message: "currency must be a valid 3-letter uppercase code from supported currencies (INR)"
+      },
       default: "INR"
     },
     // Safe-Hold explicit flags
@@ -294,6 +308,7 @@ const paymentCaseSchema = new mongoose.Schema(
     },
     safeHoldReason: {
       type: String,
+      maxlength: [256, "safeHoldReason must not exceed 256 characters"],
       default: null
     },
     // Correlation & Deduplication metadata
@@ -315,9 +330,11 @@ const paymentCaseSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    // Sanitized, non-PII metadata
     metadata: {
       type: mongoose.Schema.Types.Mixed,
-      default: {}
+      default: {},
+      set: sanitizeMetadata
     }
   },
   {
