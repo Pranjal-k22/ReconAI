@@ -1,0 +1,214 @@
+import { PaymentCase } from "../../models/PaymentCase.js";
+import { createAuditEvent } from "../audit/auditService.js";
+import { AppError } from "../../utils/AppError.js";
+import { logger } from "../../config/logger.js";
+
+/**
+ * Generates a stable, unique Payment Case ID.
+ * Example: CASE-20261011-8F3A1B
+ */
+export function generateCaseId() {
+  const dateStr = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 8);
+  const randStr = Math.random().toString(36).substring(2, 8).toUpperCase();
+  return `CASE-${dateStr}-${randStr}`;
+}
+
+/**
+ * Validates and creates a new PaymentCase with tenant scoping and duplicate prevention.
+ * If correlationKey is provided and a case already exists for { tenantId, correlationKey },
+ * returns the existing case deterministically to prevent duplicate case creation.
+ */
+export async function createPaymentCase({
+  tenantId,
+  customerId = null,
+  merchantOrderId = null,
+  gatewayPaymentId = null,
+  discrepancyCategory,
+  orderState = "UNKNOWN",
+  customerDebitState = "DEBIT_NONE",
+  authorizationState = "AUTH_NONE",
+  captureState = "CAPTURE_NONE",
+  settlementState = "SETTLEMENT_NONE",
+  refundState = "REFUND_NONE",
+  disputeState = "DISPUTE_NONE",
+  resolutionCaseState = "CASE_DETECTED",
+  expectedAmountPaise = null,
+  actualAmountPaise = null,
+  currency = "INR",
+  isSafeHold = false,
+  safeHoldCode = "NONE",
+  safeHoldReason = null,
+  correlationKey = null,
+  metadata = {},
+  actorId = "system-case-manager"
+} = {}) {
+  if (!tenantId || typeof tenantId !== "string" || tenantId.trim().length === 0) {
+    throw AppError.badRequest("tenantId is required and must be a non-empty string");
+  }
+
+  if (!discrepancyCategory) {
+    throw AppError.badRequest("discrepancyCategory is required");
+  }
+
+  // Idempotent case creation check by correlationKey
+  if (correlationKey) {
+    const existing = await PaymentCase.findOne({ tenantId, correlationKey });
+    if (existing) {
+      logger.info({ tenantId, correlationKey, caseId: existing.caseId }, "Existing PaymentCase matched by correlationKey");
+      return { isDuplicate: true, paymentCase: existing };
+    }
+  }
+
+  const caseId = generateCaseId();
+
+  try {
+    const paymentCase = await PaymentCase.create({
+      caseId,
+      tenantId: tenantId.trim(),
+      customerId: customerId ? customerId.trim() : null,
+      merchantOrderId: merchantOrderId ? merchantOrderId.trim() : null,
+      gatewayPaymentId: gatewayPaymentId ? gatewayPaymentId.trim() : null,
+      discrepancyCategory,
+      orderState,
+      customerDebitState,
+      authorizationState,
+      captureState,
+      settlementState,
+      refundState,
+      disputeState,
+      resolutionCaseState,
+      expectedAmountPaise,
+      actualAmountPaise,
+      currency: currency.toUpperCase(),
+      isSafeHold,
+      safeHoldCode,
+      safeHoldReason,
+      correlationKey: correlationKey ? correlationKey.trim() : null,
+      metadata,
+      detectedAt: new Date()
+    });
+
+    // Record audit event
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId,
+      action: "CONTROLLER_RUN_STARTED", // Reusing established audit action or standard audit event
+      entityType: "PaymentCase",
+      entityId: caseId,
+      metadata: {
+        tenantId,
+        caseId,
+        discrepancyCategory,
+        resolutionCaseState,
+        isSafeHold
+      }
+    });
+
+    return { isDuplicate: false, paymentCase };
+  } catch (err) {
+    // Handle duplicate key error from MongoDB unique index
+    if (err.code === 11000) {
+      if (correlationKey) {
+        const existing = await PaymentCase.findOne({ tenantId, correlationKey });
+        if (existing) {
+          return { isDuplicate: true, paymentCase: existing };
+        }
+      }
+      throw AppError.conflict(`Duplicate payment case detected for tenant '${tenantId}'`);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Retrieves a PaymentCase by caseId, enforcing tenant boundary when tenantId is provided.
+ */
+export async function getPaymentCaseById(caseId, tenantId = null) {
+  if (!caseId) {
+    throw AppError.badRequest("caseId is required");
+  }
+
+  const query = { caseId };
+  if (tenantId) {
+    query.tenantId = tenantId;
+  }
+
+  const paymentCase = await PaymentCase.findOne(query);
+  if (!paymentCase) {
+    throw AppError.notFound(`PaymentCase not found for caseId '${caseId}'`);
+  }
+
+  return paymentCase;
+}
+
+/**
+ * Updates a PaymentCase safe-hold status and reason.
+ */
+export async function updatePaymentCaseSafeHold({
+  caseId,
+  tenantId,
+  isSafeHold,
+  safeHoldCode = "ADMIN_HOLD",
+  safeHoldReason,
+  actorId = "system-safe-hold-service"
+}) {
+  const paymentCase = await getPaymentCaseById(caseId, tenantId);
+
+  paymentCase.isSafeHold = Boolean(isSafeHold);
+  paymentCase.safeHoldCode = isSafeHold ? safeHoldCode : "NONE";
+  paymentCase.safeHoldReason = isSafeHold ? safeHoldReason : null;
+
+  if (isSafeHold) {
+    paymentCase.resolutionCaseState = "CASE_SAFE_HOLD";
+  }
+
+  await paymentCase.save();
+
+  await createAuditEvent({
+    actorType: "SYSTEM",
+    actorId,
+    action: "CONTROLLER_SAFETY_GATE_EVALUATED",
+    entityType: "PaymentCase",
+    entityId: caseId,
+    metadata: {
+      tenantId,
+      isSafeHold: paymentCase.isSafeHold,
+      safeHoldCode: paymentCase.safeHoldCode,
+      safeHoldReason: paymentCase.safeHoldReason
+    }
+  });
+
+  return paymentCase;
+}
+
+/**
+ * Lists PaymentCases with filtering and pagination.
+ */
+export async function listPaymentCases({
+  tenantId,
+  resolutionCaseState,
+  isSafeHold,
+  page = 1,
+  limit = 50
+} = {}) {
+  const filter = {};
+  if (tenantId) filter.tenantId = tenantId;
+  if (resolutionCaseState) filter.resolutionCaseState = resolutionCaseState;
+  if (typeof isSafeHold === "boolean") filter.isSafeHold = isSafeHold;
+
+  const skip = (Math.max(1, page) - 1) * Math.max(1, limit);
+  const [cases, total] = await Promise.all([
+    PaymentCase.find(filter).sort({ detectedAt: -1 }).skip(skip).limit(limit).lean(),
+    PaymentCase.countDocuments(filter)
+  ]);
+
+  return {
+    cases,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    }
+  };
+}
