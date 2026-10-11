@@ -195,3 +195,17 @@ We expand the existing `auditService.js` and `AuditLog` collection:
 2. The existing recursive credential and PII sanitization is maintained (`[REDACTED]`).
 3. No update or delete operations are permitted on the audit ledger.
 4. Every audit log record links directly to `caseId`, `actorType` (`AI`, `SYSTEM`, `POLICY_ENGINE`, `PROVIDER`, `HUMAN`), and `action`.
+
+---
+
+## ADR-009: Phase 3 Authentication, RBAC, and Row-Level Tenant Isolation Enforcement
+
+### Context
+ReconAI 2.0 requires robust multi-tenant boundaries, distinct machine/service principals (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`), and deny-by-default role authorization.
+
+### Decision
+1. **Cryptographic Tokens:** Implemented via `jsonwebtoken` using HMAC-SHA256 (`HS256`). Segregated secret keys and audiences between human sessions (`aud: "reconai-api"`) and machine services (`aud: "reconai-service"`).
+2. **Server-Side Authorization Middleware:** `authenticate`, `requireRoles`, `requireTenantScope`, and `requireCustomerScope` enforce access inside Express before database queries execute.
+3. **Row-Level Tenant Scoping:** Tenant and customer IDs are derived from verified tokens and injected directly into Mongoose filters. Spoofed IDs in request bodies or query parameters are strictly blocked or overridden.
+4. **Legacy Data Isolation:** Pre-existing records without explicit tenant ownership default to `tenantId: null` and remain quarantined from normal tenant queries to eliminate cross-tenant data leakage.
+5. **Non-Executing Safety Guardrails:** AI and controller identities remain strictly non-executing in Phase 3. Live payment operations and autonomous disbursement remain prohibited.
