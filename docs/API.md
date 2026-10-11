@@ -26,6 +26,122 @@ Error responses follow:
 
 ---
 
+## 0. Authentication & Identity REST APIs (Added 12/10/2026)
+
+ReconAI 2.0 enforces cryptographic authentication and deny-by-default role authorization on all non-public endpoints.
+
+### Authentication Headers
+- **Human User Session:** `Authorization: Bearer <jwt>`
+- **Machine / AI Service Token:** `x-service-token: <jwt>` or `Authorization: Bearer <jwt>`
+- **Service Credential Issuance:** `x-service-id: <serviceId>` and `x-service-secret: <secret>` (or in JSON request body)
+
+---
+
+### `POST /api/auth/login`
+Authenticates a human user principal using memory-hard salted `scrypt` hashing.
+
+**Request Body:**
+```json
+{
+  "identifier": "admin@reconai.local",
+  "password": "SecurePassword123!"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "userId": "usr_admin_01",
+      "email": "admin@reconai.local",
+      "role": "ADMIN",
+      "tenantId": null,
+      "customerId": null,
+      "scopes": ["GLOBAL_AUDIT"]
+    }
+  }
+}
+```
+
+---
+
+### `POST /api/auth/service-token`
+Issues a short-lived machine service JWT bound strictly to the service principal's persistent record in MongoDB.
+
+**Request Headers / Body:**
+```json
+{
+  "serviceId": "svc_customer_ai",
+  "serviceSecret": "reconai-service-token-secret-32chars-min!:customer_ai"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "service": {
+      "serviceId": "svc_customer_ai",
+      "role": "CUSTOMER_AI",
+      "tenantId": "sh_merchant_alpha",
+      "customerId": "cust_4421",
+      "scopes": ["READ_CUSTOMER_EVIDENCE"],
+      "credentialVersion": 1
+    }
+  }
+}
+```
+
+---
+
+### `GET /api/auth/me`
+Returns current session profile. Evaluates current server authorization state live from the persistent datastore on every request.
+
+**Headers:**
+`Authorization: Bearer <token>` or `x-service-token: <token>`
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "sub": "svc_customer_ai",
+      "identityType": "SERVICE",
+      "role": "CUSTOMER_AI",
+      "tenantId": "sh_merchant_alpha",
+      "customerId": "cust_4421",
+      "scopes": ["READ_CUSTOMER_EVIDENCE"]
+    }
+  }
+}
+```
+
+---
+
+### `POST /api/auth/logout`
+Terminates human session and durably registers the token's `jti` in the MongoDB `RevokedToken` collection.
+
+**Headers:**
+`Authorization: Bearer <token>`
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Session logged out and token revoked successfully"
+  }
+}
+```
+
+---
+
 ## 1. Health Endpoint
 
 ### `GET /api/health`

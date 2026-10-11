@@ -307,10 +307,42 @@ ReconAI features a deterministic benchmark dataset of 120 synthetic financial sc
   - **Throughput Semantics**: Explicitly labeled `Controller Throughput` as `Full persisted controller workflow` (12.51 rec/s).
   - **Evaluation Metric Isolation**: Kept Operational Match Rate (66.67%) strictly separated from GroundTruth Benchmark Classification Accuracy (100.00%). Zero-denominator mathematical safeguards enforced in `evaluationService.js`.
 
+---
 
+## 10. ReconAI 2.0 Security, Multi-Tenant Isolation & Persistent Machine Authorization (Added 12/10/2026)
 
+ReconAI 2.0 introduces multi-tenant isolation, distinct machine/AI agent service identities, and durable server-side authorization controls:
 
+```mermaid
+graph TD
+    Request["Incoming API Request"] --> AuthMiddleware["authMiddleware.authenticate"]
+    AuthMiddleware --> AlgCheck["1. Enforce HS256 & Valid Header"]
+    AlgCheck --> RevocationCheck["2. Durable Revocation Check (RevokedToken TTL DB)"]
+    RevocationCheck --> IdentitySplit{"3. Identity Type?"}
 
+    IdentitySplit -- "HUMAN" --> UserStore["UserAccount Store (scrypt)"]
+    IdentitySplit -- "SERVICE" --> ServiceStore["ServicePrincipal Store (scrypt)"]
 
+    UserStore --> SyncHuman["Live Sync: Role, Tenant, Scopes, authVersion"]
+    ServiceStore --> SyncService["Live Sync: Role, Tenant, Scopes, credentialVersion"]
 
+    SyncHuman --> RouteAuth["Downstream Authorization"]
+    SyncService --> RouteAuth
+
+    RouteAuth --> RoleGuard["requireRoles Allowlist"]
+    RouteAuth --> TenantGuard["requireTenantScope (Row-Level Mongo Filter)"]
+    RouteAuth --> AuditorGuard["Auditor Read-Only & Global Audit Check"]
+
+    TenantGuard -- "Scope Match" --> DBQuery["Execute Scoped DB Query"]
+    TenantGuard -- "Cross-Tenant" --> Forbidden["403 Forbidden / 404 Not Found"]
+```
+
+### Architectural Safeguards (12/10/2026):
+1. **Cryptographic Token Segregation**: Human user sessions (`aud: "reconai-api"`) and machine service principals (`aud: "reconai-service"`) use distinct signing keys and separate audience claims. Algorithm confusion is prevented by hardcoding `algorithms: ["HS256"]`.
+2. **Persistent Machine Principal Datastore (`ServicePrincipal`)**: Machine identities are persisted to MongoDB with salted `scrypt` credential hashes, monotonic `credentialVersion`, permitted scopes, and active flags. Plaintext machine secrets, bearer tokens, or signing keys are never stored.
+3. **Restart-Safe Bootstrapping**: `initDefaultServices()` idempotently bootstraps default principals without overwriting existing records, reactivating disabled services, or reverting rotated credentials across application reboots or scaling events.
+4. **Immediate Invalidation on Every Request**: `authMiddleware.authenticate` queries authoritative datastore records in-flight. Disabling an account or service immediately rejects active tokens (`HTTP 401 Unauthorized`). Privilege downgrades, scope removals, and tenant changes immediately enforce updated boundaries (`HTTP 403 Forbidden`) with zero stale-token latency.
+5. **Auditor Scoping & Global Audit Verification**: `AUDITOR` is tenant-scoped by default. Cross-tenant queries require verified `GLOBAL_AUDIT` claims and emit structured audit events. All mutation verbs (`POST`, `PUT`, `PATCH`, `DELETE`) are unconditionally blocked with `HTTP 403 Forbidden`.
+6. **Production Fail-Closed Invariant**: In `NODE_ENV === "production"`, persistent datastore unavailability triggers fail-closed denial (`HTTP 503 Service Unavailable`).
+7. **Non-Executing Financial Boundaries**: Payment actions remain strictly restricted to `["PROPOSED", "SIMULATED", "REJECTED_BY_POLICY", "HELD_IN_SAFE_HOLD"]`. Autonomous provider write execution endpoints remain completely absent.
 
