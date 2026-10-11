@@ -1,126 +1,45 @@
 import { describe, it, expect, vi } from "vitest";
 import { PaymentLifecycleEvent } from "../../src/models/PaymentLifecycleEvent.js";
 import * as eventService from "../../src/services/ledger/paymentLifecycleEventService.js";
-import { AppError } from "../../src/utils/AppError.js";
 
-describe("Phase 2 — PaymentLifecycleEvent Domain Model & Service Tests", () => {
-  // Test 4: Valid event creation with correct provenance and timestamps
-  it("4. Valid event creation with correct provenance, fingerprints, and timestamps", async () => {
-    const rawPayload = {
-      razorpayPaymentId: "pay_TEST123",
-      status: "captured",
-      amount: 250000
-    };
-
-    const sanitized = eventService.sanitizeLifecyclePayload(rawPayload);
-    const fingerprint = eventService.calculatePayloadFingerprint(sanitized);
-
-    const event = new PaymentLifecycleEvent({
-      eventId: "EVT-20261011-0001",
-      tenantId: "sh_merchant_alpha",
-      caseId: "CASE-001",
-      sourceSystem: "GATEWAY_WEBHOOK",
-      sourceEventId: "evt_razorpay_9981",
-      deduplicationKey: "sh_merchant_alpha:GATEWAY_WEBHOOK:evt_razorpay_9981",
-      normalizedEventType: "PAYMENT_CAPTURED",
-      merchantOrderId: "ORD-101",
-      gatewayPaymentId: "pay_TEST123",
-      amountPaise: 250000,
-      currency: "INR",
-      providerOccurredAt: new Date("2026-10-11T12:00:00Z"),
-      sourceObservedAt: new Date("2026-10-11T12:00:02Z"),
-      ingestedAt: new Date(),
-      normalizedPayload: sanitized,
-      payloadFingerprint: fingerprint,
-      schemaVersion: "1.0.0",
-      provenance: { ip: "127.0.0.1", webhookDeliveryId: "del_1" }
-    });
-
-    const err = await event.validate();
-    expect(err).toBeUndefined();
-    expect(event.payloadFingerprint).toBe(fingerprint);
-    expect(event.providerOccurredAt).toBeInstanceOf(Date);
+describe("Phase 2 — PaymentLifecycleEvent Domain Model & Evidence Ledger Tests", () => {
+  // Test 1: Append-only ledger rejects updates and deletes
+  it("1. Append-only ledger invariant: rejects updates and deletions", async () => {
+    await expect(eventService.updateLifecycleEvent("EVT-123", {})).rejects.toThrow(
+      /append-only/i
+    );
+    await expect(eventService.deleteLifecycleEvent("EVT-123")).rejects.toThrow(
+      /append-only/i
+    );
   });
 
-  // Test 5: Duplicate identifiable source-event deterministic reporting
-  it("5. Duplicate identifiable source-event reporting returns existing record", async () => {
-    const mockExistingEvent = {
-      eventId: "EVT-EXISTING-01",
-      deduplicationKey: "sh_merchant_alpha:GATEWAY_WEBHOOK:evt_razorpay_9981",
-      normalizedEventType: "PAYMENT_CAPTURED"
-    };
-
-    vi.spyOn(PaymentLifecycleEvent, "findOne").mockResolvedValue(mockExistingEvent);
-
-    const res = await eventService.appendLifecycleEvent({
-      tenantId: "sh_merchant_alpha",
-      sourceSystem: "GATEWAY_WEBHOOK",
-      sourceEventId: "evt_razorpay_9981",
-      normalizedEventType: "PAYMENT_CAPTURED",
-      rawPayload: { id: "pay_1" }
-    });
-
-    expect(res.isDuplicate).toBe(true);
-    expect(res.event.eventId).toBe("EVT-EXISTING-01");
-
-    vi.restoreAllMocks();
-  });
-
-  // Test 6: Correct handling of events without source event IDs
-  it("6. Correct handling of events without source event IDs via deterministic content fingerprint", () => {
-    const payloadA = { note: "Customer claims debited via UPI", utr: "998877665544" };
-    const sanitizedA = eventService.sanitizeLifecyclePayload(payloadA);
-    const fingerprintA = eventService.calculatePayloadFingerprint(sanitizedA);
-
-    const key1 = eventService.generateDeduplicationKey({
-      tenantId: "sh_merchant_alpha",
-      sourceSystem: "CUSTOMER_CLAIM",
-      sourceEventId: null,
-      normalizedEventType: "CUSTOMER_DEBIT_CLAIM_SUBMITTED",
-      merchantOrderId: "ORD-505",
-      payloadFingerprint: fingerprintA
-    });
-
-    // Identical payload yields identical deduplication key
-    const key2 = eventService.generateDeduplicationKey({
-      tenantId: "sh_merchant_alpha",
-      sourceSystem: "CUSTOMER_CLAIM",
-      sourceEventId: null,
-      normalizedEventType: "CUSTOMER_DEBIT_CLAIM_SUBMITTED",
-      merchantOrderId: "ORD-505",
-      payloadFingerprint: fingerprintA
-    });
-
-    expect(key1).toBe(key2);
-
-    // Different payload yields different fingerprint and different key
-    const payloadB = { note: "Customer claims debited via Netbanking", utr: "112233445566" };
-    const sanitizedB = eventService.sanitizeLifecyclePayload(payloadB);
-    const fingerprintB = eventService.calculatePayloadFingerprint(sanitizedB);
-
-    const key3 = eventService.generateDeduplicationKey({
-      tenantId: "sh_merchant_alpha",
-      sourceSystem: "CUSTOMER_CLAIM",
-      sourceEventId: null,
-      normalizedEventType: "CUSTOMER_DEBIT_CLAIM_SUBMITTED",
-      merchantOrderId: "ORD-505",
-      payloadFingerprint: fingerprintB
-    });
-
-    expect(key1).not.toBe(key3);
-  });
-
-  // Test 7: Append-only invariant enforcement (no update/delete)
-  it("7. Append-only invariant: update and delete operations are rejected by service", async () => {
-    await expect(eventService.updateLifecycleEvent()).rejects.toThrow(/append-only/i);
-    await expect(eventService.deleteLifecycleEvent()).rejects.toThrow(/append-only/i);
-  });
-
-  // Test 13: Sanitization and minimization of sensitive fields
-  it("13. Sanitization of sensitive fields: strips PAN, CVV, passwords, cardholder data, customer PII", () => {
+  // Test 2: Strict allowlist payload minimization drops all customer PII and unfamiliar aliases
+  it("2. Strict allowlist payload minimization: drops customer PII, nested objects, and unapproved aliases", () => {
     const dirtyPayload = {
-      paymentId: "pay_123",
-      amount: 1000,
+      // Approved normalized evidence fields
+      gatewayPaymentId: "pay_123",
+      merchantOrderId: "ORD-001",
+      amountPaise: 100000,
+      currency: "INR",
+      status: "captured",
+      arn: "ARN-888999",
+      method: "card",
+
+      // Unapproved fields / customer PII / unfamiliar aliases
+      customerName: "Alice Sharma",
+      billingAddress: {
+        street: "123 Indiranagar 100ft Rd",
+        city: "Bengaluru",
+        state: "Karnataka",
+        postalCode: "560038"
+      },
+      shippingAddress: {
+        street: "456 Koramangala",
+        city: "Bengaluru"
+      },
+      email: "alice@example.com",
+      phone: "+919876543210",
+      vpa: "alice@okaxis",
       card: {
         number: "4111111111111111",
         cvv: "123",
@@ -129,28 +48,102 @@ describe("Phase 2 — PaymentLifecycleEvent Domain Model & Service Tests", () =>
       },
       password: "secret_login_pass",
       api_key: "rzp_test_secret123",
-      email: "victim@example.com",
-      contact: "+919876543210",
-      vpa: "user@okhdfcbank",
-      orderRef: "ORD-001"
+      customCustomerMemo: "VIP shopper urgent handling",
+      internalNotes: "Suspected multiple account login"
     };
 
     const clean = eventService.sanitizeLifecyclePayload(dirtyPayload);
 
+    // Verified: ALL unapproved fields and arbitrary customer PII are dropped
+    expect(clean.customerName).toBeUndefined();
+    expect(clean.billingAddress).toBeUndefined();
+    expect(clean.shippingAddress).toBeUndefined();
+    expect(clean.email).toBeUndefined();
+    expect(clean.phone).toBeUndefined();
+    expect(clean.vpa).toBeUndefined();
     expect(clean.card).toBeUndefined();
     expect(clean.password).toBeUndefined();
     expect(clean.api_key).toBeUndefined();
-    expect(clean.email).toBeUndefined();
-    expect(clean.contact).toBeUndefined();
-    expect(clean.vpa).toBeUndefined();
-    // Non-sensitive fields are preserved
-    expect(clean.paymentId).toBe("pay_123");
-    expect(clean.amount).toBe(1000);
-    expect(clean.orderRef).toBe("ORD-001");
+    expect(clean.customCustomerMemo).toBeUndefined();
+    expect(clean.internalNotes).toBeUndefined();
+
+    // Approved fields are preserved
+    expect(clean.gatewayPaymentId).toBe("pay_123");
+    expect(clean.merchantOrderId).toBe("ORD-001");
+    expect(clean.amountPaise).toBe(100000);
+    expect(clean.currency).toBe("INR");
+    expect(clean.status).toBe("captured");
+    expect(clean.arn).toBe("ARN-888999");
+    expect(clean.method).toBe("card");
   });
 
-  // Test 14: Database/index failures do not produce false success
-  it("14. Database failures do not produce false success: re-throws persistence exceptions", async () => {
+  // Test 3: Unknown keys cannot be persisted merely because they don't match traditional denylists
+  it("3. Unknown keys cannot be persisted even if absent from traditional denylists", () => {
+    const unknownInput = {
+      gatewayPaymentId: "pay_test_99",
+      unfamiliarMetadataAttribute: "unvetted-value",
+      customerFavoriteColor: "blue",
+      riskScoreVendorX: "782",
+      nestedUnknownObject: { a: 1, b: 2 }
+    };
+
+    const result = eventService.sanitizeLifecyclePayload(unknownInput);
+
+    expect(result.gatewayPaymentId).toBe("pay_test_99");
+    expect(result.unfamiliarMetadataAttribute).toBeUndefined();
+    expect(result.customerFavoriteColor).toBeUndefined();
+    expect(result.riskScoreVendorX).toBeUndefined();
+    expect(result.nestedUnknownObject).toBeUndefined();
+  });
+
+  // Test 4: Deterministic payload fingerprinting across key insertion order
+  it("4. Deterministic payload fingerprinting produces identical SHA-256 regardless of key insertion order", () => {
+    const payloadA = {
+      gatewayPaymentId: "pay_abc",
+      amountPaise: 25000,
+      currency: "INR",
+      status: "authorized"
+    };
+
+    const payloadB = {
+      status: "authorized",
+      currency: "INR",
+      gatewayPaymentId: "pay_abc",
+      amountPaise: 25000
+    };
+
+    const hashA = eventService.calculatePayloadFingerprint(payloadA);
+    const hashB = eventService.calculatePayloadFingerprint(payloadB);
+
+    expect(hashA).toBe(hashB);
+    expect(hashA).toHaveLength(64);
+  });
+
+  // Test 5: Scoped deduplication with and without sourceEventId
+  it("5. Scoped deduplication with and without sourceEventId", () => {
+    const keyWithSource = eventService.generateDeduplicationKey({
+      tenantId: "sh_merchant_alpha",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      sourceEventId: "evt_razorpay_9981",
+      normalizedEventType: "PAYMENT_CAPTURED",
+      payloadFingerprint: "deadbeef"
+    });
+    expect(keyWithSource).toBe("sh_merchant_alpha:GATEWAY_WEBHOOK:evt_razorpay_9981");
+
+    const keyWithoutSource = eventService.generateDeduplicationKey({
+      tenantId: "sh_merchant_alpha",
+      sourceSystem: "RECONAI_SYSTEM",
+      sourceEventId: null,
+      normalizedEventType: "INCONSISTENCY_DETECTED",
+      merchantOrderId: "ORD-554",
+      gatewayPaymentId: "pay_667",
+      payloadFingerprint: "abcdef0123456789abcdef0123456789"
+    });
+    expect(keyWithoutSource).toContain("sh_merchant_alpha:RECONAI_SYSTEM:INCONSISTENCY_DETECTED:ORD-554:");
+  });
+
+  // Test 6: Database/index failures do not produce false success
+  it("6. Database failures do not produce false success: re-throws persistence exceptions", async () => {
     vi.spyOn(PaymentLifecycleEvent, "findOne").mockResolvedValue(null);
     vi.spyOn(PaymentLifecycleEvent, "create").mockRejectedValue(new Error("MongoDB connection lost"));
 

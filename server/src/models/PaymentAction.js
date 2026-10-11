@@ -4,8 +4,9 @@ import { isNonNegativeSafeInteger } from "./helpers/validators.js";
 /**
  * ReconAI 2.0 - PaymentAction Domain Model (Action Ledger)
  *
- * Represents an idempotent record of an intended or executed resolution action.
- * Enforces strict status allowlist, scoped idempotency, and integer paise monetary fields.
+ * Represents an idempotent record of an intended or simulated resolution action.
+ * Enforces strict Phase 2 non-executing status allowlist, scoped idempotency,
+ * and integer paise monetary fields.
  */
 
 export const ACTION_TYPES = [
@@ -20,18 +21,20 @@ export const ACTION_TYPES = [
   "ESCALATE_EXTERNAL_DISPUTE"
 ];
 
+/**
+ * Canonical Phase 2 Action Statuses.
+ * Phase 2 is strictly a storage and intent-recording phase.
+ * It does not authorize or execute live financial transactions.
+ * Execution-ready and execution-confirmed statuses are prohibited.
+ */
 export const ACTION_STATUSES = [
   "PROPOSED",
-  "REJECTED_BY_POLICY",
-  "POLICY_AUTHORIZED",
   "SIMULATED",
-  "EXECUTION_PENDING",
-  "EXECUTED_UNCONFIRMED",
-  "VERIFICATION_PENDING",
-  "VERIFIED_SUCCESS",
-  "EXECUTION_FAILED",
+  "REJECTED_BY_POLICY",
   "HELD_IN_SAFE_HOLD"
 ];
+
+export const PHASE_2_ACTION_STATUSES = ACTION_STATUSES;
 
 export const INITIATING_ACTOR_TYPES = [
   "AI_PLANNER",
@@ -156,7 +159,6 @@ const paymentActionSchema = new mongoose.Schema(
   }
 );
 
-// Compound unique index enforcing scoped idempotency per tenant
 paymentActionSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true });
 paymentActionSchema.index({ tenantId: 1, caseId: 1 });
 paymentActionSchema.index({ tenantId: 1, actionStatus: 1 });

@@ -5,9 +5,104 @@ import fs from "fs";
 import path from "path";
 
 describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
-  // Test 8: Action type and status allowlist enforcement
-  it("8. Action type and status allowlist enforcement: rejects unknown types and statuses", async () => {
-    // Invalid action type
+  // Test 1: Valid Phase 2 intent statuses are accepted
+  it("1. Accepts valid Phase 2 non-executing intent statuses", async () => {
+    const validStatuses = ["PROPOSED", "SIMULATED", "REJECTED_BY_POLICY", "HELD_IN_SAFE_HOLD"];
+
+    for (const status of validStatuses) {
+      const actionDoc = new PaymentAction({
+        actionId: `ACT-STATUS-${status}`,
+        tenantId: "sh_merchant_alpha",
+        caseId: "CASE-001",
+        actionType: "WAIT_AND_MONITOR",
+        actionStatus: status,
+        idempotencyKey: `IDEM-${status}`,
+        initiatedByActorType: "AI_PLANNER",
+        initiatedByActorId: "planner-1",
+        reasonCode: "TEST"
+      });
+
+      const err = await actionDoc.validate();
+      expect(err).toBeUndefined();
+    }
+  });
+
+  // Test 2: Rejection of execution-ready status (READY_FOR_EXECUTION)
+  it("2. Rejects execution-ready status (READY_FOR_EXECUTION)", async () => {
+    await expect(
+      actionService.recordProposedAction({
+        tenantId: "sh_merchant_alpha",
+        caseId: "CASE-001",
+        actionType: "EXECUTE_PROVIDER_REFUND",
+        actionStatus: "READY_FOR_EXECUTION",
+        idempotencyKey: "IDEM-READY-01",
+        initiatedByActorType: "POLICY_ENGINE",
+        initiatedByActorId: "policy-1",
+        reasonCode: "READY_TEST"
+      })
+    ).rejects.toThrow(/Action execution or authorization is prohibited in Phase 2/);
+  });
+
+  // Test 3: Rejection of execution-in-progress and execution-completed statuses
+  it("3. Rejects execution statuses (EXECUTION_PENDING, EXECUTED, VERIFIED_SUCCESS, POLICY_AUTHORIZED)", async () => {
+    const forbiddenStatuses = [
+      "EXECUTION_PENDING",
+      "EXECUTED_UNCONFIRMED",
+      "EXECUTED",
+      "VERIFICATION_PENDING",
+      "VERIFIED_SUCCESS",
+      "POLICY_AUTHORIZED",
+      "EXECUTION_FAILED"
+    ];
+
+    for (const status of forbiddenStatuses) {
+      await expect(
+        actionService.recordProposedAction({
+          tenantId: "sh_merchant_alpha",
+          caseId: "CASE-001",
+          actionType: "EXECUTE_PROVIDER_REFUND",
+          actionStatus: status,
+          idempotencyKey: `IDEM-${status}`,
+          initiatedByActorType: "AI_PLANNER",
+          initiatedByActorId: "planner-1",
+          reasonCode: "FORBIDDEN_EXECUTION"
+        })
+      ).rejects.toThrow(/Action execution or authorization is prohibited in Phase 2/);
+    }
+  });
+
+  // Test 4: Rejection of arbitrary and malformed status strings
+  it("4. Rejects arbitrary and malformed status strings at schema and service layers", async () => {
+    await expect(
+      actionService.recordProposedAction({
+        tenantId: "sh_merchant_alpha",
+        caseId: "CASE-001",
+        actionType: "WAIT_AND_MONITOR",
+        actionStatus: "ARBITRARY_CUSTOM_STATUS",
+        idempotencyKey: "IDEM-ARB-01",
+        initiatedByActorType: "SYSTEM_MONITOR",
+        initiatedByActorId: "monitor-1",
+        reasonCode: "MALFORMED"
+      })
+    ).rejects.toThrow(/Action execution or authorization is prohibited in Phase 2/);
+
+    const badSchemaAction = new PaymentAction({
+      actionId: "ACT-BAD-01",
+      tenantId: "sh_merchant_alpha",
+      caseId: "CASE-001",
+      actionType: "WAIT_AND_MONITOR",
+      actionStatus: "RANDOM_STRING_XYZ",
+      idempotencyKey: "IDEM-SCHEMA-BAD",
+      initiatedByActorType: "SYSTEM_MONITOR",
+      initiatedByActorId: "monitor-1",
+      reasonCode: "TEST"
+    });
+
+    await expect(badSchemaAction.validate()).rejects.toThrow();
+  });
+
+  // Test 5: Rejection of unknown actionType
+  it("5. Rejects invalid or unapproved actionType", async () => {
     await expect(
       actionService.recordProposedAction({
         tenantId: "sh_merchant_alpha",
@@ -19,41 +114,10 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
         reasonCode: "TEST"
       })
     ).rejects.toThrow(/Invalid actionType/);
-
-    // Schema level check on PaymentAction
-    const badAction = new PaymentAction({
-      actionId: "ACT-BAD-01",
-      tenantId: "sh_merchant_alpha",
-      caseId: "CASE-001",
-      actionType: "WAIT_AND_MONITOR",
-      actionStatus: "TOTALLY_BOGUS_STATUS",
-      idempotencyKey: "IDEM-002",
-      initiatedByActorType: "SYSTEM_MONITOR",
-      initiatedByActorId: "monitor-1",
-      reasonCode: "RECHECK"
-    });
-
-    await expect(badAction.validate()).rejects.toThrow();
   });
 
-  // Test 8b: Phase 2 safety boundary enforces that external execution statuses are blocked
-  it("8b. Phase 2 safety boundary: blocks external live execution statuses (EXECUTION_PENDING, EXECUTED_UNCONFIRMED)", async () => {
-    await expect(
-      actionService.recordProposedAction({
-        tenantId: "sh_merchant_alpha",
-        caseId: "CASE-001",
-        actionType: "EXECUTE_PROVIDER_REFUND",
-        actionStatus: "EXECUTED_UNCONFIRMED",
-        idempotencyKey: "IDEM-UNAUTH-01",
-        initiatedByActorType: "AI_PLANNER",
-        initiatedByActorId: "planner-1",
-        reasonCode: "ATTEMPTED_WRITE"
-      })
-    ).rejects.toThrow(/External financial action execution is disabled in Phase 2/);
-  });
-
-  // Test 9: Duplicate action idempotency-key handling
-  it("9. Duplicate action idempotency-key handling returns existing record within tenant scope", async () => {
+  // Test 6: Scoped idempotency deduplication
+  it("6. Duplicate action idempotency-key returns existing record without re-creation", async () => {
     const mockExisting = {
       actionId: "ACT-EXISTING-001",
       tenantId: "sh_merchant_alpha",
@@ -81,9 +145,8 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     vi.restoreAllMocks();
   });
 
-  // Test 10: Concurrent attempts to create the same logical action
-  it("10. Concurrent race conditions on idempotency key resolve deterministically without double-creation", async () => {
-    // Simulate first findOne returning null (race start), but Mongo throwing E11000 duplicate key on create
+  // Test 7: Concurrent race conditions resolve deterministically (E11000)
+  it("7. Concurrent race condition handling resolves deterministically without double creation", async () => {
     vi.spyOn(PaymentAction, "findOne")
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ actionId: "ACT-RACE-WINNER", idempotencyKey: "IDEM-RACE-001" });
@@ -108,8 +171,8 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     vi.restoreAllMocks();
   });
 
-  // Test 11 & 12: Integer-paise validation on PaymentAction
-  it("11-12. Monetary amounts in PaymentAction strictly enforce integer paise", async () => {
+  // Test 8: Integer-paise monetary amounts
+  it("8. Monetary amounts strictly enforce integer paise", async () => {
     const validAction = new PaymentAction({
       actionId: "ACT-MONEY-01",
       tenantId: "sh_merchant_alpha",
@@ -127,7 +190,6 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     const err = await validAction.validate();
     expect(err).toBeUndefined();
 
-    // Invalid negative amount
     const negativeAction = new PaymentAction({
       actionId: "ACT-NEG-01",
       tenantId: "sh_merchant_alpha",
@@ -143,8 +205,8 @@ describe("Phase 2 — PaymentAction Domain Model & Action Ledger Tests", () => {
     await expect(negativeAction.validate()).rejects.toThrow();
   });
 
-  // Test 15: Static Architecture Guard: Proves zero code paths in Phase 2 trigger payment provider writes
-  it("15. Static Architecture Guard: ledger services contain ZERO payment provider write calls", () => {
+  // Test 9: Static Architecture Guard: Proves zero code paths in Phase 2 trigger payment provider writes
+  it("9. Static Architecture Guard: ledger services contain ZERO payment provider write calls", () => {
     const ledgerDir = path.resolve(__dirname, "../../src/services/ledger");
     const files = fs.readdirSync(ledgerDir).filter((f) => f.endsWith(".js"));
 

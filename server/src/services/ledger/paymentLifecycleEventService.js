@@ -15,42 +15,77 @@ export function generateEventId() {
 }
 
 /**
- * Recursively strips sensitive payment credentials and PII:
- * - Card numbers, PAN, CVV, expiry dates
- * - Passwords, API secrets, auth tokens
- * - Contact numbers, emails, customer VPAs
+ * Strict Allowlist of normalized evidence attributes for payment lifecycle events.
+ * Only recognized, strictly scoped transaction references, timestamps, and error codes
+ * may be persisted. Arbitrary customer PII (e.g. customerName, billingAddress, email,
+ * phone, notes, card tokens, raw provider bodies) is strictly dropped.
+ */
+export const ALLOWED_EVIDENCE_FIELDS = new Set([
+  // Core provider and merchant references
+  "merchantOrderId",
+  "gatewayPaymentId",
+  "sourceEventId",
+  "settlementId",
+  "refundId",
+  "disputeId",
+  "arn",
+  "rrn",
+  "upiTxnId",
+  "bankTransactionId",
+  "orderRef",
+  "paymentId",
+
+  // Normalized transaction metrics & status
+  "amountPaise",
+  "amount",
+  "currency",
+  "status",
+  "paymentMethod",
+  "method",
+  "bank",
+  "wallet",
+  "issuer",
+  "authCode",
+  "errorCode",
+  "errorDescription",
+  "discrepancyReason",
+
+  // Normalized timestamps (ISO string or epoch ms)
+  "occurredAt",
+  "authorizedAt",
+  "capturedAt",
+  "settledAt",
+  "refundedAt",
+  "disputedAt"
+]);
+
+/**
+ * Sanitizes and minimizes evidence payload against the strict allowlist.
+ * Guarantees that unknown keys, unfamiliar customer aliases (e.g. customerName,
+ * billingAddress, customNotes), and sensitive credentials cannot be persisted.
  */
 export function sanitizeLifecyclePayload(payload = {}) {
-  if (!payload || typeof payload !== "object") return {};
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
 
-  const sanitized = Array.isArray(payload) ? [...payload] : { ...payload };
+  const sanitized = {};
 
-  const forbiddenKeys = new Set([
-    "card",
-    "card_number",
-    "card_id",
-    "pan",
-    "cvv",
-    "cvv2",
-    "expiry_month",
-    "expiry_year",
-    "password",
-    "secret",
-    "api_key",
-    "token",
-    "token_id",
-    "email",
-    "contact",
-    "phone",
-    "vpa",
-    "pin"
-  ]);
+  for (const [key, val] of Object.entries(payload)) {
+    // Only accept keys explicitly registered in ALLOWED_EVIDENCE_FIELDS
+    if (!ALLOWED_EVIDENCE_FIELDS.has(key)) {
+      continue;
+    }
 
-  for (const [key, val] of Object.entries(sanitized)) {
-    if (forbiddenKeys.has(key.toLowerCase())) {
-      delete sanitized[key];
-    } else if (val && typeof val === "object") {
-      sanitized[key] = sanitizeLifecyclePayload(val);
+    if (val === null || val === undefined) {
+      continue;
+    }
+
+    // Preserve primitives and safe values
+    if (typeof val === "string") {
+      sanitized[key] = val.trim();
+    } else if (typeof val === "number" || typeof val === "boolean") {
+      sanitized[key] = val;
+    } else if (val instanceof Date) {
+      sanitized[key] = val.toISOString();
     }
   }
 
@@ -58,11 +93,16 @@ export function sanitizeLifecyclePayload(payload = {}) {
 }
 
 /**
- * Computes a deterministic SHA-256 hash of a payload object.
+ * Computes a deterministic SHA-256 hash of a normalized payload object.
  */
 export function calculatePayloadFingerprint(payload = {}) {
   // Sort keys deterministically
-  const sortedStr = JSON.stringify(payload, Object.keys(payload || {}).sort());
+  const keys = Object.keys(payload || {}).sort();
+  const sortedObj = {};
+  for (const k of keys) {
+    sortedObj[k] = payload[k];
+  }
+  const sortedStr = JSON.stringify(sortedObj);
   return crypto.createHash("sha256").update(sortedStr).digest("hex");
 }
 
@@ -89,7 +129,7 @@ export function generateDeduplicationKey({
 }
 
 /**
- * Appends a normalized payment lifecycle event with deterministic deduplication and PII scrubbing.
+ * Appends a normalized payment lifecycle event with deterministic deduplication and payload minimization.
  * If the event was already recorded, returns { isDuplicate: true, event: existingEvent } without error.
  */
 export async function appendLifecycleEvent({
@@ -122,10 +162,10 @@ export async function appendLifecycleEvent({
     throw AppError.badRequest("normalizedEventType is required");
   }
 
-  // 1. Sanitize payload
+  // 1. Sanitize & minimize payload using strict allowlist
   const normalizedPayload = sanitizeLifecyclePayload(rawPayload);
 
-  // 2. Compute fingerprint
+  // 2. Compute deterministic fingerprint
   const payloadFingerprint = calculatePayloadFingerprint(normalizedPayload);
 
   // 3. Derive deterministic deduplication key

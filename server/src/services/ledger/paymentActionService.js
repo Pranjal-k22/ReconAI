@@ -15,8 +15,9 @@ export function generateActionId() {
 
 /**
  * Phase 2 Allowed Action Statuses.
- * Live/External execution statuses (EXECUTION_PENDING, EXECUTED_UNCONFIRMED, VERIFIED_SUCCESS)
- * are strictly blocked by Phase 2 safety boundaries.
+ * Restricts recorded actions strictly to non-executing intent and simulation states.
+ * Execution-ready ('READY_FOR_EXECUTION') and live-execution statuses
+ * ('EXECUTION_PENDING', 'EXECUTED_UNCONFIRMED', 'VERIFIED_SUCCESS') are strictly prohibited.
  */
 export const PHASE_2_ALLOWED_STATUSES = new Set([
   "PROPOSED",
@@ -26,8 +27,9 @@ export const PHASE_2_ALLOWED_STATUSES = new Set([
 ]);
 
 /**
- * Records a proposed or simulated resolution action in the action ledger.
- * Enforces tenant-scoped idempotency key uniqueness, status allowlists, and Phase 2 safety constraints.
+ * Records an intended, simulated, or held action in the action ledger.
+ * Enforces tenant-scoped idempotency key uniqueness, strict non-executing status boundaries,
+ * and integer-paise validation.
  */
 export async function recordProposedAction({
   tenantId,
@@ -42,8 +44,7 @@ export async function recordProposedAction({
   reasonCode,
   evidenceReferences = [],
   policyEvaluationResult = null,
-  metadata = {},
-  _allowExecutionStatusesForTests = false
+  metadata = {}
 } = {}) {
   if (!tenantId || typeof tenantId !== "string" || tenantId.trim().length === 0) {
     throw AppError.badRequest("tenantId is required and must be a non-empty string");
@@ -73,10 +74,10 @@ export async function recordProposedAction({
     throw AppError.badRequest("reasonCode is required");
   }
 
-  // Phase 2 Safety Guard: Prohibit external live execution claims
-  if (!_allowExecutionStatusesForTests && !PHASE_2_ALLOWED_STATUSES.has(actionStatus)) {
+  // Phase 2 Safety Guard: Strictly enforce non-executing intent statuses
+  if (!PHASE_2_ALLOWED_STATUSES.has(actionStatus)) {
     throw AppError.badRequest(
-      `External financial action execution is disabled in Phase 2. Status '${actionStatus}' is not allowed. Allowed Phase 2 statuses: ${Array.from(PHASE_2_ALLOWED_STATUSES).join(", ")}`
+      `Action execution or authorization is prohibited in Phase 2. Status '${actionStatus}' is not allowed. Allowed Phase 2 statuses: ${Array.from(PHASE_2_ALLOWED_STATUSES).join(", ")}`
     );
   }
 
