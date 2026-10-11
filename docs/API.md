@@ -76,9 +76,9 @@ Executes a batch reconciliation run using the pure deterministic matching engine
       "autoReconciledCount": 80,
       "manualReviewCount": 40,
       "autoReconciliationRate": 0.6667,
-      "totalAmountProcessedPaise": 100309582,
+      "totalAmountProcessedPaise": 103018000,
       "autoReconciledAmountPaise": 71702000,
-      "amountUnderReviewPaise": 28607582,
+      "amountUnderReviewPaise": 31316000,
       "classificationBreakdown": {
         "MATCHED": 80,
         "AMOUNT_MISMATCH": 8,

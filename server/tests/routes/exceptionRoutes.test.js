@@ -25,7 +25,7 @@ describe("Exception REST API Routes", () => {
   });
 
   it("GET /api/exceptions/summary retrieves exception statistics", async () => {
-    const mockSummary = { totalCount: 40, totalOpen: 40, openFinancialImpactPaise: 28607582 };
+    const mockSummary = { totalCount: 40, totalOpen: 40, openFinancialImpactPaise: 31316000 };
     vi.spyOn(exceptionService, "getExceptionsSummary").mockResolvedValue(mockSummary);
 
     const res = await request(app).get("/api/exceptions/summary");

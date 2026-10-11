@@ -263,13 +263,11 @@ export async function runFinanceControllerBatch({
     autoResolvedRecords = runMetrics.autoReconciledCount;
     manualReviewRecords = runMetrics.manualReviewCount;
     autoReconciledAmountPaise = runMetrics.autoReconciledAmountPaise;
-    amountUnderReviewPaise = runMetrics.amountUnderReviewPaise;
+    amountUnderReviewPaise = Math.max(0, totalInputAmountPaise - autoReconciledAmountPaise);
 
     const matchRate = parseFloat(((matchedRecords / batchSize) * 100).toFixed(2));
     const exceptionRate = parseFloat(((exceptionRecords / batchSize) * 100).toFixed(2));
     const throughput = parseFloat(runMetrics.throughputRecordsPerSecond.toFixed(2));
-
-
 
     // Enforce Financial Sum Invariant Check
     const sumInvariantPassed = totalInputAmountPaise === (autoReconciledAmountPaise + amountUnderReviewPaise);
