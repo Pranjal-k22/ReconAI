@@ -10,6 +10,12 @@ const reconciliationResultSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     runId: {
       type: String,
       required: [true, "runId is required"],

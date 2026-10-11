@@ -22,6 +22,7 @@ const auditLogSchema = new mongoose.Schema(
         "RULE_ENGINE",
         "AI",
         "HUMAN",
+        "SERVICE",
         "RAZORPAY_ADAPTER",
         "IMPORTER"
       ],
@@ -57,8 +58,18 @@ const auditLogSchema = new mongoose.Schema(
         "CONTROLLER_EXCEPTIONS_PROCESSED",
         "CONTROLLER_REPORT_GENERATED",
         "CONTROLLER_RUN_COMPLETED",
-        "CONTROLLER_RUN_FAILED"
+        "CONTROLLER_RUN_FAILED",
+        "AUTH_LOGIN_SUCCESS",
+        "AUTH_LOGIN_FAILED",
+        "ACCESS_DENIED_ALERT",
+        "TOKEN_REVOKED"
       ],
+      index: true
+    },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
       index: true
     },
     entityType: {

@@ -10,6 +10,12 @@ const financeControllerRunSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     name: {
       type: String,
       trim: true,

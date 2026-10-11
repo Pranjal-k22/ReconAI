@@ -10,6 +10,18 @@ const gatewayPaymentSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
+    customerId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     merchantOrderId: {
       type: String,
       trim: true,
@@ -111,6 +123,7 @@ const gatewayPaymentSchema = new mongoose.Schema(
 
 gatewayPaymentSchema.index({ status: 1 });
 gatewayPaymentSchema.index({ gatewayCreatedAt: 1 });
+gatewayPaymentSchema.index({ tenantId: 1, gatewayPaymentId: 1 });
 
 export const GatewayPayment =
   mongoose.models.GatewayPayment ||

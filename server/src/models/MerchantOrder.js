@@ -10,6 +10,18 @@ const merchantOrderSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
+    customerId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     customerReference: {
       type: String,
       trim: true,
@@ -72,6 +84,7 @@ const merchantOrderSchema = new mongoose.Schema(
 
 merchantOrderSchema.index({ status: 1 });
 merchantOrderSchema.index({ createdAtSource: 1 });
+merchantOrderSchema.index({ tenantId: 1, merchantOrderId: 1 });
 
 export const MerchantOrder =
   mongoose.models.MerchantOrder ||

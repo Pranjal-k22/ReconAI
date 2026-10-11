@@ -10,6 +10,12 @@ const settlementRecordSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     settlementId: {
       type: String,
       required: [true, "settlementId is required"],
@@ -113,6 +119,7 @@ const settlementRecordSchema = new mongoose.Schema(
 );
 
 settlementRecordSchema.index({ settledAt: 1 });
+settlementRecordSchema.index({ tenantId: 1, settlementRecordId: 1 });
 
 export const SettlementRecord =
   mongoose.models.SettlementRecord ||

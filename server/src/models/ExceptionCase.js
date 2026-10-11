@@ -10,6 +10,12 @@ const exceptionCaseSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    tenantId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     runId: {
       type: String,
       required: [true, "runId is required"],
@@ -154,6 +160,7 @@ const exceptionCaseSchema = new mongoose.Schema(
 exceptionCaseSchema.index({ runId: 1, status: 1 });
 exceptionCaseSchema.index({ severity: 1, status: 1 });
 exceptionCaseSchema.index({ runId: 1, resultId: 1 }, { unique: true });
+exceptionCaseSchema.index({ tenantId: 1, runId: 1 });
 
 export const ExceptionCase =
   mongoose.models.ExceptionCase ||
