@@ -1,0 +1,197 @@
+# ReconAI 2.0 — Architecture Decision Records (ADRs)
+
+> **DOCUMENT STATUS: PROPOSED — AWAITING OWNER REVIEW**  
+> *This document details the core architectural decisions, design tradeoffs, and technical patterns for ReconAI 2.0. No application code has been modified.*
+
+---
+
+## Index of Architectural Decisions
+
+- [ADR-01: Preservation of Track 4 Deterministic Reconciliation Subsystem](#adr-01-preservation-of-track-4-deterministic-reconciliation-subsystem)
+- [ADR-02: Policy-Enforced Autonomous Execution Boundary](#adr-02-policy-enforced-autonomous-execution-boundary)
+- [ADR-03: Multi-Agent Scoped Evidence Exchange Architecture](#adr-03-multi-agent-scoped-evidence-exchange-architecture)
+- [ADR-04: Multi-Tenant Data Isolation and Schema Hardening](#adr-04-multi-tenant-data-isolation-and-schema-hardening)
+- [ADR-05: Unified Role-Based Access Control (RBAC) Architecture](#adr-05-unified-role-based-access-control-rbac-architecture)
+- [ADR-06: Dual-Adapter Payment Provider Isolation (Read vs Write)](#adr-06-dual-adapter-payment-provider-isolation-read-vs-write)
+- [ADR-07: Cryptographic Webhook Ingestion Engine with HMAC-SHA256](#adr-07-cryptographic-webhook-ingestion-engine-with-hmac-sha256)
+- [ADR-08: Financial Idempotency, Action Leases, and Concurrency Locks](#adr-08-financial-idempotency-action-leases-and-concurrency-locks)
+- [ADR-09: Asynchronous Payment Monitoring Worker & Outbox Pipeline](#adr-09-asynchronous-payment-monitoring-worker--outbox-pipeline)
+- [ADR-10: Centralized Append-Only Audit Trail for Multi-Agent Actions](#adr-10-centralized-append-only-audit-trail-for-multi-agent-actions)
+
+---
+
+## ADR-01: Preservation of Track 4 Deterministic Reconciliation Subsystem
+
+### Context
+ReconAI 1.0 established an integer-paise deterministic reconciliation engine across Merchant Orders, Gateway Payments, and Settlements. It includes a 120-scenario benchmark dataset generator, isolated GroundTruth validation, and an automated Finance Controller agent. With the expansion to ReconAI 2.0 (autonomous payment monitoring and resolution), we must decide how to integrate the existing codebase.
+
+### Decision
+**We will NOT discard or replace the existing deterministic reconciliation engine.**  
+Instead, the deterministic engine is preserved in its entirety as the **Financial Evidence Subsystem** of ReconAI 2.0:
+1. The 120-scenario synthetic benchmark generator (`benchmarkGenerator.js`) and GroundTruth evaluator (`evaluationService.js`) remain untouched to maintain compliance with Track 4 hackathon judging criteria.
+2. The pure in-memory matching engine (`matchingEngine.js`) will continue to provide authoritative, mathematical discrepancy detection for batch records.
+3. The new real-time Payment Controller will invoke the matching engine whenever multi-record correlation is required.
+
+### Tradeoffs & Consequences
+- **Positive**: Zero regression in verified benchmark accuracy (100.00% across 120 scenarios); preserves all 44 existing Vitest test files (200 passing tests); anchors AI reasoning in mathematically proven financial truth.
+- **Negative**: The system maintains two ingestion pipelines: real-time event webhooks and batch CSV/synthetic imports.
+
+---
+
+## ADR-02: Policy-Enforced Autonomous Execution Boundary
+
+### Context
+Allowing an LLM (such as Gemini) to autonomously trigger financial disbursements, refunds, or credits based purely on text generation introduces unacceptable risks of financial loss, prompt injection exploits, and regulatory non-compliance. Conversely, requiring human manual clicks for every routine failed payment defeats the goal of an autonomous resolution controller.
+
+### Decision
+**We strictly enforce the principle: "AI Reasoner Proposes $\rightarrow$ Deterministic Policy Authorizes $\rightarrow$ Adapter Executes."**
+
+```text
+[Multi-Agent Reasoning] 
+         ↓ Structured Proposal (Zod Validated)
+[Server-Side Deterministic Resolution Policy Engine]
+         ├── Verification 1: Payment ownership & tenant match
+         ├── Verification 2: Authoritative provider state confirms failure/capture
+         ├── Verification 3: Net monetary amount match (Integer Paise)
+         ├── Verification 4: Idempotency check (No duplicate refund in progress or completed)
+         ├── Verification 5: Statutory & Merchant Policy eligibility check (e.g. RBI TAT)
+         └── Verification 6: Concurrency lease acquired
+         ↓ PASS / FAIL
+[Execution OR Safe-Hold Queue]
+```
+
+Under no circumstances will a natural-language LLM output directly invoke a payment-provider write API. A recommendation is rejected if any policy invariant fails.
+
+### Tradeoffs & Consequences
+- **Positive**: Eliminates financial hallucination risk; satisfies banking compliance standards; provides automated resolution for 100% policy-compliant cases while safely quarantining edge cases.
+- **Negative**: Requires rigorous encoding of merchant and regulatory policy rules in deterministic TypeScript/JavaScript.
+
+---
+
+## ADR-03: Multi-Agent Scoped Evidence Exchange Architecture
+
+### Context
+A unified payment dispute involves disparate parties with divergent incentives and sensitive data: the customer, the merchant, and the gateway. Sharing full merchant profit margins or gateway API keys with a customer-facing agent, or sharing customer personal contact data with a merchant-facing agent, violates privacy laws (GDPR, DPDP Act) and security boundaries.
+
+### Decision
+We partition the reasoning layer into specialized, scoped agents communicating via versioned, validated JSON contracts:
+
+1. **Customer AI Agent**: Scoped strictly to the authenticated customer's session. Receives customer payment claims and debit proofs. Masked merchant fulfillment status is shared, but internal fees and secrets are hidden.
+2. **Shop AI Agent**: Scoped strictly to the authenticated merchant store. Verifies inventory and local order status. Customer PII (email, phone, card payload) is stripped.
+3. **Payment Investigator Agent**: Receives normalized diagnostic tokens from Customer AI, Shop AI, Gateway Webhooks, and Settlements. Evaluates facts without possessing write permissions.
+4. **Resolution Planner Agent**: Converts diagnostic findings into structured action recommendations adhering to strict enum allow-lists.
+
+### Tradeoffs & Consequences
+- **Positive**: Strict data minimization; prevents prompt injection propagation across tenant boundaries; clean separation of concerns.
+- **Negative**: Introduces message serialization overhead and requires schema maintenance for agent-to-agent communication.
+
+---
+
+## ADR-04: Multi-Tenant Data Isolation and Schema Hardening
+
+### Context
+Phase 0 audit confirmed that existing Mongoose models (`MerchantOrder`, `GatewayPayment`, `SettlementRecord`, `ExceptionCase`) lack tenant identifiers (`merchantId`, `customerId`). All database queries in ReconAI 1.0 were global. To support a real-world platform where multiple merchants and customers interact securely, strict multi-tenancy is required.
+
+### Decision
+Every core domain model in ReconAI 2.0 will include mandatory tenant scoping fields:
+- `MerchantOrder`: `tenantId` (Merchant Store ID), `customerId` (Customer Identity ID).
+- `GatewayPayment`: `tenantId` (Merchant Store ID), `customerId` (Customer Identity ID, when linkable).
+- `SettlementRecord`: `tenantId` (Merchant Store ID).
+- `PaymentCase`: `tenantId` (Merchant Store ID), `customerId` (Customer Identity ID).
+- Compound unique indexes will enforce uniqueness within a tenant: e.g., `{ tenantId: 1, merchantOrderId: 1 }`.
+- All database queries within controller services must include `{ tenantId }` in the MongoDB query filter.
+
+### Tradeoffs & Consequences
+- **Positive**: Prevents cross-tenant data leaks; enables true SaaS multi-store deployment.
+- **Negative**: Requires data model migration and updating of existing query helper functions in Phase 2.
+
+---
+
+## ADR-05: Unified Role-Based Access Control (RBAC) Architecture
+
+### Context
+ReconAI 1.0 contained zero authentication middleware. All endpoints were open. ReconAI 2.0 requires distinct roles with granular permissions for customers, merchants, internal admins, auditors, and autonomous AI agents.
+
+### Decision
+We establish 7 distinct architectural roles:
+1. `CUSTOMER`: Authenticated retail shopper. Can view only their own cases and submit debit claims.
+2. `SHOP`: Authenticated merchant operator. Can view only their own store's cases, orders, and settlements.
+3. `ADMIN`: System-level finance administrator. Can inspect all cases, configure policy parameters, and act on safe-holds.
+4. `AUDITOR`: Read-only compliance officer. Can inspect immutable audit trails and evaluation benchmarks.
+5. `CUSTOMER_AI`: Internal service identity for customer advocacy. Can read customer-approved evidence only.
+6. `SHOP_AI`: Internal service identity for merchant operations. Can read merchant order records only.
+7. `PAYMENT_CONTROLLER`: Internal privileged service identity for executing policy-authorized actions.
+
+JWT tokens with HMAC-SHA256 signatures will authenticate HTTP requests, and an `authorizeRole([...])` middleware will guard all API endpoints.
+
+---
+
+## ADR-06: Dual-Adapter Payment Provider Isolation (Read vs Write)
+
+### Context
+The existing `razorpayClient.js` is strictly read-only and explicitly protected by `validateTestModeSafety()`, which rejects live keys (`rzp_live_`). We must support write actions (such as refunds and cancellations in sandbox mode) without weakening the read-only guarantees of the existing ingestion pipeline.
+
+### Decision
+We introduce a **Dual-Adapter Architecture**:
+1. **Read-Only Ingestion Adapter (`RazorpayReadAdapter`)**: Remains identical to the current `razorpayClient.js`. Queries payments and settlements via HTTP GET. Does not possess or expose write endpoints.
+2. **Write Action Adapter (`RazorpayWriteAdapter`)**: A completely separate service module.
+   - Operates in three explicit modes: `SIMULATED_DRY_RUN`, `SANDBOX_TEST`, and `LIVE_RESTRICTED`.
+   - In `SIMULATED_DRY_RUN` and `SANDBOX_TEST`, only test keys (`rzp_test_...`) are permitted.
+   - `LIVE_RESTRICTED` is disabled by default via environment invariant and hardcoded circuit breaker.
+   - Requires an `X-Razorpay-Idempotency-Key` on every write request.
+   - Emits signed action audit events for every attempt.
+
+---
+
+## ADR-07: Cryptographic Webhook Ingestion Engine with HMAC-SHA256
+
+### Context
+Razorpay relies on real-time webhooks (`payment.captured`, `payment.failed`, `refund.processed`, etc.) to inform merchants of payment state changes. If webhooks are accepted without cryptographic validation, malicious actors could forge `payment.captured` webhooks to obtain goods for free or trigger unauthorized refunds.
+
+### Decision
+We implement a dedicated Webhook Ingestion Engine:
+1. **Raw Body Buffering**: Express middleware preserves the raw `Buffer` of incoming webhook requests before JSON parsing to prevent HMAC verification mismatch.
+2. **HMAC-SHA256 Signature Validation**: The controller calculates `crypto.createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex')` and validates it against `req.headers['x-razorpay-signature']` using timing-safe comparison (`crypto.timingSafeEqual`).
+3. **Idempotent Ingestion**: Every incoming webhook event ID (`event.id`) is recorded in an `IngestedWebhookEvent` collection. Duplicates are immediately acknowledged with HTTP 200 and discarded.
+4. **Outbox Ingestion**: Validated events are placed into an in-memory or database outbox to ensure immediate HTTP 200 response to Razorpay while processing occurs asynchronously.
+
+---
+
+## ADR-08: Financial Idempotency, Action Leases, and Concurrency Locks
+
+### Context
+In distributed payment architectures, network retries or concurrent agent triggers can dispatch duplicate refund requests, causing double-refunding of a single transaction.
+
+### Decision
+Every financial mutation is guarded by:
+1. **Deterministic Idempotency Key**: Generated as `IDEM-{actionType}-{paymentId}-{caseId}`.
+2. **MongoDB Compound Unique Constraint**: An `ActionExecutionRecord` collection enforces uniqueness on `{ idempotencyKey: 1 }`.
+3. **Case-Level Optimistic Locking / Action Lease**: Before an action is dispatched, the `PaymentCase` status transitions to `ACTION_IN_PROGRESS` with an `actionLeaseExpiresAt = Date.now() + 30000` (30-second lease). If another process attempts to act on the same case, it receives a concurrency conflict error.
+4. **Provider Idempotency Header**: The key is transmitted in the provider HTTP header `X-Razorpay-Idempotency-Key`.
+
+---
+
+## ADR-09: Asynchronous Payment Monitoring Worker & Outbox Pipeline
+
+### Context
+Payments often fail transiently or experience late authorization up to 30 minutes after checkout timeout. Synchronous HTTP request-response cycles cannot continuously watch payments across multi-hour timelines.
+
+### Decision
+We introduce an autonomous background worker pipeline:
+1. **Payment Monitoring Worker**: Runs on a configurable interval (e.g., every 30 seconds). Queries pending cases where `status === 'DETECTED'` or `status === 'INVESTIGATING'` with action `WAIT_AND_MONITOR`.
+2. **Authoritative Polling**: For stuck payments exceeding provider SLAs without a webhook, the worker queries the provider GET endpoint to reconstruct true state.
+3. **Dead-Letter Recovery**: If a worker crashes while a case has an active lease, the subsequent worker sweep identifies expired leases (`actionLeaseExpiresAt < Date.now()`), queries the provider to determine whether the action executed, and safely updates the case.
+
+---
+
+## ADR-10: Centralized Append-Only Audit Ledger for Multi-Agent Actions
+
+### Context
+Every autonomous AI decision and financial action must be completely auditable by compliance regulators and human administrators.
+
+### Decision
+We expand the existing `auditService.js` and `AuditLog` collection:
+1. All agent evidence exchanges, diagnostic reasoning traces, policy authorizations, provider write dispatches, and outcome verifications are logged as discrete, immutable audit events.
+2. The existing recursive credential and PII sanitization is maintained (`[REDACTED]`).
+3. No update or delete operations are permitted on the audit ledger.
+4. Every audit log record links directly to `caseId`, `actorType` (`AI`, `SYSTEM`, `POLICY_ENGINE`, `PROVIDER`, `HUMAN`), and `action`.
