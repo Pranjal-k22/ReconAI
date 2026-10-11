@@ -207,7 +207,7 @@ const paymentCaseSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: AUTHORIZATION_STATUSES,
-      default: "AUTH_NONE",
+      default: "UNKNOWN",
       alias: "authorizationState"
     },
     // Canonical Dimension 4: Gateway Capture State
@@ -215,7 +215,7 @@ const paymentCaseSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: CAPTURE_STATUSES,
-      default: "CAPTURE_NONE",
+      default: "UNKNOWN",
       alias: "captureState"
     },
     // Canonical Dimension 5: Settlement State
@@ -223,7 +223,7 @@ const paymentCaseSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: SETTLEMENT_STATUSES,
-      default: "SETTLEMENT_NONE",
+      default: "UNKNOWN",
       alias: "settlementState"
     },
     // Canonical Dimension 6: Refund State
@@ -231,7 +231,7 @@ const paymentCaseSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: REFUND_STATUSES,
-      default: "REFUND_NONE",
+      default: "UNKNOWN",
       alias: "refundState"
     },
     // Canonical Dimension 7: Dispute / Chargeback State
@@ -239,7 +239,7 @@ const paymentCaseSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: DISPUTE_STATUSES,
-      default: "DISPUTE_NONE",
+      default: "UNKNOWN",
       alias: "disputeState"
     },
     // Canonical Dimension 8: Case Resolution State

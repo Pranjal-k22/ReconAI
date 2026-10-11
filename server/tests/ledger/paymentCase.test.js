@@ -68,18 +68,23 @@ describe("Phase 2 — PaymentCase Domain Model & Canonical 8-Dimension Tests", (
     await expect(badState.validate()).rejects.toThrow();
   });
 
-  // Test 3: Uncertain-state defaults: customerDebitStatus defaults to UNKNOWN when unevidenced
-  it("3. Uncertain-state defaults: customerDebitStatus strictly defaults to UNKNOWN", async () => {
+  // Test 3: Uncertain-state defaults: all 7 evidence dimensions default to UNKNOWN when unevidenced
+  it("3. Uncertain-state defaults: all 7 evidence dimensions strictly default to UNKNOWN", async () => {
     const defaultCase = new PaymentCase({
       caseId: "CASE-DEF-001",
       tenantId: "sh_merchant_alpha",
       discrepancyCategory: "GENERAL_EXCEPTION"
     });
 
-    // customerDebitStatus MUST NOT default to DEBIT_NONE; it must be UNKNOWN
+    // None of the 7 financial dimensions should assume *_NONE without evidence; all must be UNKNOWN
+    expect(defaultCase.orderStatus).toBe("UNKNOWN");
     expect(defaultCase.customerDebitStatus).toBe("UNKNOWN");
     expect(defaultCase.customerDebitState).toBe("UNKNOWN");
-    expect(defaultCase.orderStatus).toBe("UNKNOWN");
+    expect(defaultCase.authorizationStatus).toBe("UNKNOWN");
+    expect(defaultCase.captureStatus).toBe("UNKNOWN");
+    expect(defaultCase.settlementStatus).toBe("UNKNOWN");
+    expect(defaultCase.refundStatus).toBe("UNKNOWN");
+    expect(defaultCase.disputeStatus).toBe("UNKNOWN");
     expect(defaultCase.resolutionCaseStatus).toBe("CASE_DETECTED");
   });
 

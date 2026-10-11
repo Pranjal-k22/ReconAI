@@ -81,14 +81,14 @@ export async function createPaymentCase({
 
   const caseId = generateCaseId();
 
-  // Resolve canonical 8 dimensions: customerDebitStatus defaults to UNKNOWN when not affirmatively evidenced
+  // Resolve canonical 8 dimensions: all 7 financial/evidence dimensions default to UNKNOWN when unevidenced
   const resolvedOrderStatus = orderStatus || orderState || "UNKNOWN";
   const resolvedCustomerDebitStatus = customerDebitStatus || customerDebitState || "UNKNOWN";
-  const resolvedAuthorizationStatus = authorizationStatus || authorizationState || "AUTH_NONE";
-  const resolvedCaptureStatus = captureStatus || captureState || "CAPTURE_NONE";
-  const resolvedSettlementStatus = settlementStatus || settlementState || "SETTLEMENT_NONE";
-  const resolvedRefundStatus = refundStatus || refundState || "REFUND_NONE";
-  const resolvedDisputeStatus = disputeStatus || disputeState || "DISPUTE_NONE";
+  const resolvedAuthorizationStatus = authorizationStatus || authorizationState || "UNKNOWN";
+  const resolvedCaptureStatus = captureStatus || captureState || "UNKNOWN";
+  const resolvedSettlementStatus = settlementStatus || settlementState || "UNKNOWN";
+  const resolvedRefundStatus = refundStatus || refundState || "UNKNOWN";
+  const resolvedDisputeStatus = disputeStatus || disputeState || "UNKNOWN";
   const resolvedResolutionCaseStatus = resolutionCaseStatus || resolutionCaseState || "CASE_DETECTED";
 
   const sanitizedMeta = sanitizeMetadata(metadata);
