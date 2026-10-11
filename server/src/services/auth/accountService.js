@@ -106,8 +106,147 @@ export async function authenticateUserCredentials({ identifier, password }) {
     role: account.role,
     tenantId: account.tenantId || null,
     customerId: account.customerId || null,
-    scopes: account.scopes || []
+    scopes: account.scopes || [],
+    authVersion: account.authVersion || 1
   };
+}
+
+/**
+ * Retrieves the current authoritative server-side authorization state for a user.
+ * In production, fails closed (503) if the persistent store is unreachable.
+ */
+export async function getAccountAuthorizationState(userId) {
+  if (!userId || typeof userId !== "string") {
+    return null;
+  }
+
+  const cleanUserId = userId.trim();
+
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      const account = await UserAccount.findOne({ userId: cleanUserId });
+      if (!account) return null;
+      return {
+        found: true,
+        userId: account.userId,
+        email: account.email,
+        role: account.role,
+        tenantId: account.tenantId || null,
+        customerId: account.customerId || null,
+        scopes: account.scopes || [],
+        isActive: account.isActive,
+        authVersion: account.authVersion || 1
+      };
+    } catch (err) {
+      if (process.env.NODE_ENV === "production") {
+        throw AppError.internal("Authorization datastore error: failing closed", 503);
+      }
+    }
+  }
+
+  // Fail closed in production if datastore is unavailable
+  if (process.env.NODE_ENV === "production") {
+    throw AppError.internal("Authorization datastore unavailable: failing closed", 503);
+  }
+
+  // Development / test in-memory fallback
+  const mem = inMemoryAccountStore.get(cleanUserId);
+  if (mem) {
+    return {
+      found: true,
+      userId: mem.userId,
+      email: mem.email,
+      role: mem.role,
+      tenantId: mem.tenantId || null,
+      customerId: mem.customerId || null,
+      scopes: mem.scopes || [],
+      isActive: mem.isActive,
+      authVersion: mem.authVersion || 1
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Disables a human user account, immediately invalidating any active sessions.
+ */
+export async function disableUserAccount(userId, reason = "ADMINISTRATIVE_ACTION") {
+  if (!userId || typeof userId !== "string") {
+    throw AppError.badRequest("userId is required");
+  }
+
+  const cleanUserId = userId.trim();
+
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    const account = await UserAccount.findOne({ userId: cleanUserId });
+    if (!account) {
+      throw AppError.notFound(`UserAccount '${cleanUserId}' not found`);
+    }
+    account.isActive = false;
+    account.authVersion = (account.authVersion || 1) + 1;
+    await account.save();
+    return account;
+  }
+
+  const mem = inMemoryAccountStore.get(cleanUserId);
+  if (!mem) {
+    throw AppError.notFound(`UserAccount '${cleanUserId}' not found in store`);
+  }
+  mem.isActive = false;
+  mem.authVersion = (mem.authVersion || 1) + 1;
+  return mem;
+}
+
+/**
+ * Updates a user's role, tenant, customer, or scopes, incrementing authVersion
+ * to immediately reflect new authorization boundaries across all requests.
+ */
+export async function updateUserAuthorization(
+  userId,
+  { role, tenantId, customerId, scopes, invalidateSessions = false }
+) {
+  if (!userId || typeof userId !== "string") {
+    throw AppError.badRequest("userId is required");
+  }
+
+  const cleanUserId = userId.trim();
+
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    const account = await UserAccount.findOne({ userId: cleanUserId });
+    if (!account) {
+      throw AppError.notFound(`UserAccount '${cleanUserId}' not found`);
+    }
+    if (role) account.role = role;
+    if (typeof tenantId !== "undefined") account.tenantId = tenantId;
+    if (typeof customerId !== "undefined") account.customerId = customerId;
+    if (Array.isArray(scopes)) account.scopes = scopes;
+    if (invalidateSessions) {
+      account.authVersion = (account.authVersion || 1) + 1;
+    }
+    await account.save();
+    return account;
+  }
+
+  const mem = inMemoryAccountStore.get(cleanUserId);
+  if (!mem) {
+    throw AppError.notFound(`UserAccount '${cleanUserId}' not found in store`);
+  }
+  if (role) mem.role = role;
+  if (typeof tenantId !== "undefined") mem.tenantId = tenantId;
+  if (typeof customerId !== "undefined") mem.customerId = customerId;
+  if (Array.isArray(scopes)) mem.scopes = scopes;
+  if (invalidateSessions) {
+    mem.authVersion = (mem.authVersion || 1) + 1;
+  }
+  return mem;
+}
+
+/**
+ * Explicitly invalidates all active sessions for a user by incrementing authVersion.
+ */
+export async function invalidateUserSessions(userId) {
+  return await updateUserAuthorization(userId, { invalidateSessions: true });
 }
 
 /**

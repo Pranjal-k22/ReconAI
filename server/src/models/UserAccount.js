@@ -58,6 +58,10 @@ const userAccountSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true
+    },
+    authVersion: {
+      type: Number,
+      default: 1
     }
   },
   {

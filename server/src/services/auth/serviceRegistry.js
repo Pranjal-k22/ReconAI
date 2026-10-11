@@ -44,13 +44,15 @@ function initDefaultServices() {
       role: ROLES.SHOP_AI,
       tenantId: "sh_merchant_alpha",
       customerId: null,
-      scopes: ["READ_STORE_EVIDENCE"]
-    }
-  ];
+      scopes: ["READ_STORE_EVIDENCE"],
+    isActive: true,
+    credentialVersion: 1
+  }
+];
 
   for (const s of defaults) {
     if (!serviceRegistry.has(s.serviceId)) {
-      serviceRegistry.set(s.serviceId, s);
+      serviceRegistry.set(s.serviceId, { ...s, isActive: true, credentialVersion: 1 });
     }
   }
 }
@@ -64,7 +66,9 @@ export function registerServicePrincipal({
   role,
   tenantId = null,
   customerId = null,
-  scopes = []
+  scopes = [],
+  isActive = true,
+  credentialVersion = 1
 }) {
   if (!serviceId || !secret || !role) {
     throw AppError.badRequest("serviceId, secret, and role are required");
@@ -82,13 +86,17 @@ export function registerServicePrincipal({
     throw AppError.badRequest("SHOP_AI requires fixed tenantId");
   }
 
+  const existing = serviceRegistry.get(serviceId.trim());
+
   serviceRegistry.set(serviceId.trim(), {
     serviceId: serviceId.trim(),
     secret: secret.trim(),
     role,
     tenantId: tenantId ? tenantId.trim() : null,
     customerId: customerId ? customerId.trim() : null,
-    scopes: Array.isArray(scopes) ? scopes : []
+    scopes: Array.isArray(scopes) ? scopes : [],
+    isActive,
+    credentialVersion: existing ? (existing.credentialVersion || 1) + 1 : credentialVersion
   });
 }
 
@@ -104,7 +112,7 @@ export function authenticateServiceCredential({ serviceId, clientSecret }) {
   initDefaultServices();
 
   const record = serviceRegistry.get(serviceId.trim());
-  if (!record) {
+  if (!record || record.isActive === false) {
     return null;
   }
 
@@ -121,8 +129,98 @@ export function authenticateServiceCredential({ serviceId, clientSecret }) {
     role: record.role,
     tenantId: record.tenantId,
     customerId: record.customerId,
-    scopes: [...record.scopes]
+    scopes: [...record.scopes],
+    credentialVersion: record.credentialVersion || 1
   };
+}
+
+/**
+ * Retrieves the current authoritative authorization state for a service identity.
+ */
+export function getServiceAuthorizationState(serviceId) {
+  if (!serviceId || typeof serviceId !== "string") {
+    return null;
+  }
+
+  initDefaultServices();
+
+  const record = serviceRegistry.get(serviceId.trim());
+  if (!record) {
+    return null;
+  }
+
+  return {
+    serviceId: record.serviceId,
+    role: record.role,
+    tenantId: record.tenantId,
+    customerId: record.customerId,
+    scopes: [...record.scopes],
+    isActive: record.isActive !== false,
+    credentialVersion: record.credentialVersion || 1
+  };
+}
+
+/**
+ * Disables a service principal, immediately revoking all issued service tokens.
+ */
+export function disableServicePrincipal(serviceId) {
+  if (!serviceId || typeof serviceId !== "string") {
+    throw AppError.badRequest("serviceId is required");
+  }
+
+  initDefaultServices();
+
+  const record = serviceRegistry.get(serviceId.trim());
+  if (!record) {
+    throw AppError.notFound(`Service principal '${serviceId}' not found`);
+  }
+
+  record.isActive = false;
+  record.credentialVersion = (record.credentialVersion || 1) + 1;
+  return record;
+}
+
+/**
+ * Rotates a service credential, immediately invalidating tokens issued with previous versions.
+ */
+export function rotateServiceCredential(serviceId, newSecret) {
+  if (!serviceId || !newSecret || typeof newSecret !== "string") {
+    throw AppError.badRequest("serviceId and newSecret are required");
+  }
+
+  initDefaultServices();
+
+  const record = serviceRegistry.get(serviceId.trim());
+  if (!record) {
+    throw AppError.notFound(`Service principal '${serviceId}' not found`);
+  }
+
+  record.secret = newSecret.trim();
+  record.credentialVersion = (record.credentialVersion || 1) + 1;
+  return record;
+}
+
+/**
+ * Updates a service principal's scope or tenant association, immediately binding
+ * all subsequent requests to the new authorization boundaries.
+ */
+export function updateServiceScope(serviceId, { scopes, tenantId, customerId, role }) {
+  if (!serviceId || typeof serviceId !== "string") {
+    throw AppError.badRequest("serviceId is required");
+  }
+
+  initDefaultServices();
+
+  const record = serviceRegistry.get(serviceId.trim());
+  if (!record) {
+    throw AppError.notFound(`Service principal '${serviceId}' not found`);
+  }
+
+  if (Array.isArray(scopes)) record.scopes = scopes;
+  if (typeof tenantId !== "undefined") record.tenantId = tenantId;
+  if (typeof customerId !== "undefined") record.customerId = customerId;
+  if (role) record.role = role;
+  return record;
 }
 
 /**

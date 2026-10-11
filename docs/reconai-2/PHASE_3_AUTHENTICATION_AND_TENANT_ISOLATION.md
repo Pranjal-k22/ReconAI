@@ -61,6 +61,21 @@ Phase 3 introduces an enterprise-grade multi-tenant security architecture for Re
 - **Fixed Profile Binding:** Credentials are bound 1:1 to immutable server-side profiles (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`).
 - **Prohibition of Elevation:** Callers cannot request arbitrary roles or tenant scopes; overrides trigger `HTTP 403 Forbidden`.
 
+### 2.6 Immediate Authorization-Lifetime Validation & Zero Stale-Token Window
+- **Live Verification on Every Request:** `authMiddleware.authenticate` queries the current server-side account authorization state on each request.
+- **Account Disablement:** If an account is disabled (`isActive === false`), subsequent requests with active tokens are immediately rejected with `HTTP 401 Unauthorized`.
+- **Privilege / Scope / Tenant Changes:** When an account's role is downgraded, scope removed (e.g. `GLOBAL_AUDIT`), or tenant changed, the middleware synchronizes request claims with current server-side authority. Downstream route handlers immediately enforce the updated boundaries (`403 Forbidden` on stripped privileges), eliminating stale JWT privilege caching.
+- **Service Invalidation:** Disabling a service principal or rotating its secret immediately invalidates previously issued tokens (`401 Unauthorized`) via `credentialVersion` checks.
+- **Fail-Closed Guarantee:** In production, if the authorization datastore is unreachable, requests fail closed (`503 Service Unavailable`).
+
+### 2.7 Controlled Operator Account & Service Provisioning Procedures
+- **Human Accounts:** Provisioned exclusively via trusted server-side administrative procedures (`accountService.provisionUserAccount`). No unauthenticated public user registration exists. Operators configure `userId`, `email`, password (salted `scrypt`), `role`, `tenantId`, `customerId`, and `scopes`.
+- **Administrative Account Controls:**
+  - `disableUserAccount(userId, reason)`: Disables the account and increments `authVersion`, immediately terminating session authorization.
+  - `updateUserAuthorization(userId, { role, tenantId, customerId, scopes })`: Dynamically updates permissions and logs an audit trail event.
+  - `invalidateUserSessions(userId)`: Increments `authVersion` to force immediate re-authentication across all active tokens.
+- **Machine Services:** Pre-configured in `serviceRegistry` derived from deployment secrets (`SERVICE_TOKEN_SECRET`) or registered via `registerServicePrincipal`. Operators rotate secrets via `rotateServiceCredential(serviceId, newSecret)` or revoke access via `disableServicePrincipal(serviceId)`.
+
 ---
 
 ## 3. Human vs Machine/Service Identities
@@ -156,8 +171,8 @@ SERVICE_TOKEN_AUDIENCE=reconai-service
 
 ## 8. Verification & Test Summary
 
-- **Backend Test Suite:** 50 test files passed (50/50), 280 tests passed (280/280).
-- **Security Hardening Suite:** 11/11 tests passed covering production secret validation, salted scrypt hashing, account provenance, fixed service credential binding, and durable TTL revocation.
+- **Backend Test Suite:** 50 test files passed (50/50), 288 tests passed (288/288).
+- **Security Hardening Suite:** 19/19 tests passed covering production secret validation, salted scrypt hashing, account provenance, fixed service credential binding, durable TTL revocation, immediate authorization-lifetime validation, and 503 production fail-closed behavior.
 - **Auditor Tenant Isolation Suite:** 6/6 integration tests passed verifying scoped auditor restrictions, cross-tenant denial, mutation prohibition (403), global audit grant verification, and audit trail logging.
 - **Deterministic Reconciliation Engine:** 120/120 scenarios evaluated at 100.00% accuracy.
 - **Frontend Production Build:** `vite build` completed successfully with 0 errors.

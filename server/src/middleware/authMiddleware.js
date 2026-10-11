@@ -1,4 +1,6 @@
 import { verifyToken, isTokenRevoked, ROLES, IDENTITY_TYPES } from "../services/auth/tokenService.js";
+import { getAccountAuthorizationState } from "../services/auth/accountService.js";
+import { getServiceAuthorizationState } from "../services/auth/serviceRegistry.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../config/logger.js";
 import { createAuditEvent } from "../services/audit/auditService.js";
@@ -26,12 +28,60 @@ export async function authenticate(req, res, next) {
   try {
     const verified = verifyToken(rawToken);
 
-    // Verify token has not been revoked (checking memory and persistent store)
+    // 1. Verify token has not been revoked (checking memory and persistent store)
     if (verified.jti && (await isTokenRevoked(verified.jti))) {
       return next(AppError.unauthorized("Token has been revoked"));
     }
 
-    // AUDITOR is strictly read-only across all endpoints
+    // 2. Immediate Authorization-Lifetime Validation
+    if (verified.identityType === IDENTITY_TYPES.SERVICE) {
+      const serviceState = getServiceAuthorizationState(verified.sub || verified.serviceId);
+      if (serviceState) {
+        if (serviceState.isActive === false) {
+          return next(AppError.unauthorized("Service principal has been disabled or unregistered"));
+        }
+
+        // Invalidate if credential was rotated since token was issued
+        if (
+          verified.credentialVersion &&
+          serviceState.credentialVersion &&
+          verified.credentialVersion < serviceState.credentialVersion
+        ) {
+          return next(AppError.unauthorized("Service credential has been rotated; re-authentication required"));
+        }
+
+        // Synchronize claims with current authoritative server state
+        verified.role = serviceState.role;
+        verified.tenantId = serviceState.tenantId;
+        verified.customerId = serviceState.customerId;
+        verified.scopes = serviceState.scopes;
+      } else if (process.env.NODE_ENV === "production") {
+        return next(AppError.unauthorized("Service principal has been disabled or unregistered"));
+      }
+    } else {
+      const accountState = await getAccountAuthorizationState(verified.sub || verified.userId);
+      if (accountState) {
+        if (!accountState.isActive) {
+          return next(AppError.unauthorized("Account has been disabled"));
+        }
+        if (
+          verified.authVersion &&
+          accountState.authVersion &&
+          verified.authVersion < accountState.authVersion
+        ) {
+          return next(AppError.unauthorized("Authorization state has changed; re-authentication required"));
+        }
+        // Synchronize claims with current authoritative server state
+        verified.role = accountState.role;
+        verified.tenantId = accountState.tenantId;
+        verified.customerId = accountState.customerId;
+        verified.scopes = accountState.scopes;
+      } else if (process.env.NODE_ENV === "production") {
+        return next(AppError.unauthorized("Account does not exist"));
+      }
+    }
+
+    // 3. AUDITOR is strictly read-only across all endpoints
     if (verified.role === ROLES.AUDITOR && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
       return next(AppError.forbidden("Access denied: AUDITOR role is strictly read-only"));
     }
@@ -60,7 +110,7 @@ export async function authenticate(req, res, next) {
       }
     }).catch(() => {});
 
-    return next(AppError.unauthorized(err.message || "Invalid or expired credentials"));
+    return next(err.isOperational ? err : AppError.unauthorized(err.message || "Invalid or expired credentials"));
   }
 }
 

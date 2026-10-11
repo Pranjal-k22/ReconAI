@@ -36,4 +36,8 @@ export class AppError extends Error {
   static forbidden(message = "Forbidden", details = null) {
     return new AppError(message, 403, "FORBIDDEN", details);
   }
+
+  static internal(message = "Internal server error", statusCode = 500, details = null) {
+    return new AppError(message, statusCode, "INTERNAL_ERROR", details);
+  }
 }

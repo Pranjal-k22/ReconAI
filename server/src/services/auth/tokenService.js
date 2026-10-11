@@ -52,7 +52,8 @@ export function signUserToken({
   tenantId = null,
   customerId = null,
   scopes = [],
-  expiresIn = null
+  expiresIn = null,
+  authVersion = 1
 }) {
   if (!userId || typeof userId !== "string") {
     throw AppError.badRequest("userId is required and must be a string");
@@ -80,6 +81,7 @@ export function signUserToken({
     tenantId: tenantId ? tenantId.trim() : null,
     customerId: customerId ? customerId.trim() : null,
     scopes: Array.isArray(scopes) ? scopes : [],
+    authVersion: Number(authVersion) || 1,
     jti
   };
 
@@ -101,7 +103,8 @@ export function signServiceToken({
   tenantId = null,
   customerId = null,
   scopes = [],
-  expiresIn = "15m"
+  expiresIn = "15m",
+  credentialVersion = 1
 }) {
   if (!serviceId || typeof serviceId !== "string") {
     throw AppError.badRequest("serviceId is required and must be a string");
@@ -129,6 +132,7 @@ export function signServiceToken({
     tenantId: tenantId ? tenantId.trim() : null,
     customerId: customerId ? customerId.trim() : null,
     scopes: Array.isArray(scopes) ? scopes : [],
+    credentialVersion: Number(credentialVersion) || 1,
     jti
   };
 
@@ -212,6 +216,11 @@ export async function isTokenRevoked(jti) {
     return true;
   }
 
+  const env = getEnv();
+  if (env.NODE_ENV === "production" && (!mongoose.connection || mongoose.connection.readyState !== 1)) {
+    throw AppError.internal("Revocation store unavailable; failing closed", 503);
+  }
+
   if (mongoose.connection && mongoose.connection.readyState === 1) {
     try {
       const exists = await RevokedToken.exists({ jti: cleanJti });
@@ -221,9 +230,8 @@ export async function isTokenRevoked(jti) {
       }
     } catch {
       // In production, if persistent revocation backend fails, fail closed
-      const env = getEnv();
       if (env.NODE_ENV === "production") {
-        throw AppError.internal("Revocation store unavailable; failing closed");
+        throw AppError.internal("Revocation store unavailable; failing closed", 503);
       }
     }
   }

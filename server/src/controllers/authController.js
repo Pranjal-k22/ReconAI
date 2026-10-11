@@ -52,7 +52,8 @@ export async function login(req, res, next) {
       role: verifiedAccount.role,
       tenantId: verifiedAccount.tenantId,
       customerId: verifiedAccount.customerId,
-      scopes: verifiedAccount.scopes
+      scopes: verifiedAccount.scopes,
+      authVersion: verifiedAccount.authVersion || 1
     });
 
     createAuditEvent({
@@ -130,6 +131,7 @@ export async function issueServiceToken(req, res, next) {
       tenantId: serviceProfile.tenantId,
       customerId: serviceProfile.customerId,
       scopes: serviceProfile.scopes,
+      credentialVersion: serviceProfile.credentialVersion || 1,
       expiresIn: req.body.expiresIn || "15m"
     });
 
