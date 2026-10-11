@@ -62,7 +62,8 @@ const auditLogSchema = new mongoose.Schema(
         "AUTH_LOGIN_SUCCESS",
         "AUTH_LOGIN_FAILED",
         "ACCESS_DENIED_ALERT",
-        "TOKEN_REVOKED"
+        "TOKEN_REVOKED",
+        "GLOBAL_AUDIT_ACCESSED"
       ],
       index: true
     },

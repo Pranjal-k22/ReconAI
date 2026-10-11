@@ -1,4 +1,4 @@
-import { verifyToken, ROLES, IDENTITY_TYPES } from "../services/auth/tokenService.js";
+import { verifyToken, isTokenRevoked, ROLES, IDENTITY_TYPES } from "../services/auth/tokenService.js";
 import { AppError } from "../utils/AppError.js";
 import { logger } from "../config/logger.js";
 import { createAuditEvent } from "../services/audit/auditService.js";
@@ -25,6 +25,17 @@ export async function authenticate(req, res, next) {
 
   try {
     const verified = verifyToken(rawToken);
+
+    // Verify token has not been revoked (checking memory and persistent store)
+    if (verified.jti && (await isTokenRevoked(verified.jti))) {
+      return next(AppError.unauthorized("Token has been revoked"));
+    }
+
+    // AUDITOR is strictly read-only across all endpoints
+    if (verified.role === ROLES.AUDITOR && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+      return next(AppError.forbidden("Access denied: AUDITOR role is strictly read-only"));
+    }
+
     req.user = verified;
     next();
   } catch (err) {
@@ -110,7 +121,7 @@ export function requireIdentityType(expectedType) {
 }
 
 /**
- * Enforces strict tenant scoping for merchant and store identities.
+ * Enforces strict tenant scoping for merchant, auditor, and store identities.
  * Prevents callers from claiming or querying another tenant's records.
  */
 export function requireTenantScope(req, res, next) {
@@ -118,9 +129,58 @@ export function requireTenantScope(req, res, next) {
     return next(AppError.unauthorized("Authentication required"));
   }
 
-  // Admins and Auditors have system-wide scope, can optionally filter by query
-  if (req.user.role === ROLES.ADMIN || req.user.role === ROLES.AUDITOR || req.user.role === ROLES.PAYMENT_CONTROLLER) {
+  // Admins and Payment Controllers have system-wide scope
+  if (req.user.role === ROLES.ADMIN || req.user.role === ROLES.PAYMENT_CONTROLLER) {
     req.tenantFilter = req.query.tenantId || req.body.tenantId || null;
+    return next();
+  }
+
+  // AUDITOR scope enforcement: default to assigned tenantId; global access requires explicit GLOBAL_AUDIT scope
+  if (req.user.role === ROLES.AUDITOR) {
+    const hasGlobalAudit = Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT");
+    if (hasGlobalAudit) {
+      // Audit log event for approved global-audit access
+      createAuditEvent({
+        actorType: req.user.identityType || "HUMAN",
+        actorId: req.user.sub,
+        action: "GLOBAL_AUDIT_ACCESSED",
+        entityType: "TenantResource",
+        entityId: req.query.tenantId || req.body.tenantId || "GLOBAL",
+        metadata: {
+          path: req.path,
+          method: req.method,
+          scopes: req.user.scopes
+        }
+      }).catch(() => {});
+
+      req.tenantFilter = req.query.tenantId || req.body.tenantId || null;
+      return next();
+    }
+
+    // Scoped auditor without GLOBAL_AUDIT must have assigned tenantId
+    if (!req.user.tenantId) {
+      return next(AppError.forbidden("Access denied: no tenant context bound to auditor identity"));
+    }
+
+    const attemptedTenantId = req.params.tenantId || req.query.tenantId || req.body.tenantId;
+    if (attemptedTenantId && attemptedTenantId.trim() !== req.user.tenantId) {
+      createAuditEvent({
+        actorType: req.user.identityType || "HUMAN",
+        actorId: req.user.sub,
+        action: "ACCESS_DENIED_ALERT",
+        entityType: "TenantResource",
+        entityId: attemptedTenantId,
+        metadata: {
+          userTenant: req.user.tenantId,
+          attemptedTenantId,
+          reason: "AUDITOR_CROSS_TENANT_ACCESS_DENIED"
+        }
+      }).catch(() => {});
+
+      return next(AppError.forbidden("Access denied: cross-tenant access prohibited for scoped auditor"));
+    }
+
+    req.tenantFilter = req.user.tenantId;
     return next();
   }
 

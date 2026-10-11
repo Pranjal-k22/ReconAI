@@ -1,40 +1,71 @@
 import { signUserToken, signServiceToken, revokeToken, ROLES } from "../services/auth/tokenService.js";
+import { authenticateUserCredentials } from "../services/auth/accountService.js";
+import { authenticateServiceCredential } from "../services/auth/serviceRegistry.js";
 import { getEnv } from "../config/env.js";
 import { AppError } from "../utils/AppError.js";
 import { createAuditEvent } from "../services/audit/auditService.js";
 
 /**
  * ReconAI 2.0 - Auth Controller
+ *
+ * Enforces verifiable credential provenance for human users
+ * and fixed, immutable server-side identity bindings for machine services.
  */
 
 export async function login(req, res, next) {
   try {
-    const { userId, role = ROLES.CUSTOMER, tenantId, customerId, scopes } = req.body;
-
-    if (!userId) {
-      throw AppError.badRequest("userId is required");
-    }
+    const { identifier, userId, email, password } = req.body;
+    const userIdentifier = identifier || userId || email;
 
     // Role cannot be a machine service role via user login
-    if ([ROLES.CUSTOMER_AI, ROLES.SHOP_AI, ROLES.PAYMENT_CONTROLLER].includes(role)) {
-      throw AppError.badRequest(`Service role '${role}' cannot authenticate via user login endpoint`);
+    if (req.body.role && [ROLES.CUSTOMER_AI, ROLES.SHOP_AI, ROLES.PAYMENT_CONTROLLER].includes(req.body.role)) {
+      throw AppError.badRequest(`Service role '${req.body.role}' cannot authenticate via user login endpoint`);
     }
 
-    const token = signUserToken({
-      userId,
-      role,
-      tenantId,
-      customerId,
-      scopes
+    if (!userIdentifier || !password) {
+      throw AppError.badRequest("Account identifier and password are required");
+    }
+
+    // Authenticate credentials against verified account store (scrypt hash + timingSafeEqual)
+    const verifiedAccount = await authenticateUserCredentials({
+      identifier: userIdentifier,
+      password
     });
 
-    await createAuditEvent({
+    if (!verifiedAccount) {
+      // Record failed authentication alert without leaking whether user exists
+      createAuditEvent({
+        actorType: "SYSTEM",
+        actorId: "auth-gateway",
+        action: "AUTH_LOGIN_FAILED",
+        entityType: "UserAccount",
+        entityId: "unknown",
+        metadata: { identifier: userIdentifier, ip: req.ip }
+      }).catch(() => {});
+
+      throw AppError.unauthorized("Invalid credentials");
+    }
+
+    // Token claims are derived strictly from the verified account store—never untrusted body claims
+    const token = signUserToken({
+      userId: verifiedAccount.userId,
+      role: verifiedAccount.role,
+      tenantId: verifiedAccount.tenantId,
+      customerId: verifiedAccount.customerId,
+      scopes: verifiedAccount.scopes
+    });
+
+    createAuditEvent({
       actorType: "HUMAN",
-      actorId: userId,
+      actorId: verifiedAccount.userId,
       action: "AUTH_LOGIN_SUCCESS",
       entityType: "UserSession",
-      entityId: userId,
-      metadata: { role, tenantId, customerId }
+      entityId: verifiedAccount.userId,
+      metadata: {
+        role: verifiedAccount.role,
+        tenantId: verifiedAccount.tenantId,
+        customerId: verifiedAccount.customerId
+      }
     }).catch(() => {});
 
     res.status(200).json({
@@ -42,10 +73,12 @@ export async function login(req, res, next) {
       data: {
         token,
         user: {
-          userId,
-          role,
-          tenantId: tenantId || null,
-          customerId: customerId || null
+          userId: verifiedAccount.userId,
+          email: verifiedAccount.email,
+          role: verifiedAccount.role,
+          tenantId: verifiedAccount.tenantId,
+          customerId: verifiedAccount.customerId,
+          scopes: verifiedAccount.scopes
         }
       }
     });
@@ -56,35 +89,61 @@ export async function login(req, res, next) {
 
 export async function issueServiceToken(req, res, next) {
   try {
-    const serviceSecret = req.headers["x-service-secret"];
-    const env = getEnv();
+    const serviceId = req.headers["x-service-id"] || req.body.serviceId;
+    const clientSecret = req.headers["x-service-secret"] || req.body.clientSecret || req.body.serviceSecret;
 
-    if (!serviceSecret || serviceSecret !== env.SERVICE_TOKEN_SECRET) {
-      throw AppError.unauthorized("Invalid or missing service secret");
+    if (!serviceId || !clientSecret) {
+      throw AppError.unauthorized("serviceId and service secret are required");
     }
 
-    const { serviceId, role, tenantId, customerId, scopes, expiresIn } = req.body;
-
-    if (!serviceId) {
-      throw AppError.badRequest("serviceId is required");
-    }
-
-    const token = signServiceToken({
+    // Verify machine credential against server-side service identity registry (timingSafeEqual)
+    const serviceProfile = authenticateServiceCredential({
       serviceId,
-      role,
-      tenantId,
-      customerId,
-      scopes,
-      expiresIn
+      clientSecret
     });
 
-    await createAuditEvent({
+    if (!serviceProfile) {
+      createAuditEvent({
+        actorType: "SYSTEM",
+        actorId: "service-gateway",
+        action: "AUTH_LOGIN_FAILED",
+        entityType: "ServicePrincipalSession",
+        entityId: serviceId,
+        metadata: { serviceId, ip: req.ip, reason: "INVALID_SERVICE_CREDENTIAL" }
+      }).catch(() => {});
+
+      throw AppError.unauthorized("Invalid service credentials");
+    }
+
+    // Reject callers attempting to request arbitrary roles or cross-tenant scopes
+    if (req.body.role && req.body.role !== serviceProfile.role) {
+      throw AppError.forbidden("Cross-service role elevation prohibited");
+    }
+    if (req.body.tenantId && req.body.tenantId !== serviceProfile.tenantId) {
+      throw AppError.forbidden("Cross-tenant service scope injection prohibited");
+    }
+
+    // Claims are derived strictly from the fixed server-side service profile
+    const token = signServiceToken({
+      serviceId: serviceProfile.serviceId,
+      role: serviceProfile.role,
+      tenantId: serviceProfile.tenantId,
+      customerId: serviceProfile.customerId,
+      scopes: serviceProfile.scopes,
+      expiresIn: req.body.expiresIn || "15m"
+    });
+
+    createAuditEvent({
       actorType: "SERVICE",
-      actorId: serviceId,
+      actorId: serviceProfile.serviceId,
       action: "AUTH_LOGIN_SUCCESS",
       entityType: "ServicePrincipalSession",
-      entityId: serviceId,
-      metadata: { role, tenantId, customerId }
+      entityId: serviceProfile.serviceId,
+      metadata: {
+        role: serviceProfile.role,
+        tenantId: serviceProfile.tenantId,
+        customerId: serviceProfile.customerId
+      }
     }).catch(() => {});
 
     res.status(200).json({
@@ -92,10 +151,11 @@ export async function issueServiceToken(req, res, next) {
       data: {
         token,
         service: {
-          serviceId,
-          role,
-          tenantId: tenantId || null,
-          customerId: customerId || null
+          serviceId: serviceProfile.serviceId,
+          role: serviceProfile.role,
+          tenantId: serviceProfile.tenantId,
+          customerId: serviceProfile.customerId,
+          scopes: serviceProfile.scopes
         }
       }
     });

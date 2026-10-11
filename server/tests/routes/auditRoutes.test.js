@@ -50,22 +50,35 @@ describe("Audit REST API Routes & Append-Only Guarantees", () => {
     expect(res.body.data.eventId).toBe("AUD-001");
   });
 
-  it("APPEND-ONLY INVARIANT: PATCH, PUT, DELETE endpoints return 404 Not Found", async () => {
+  const adminToken = signUserToken({
+    userId: "usr_admin_test",
+    role: ROLES.ADMIN
+  });
+
+  it("APPEND-ONLY INVARIANT: PATCH, PUT, DELETE endpoints return 404 Not Found for ADMIN", async () => {
     const patchRes = await request(app)
       .patch("/api/audit/AUD-001")
-      .set("Authorization", `Bearer ${auditorToken}`)
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ action: "MODIFIED" });
     expect(patchRes.status).toBe(404);
 
     const putRes = await request(app)
       .put("/api/audit/AUD-001")
-      .set("Authorization", `Bearer ${auditorToken}`)
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ action: "MODIFIED" });
     expect(putRes.status).toBe(404);
 
     const deleteRes = await request(app)
       .delete("/api/audit/AUD-001")
-      .set("Authorization", `Bearer ${auditorToken}`);
+      .set("Authorization", `Bearer ${adminToken}`);
     expect(deleteRes.status).toBe(404);
+  });
+
+  it("AUDITOR mutation attempts are rejected with 403 Forbidden", async () => {
+    const patchRes = await request(app)
+      .patch("/api/audit/AUD-001")
+      .set("Authorization", `Bearer ${auditorToken}`)
+      .send({ action: "MODIFIED" });
+    expect(patchRes.status).toBe(403);
   });
 });

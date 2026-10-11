@@ -54,10 +54,11 @@ router.get("/", async (req, res, next) => {
 router.get("/:caseId", async (req, res, next) => {
   try {
     const { caseId } = req.params;
-    const scopedTenantId =
-      req.user.role === ROLES.ADMIN || req.user.role === ROLES.AUDITOR || req.user.role === ROLES.PAYMENT_CONTROLLER
-        ? null
-        : req.user.tenantId;
+    const isGlobal =
+      req.user.role === ROLES.ADMIN ||
+      req.user.role === ROLES.PAYMENT_CONTROLLER ||
+      (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+    const scopedTenantId = isGlobal ? null : req.user.tenantId;
 
     const paymentCase = await getPaymentCaseById(caseId, scopedTenantId);
 

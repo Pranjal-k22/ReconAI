@@ -45,9 +45,10 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 
 4. **`AUDITOR`**:
    - Represents internal/external compliance auditors and risk officers.
-   - *Scope*: Global read-only access.
-   - *Capabilities*: Query immutable audit ledger, inspect cryptographic evidence proofs, view evaluation benchmarks.
-   - *Restrictions*: Zero write or mutation permissions across all endpoints.
+   - *Scope*: **Strictly tenant-scoped by default** to `tenantId === token.tenantId`. Does *not* have automatic cross-tenant access.
+   - *Privileged Global Audit*: Global organization-wide auditing requires an explicit, verified server-side permission grant (`scopes.includes("GLOBAL_AUDIT")`). Every access under this privileged grant is recorded in the append-only `AuditLog` (`GLOBAL_AUDIT_ACCESSED`).
+   - *Capabilities*: Read-only query of cases, lifecycle events, payment actions, and audit ledgers within assigned scope; inspect cryptographic evidence proofs; view evaluation benchmarks.
+   - *Restrictions*: Zero write or mutation permissions across all endpoints (`POST`, `PUT`, `PATCH`, `DELETE` are unconditionally rejected with `HTTP 403 Forbidden`). Cross-tenant queries return `HTTP 404 Not Found` on single-resource lookups to eliminate resource-existence leaks.
 
 ### 2.2 Agent & System Service Identities
 5. **`CUSTOMER_AI`**:
@@ -128,6 +129,12 @@ if (!paymentCase) {
 ### Rule 3: Admin Multi-Tenancy Scoping
 When a request originates from `role === 'ADMIN'`:
 - Global access is permitted, but the query may optionally be scoped to a specific `tenantId` via header or query parameter for multi-store inspection.
+
+### Rule 4: Auditor Scoping & Global Audit Verification
+When a request originates from `role === 'AUDITOR'`:
+- **Default**: Scoped strictly to `req.user.tenantId`. If the auditor attempts to pass a different `tenantId` query parameter or access another tenant's resource, it is rejected (`HTTP 403 Forbidden` for query mismatches, `HTTP 404 Not Found` for single resource queries to prevent existence leakage).
+- **Explicit Global Grant**: If and only if the verified token contains `scopes.includes("GLOBAL_AUDIT")`, the auditor is allowed cross-tenant read-only queries. Each such query emits a `GLOBAL_AUDIT_ACCESSED` event to the `AuditLog`.
+- **Read-Only Invariant**: All non-idempotent HTTP methods (`POST`, `PUT`, `PATCH`, `DELETE`) are rejected with `HTTP 403 Forbidden` before route handlers execute.
 
 ---
 

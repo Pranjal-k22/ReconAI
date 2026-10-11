@@ -281,4 +281,120 @@ describe("Phase 3 - Tenant Isolation & Route Coverage Suite", () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data.runs).toHaveLength(1);
   });
+
+  // --- Auditor Scope & Privileged Global Audit Tests (Section 3) ---
+  describe("Auditor Scope & Privileged Global Audit Integration Tests", () => {
+    const getScopedAuditorToken = (tenantId = "sh_tenant_alpha") =>
+      signUserToken({
+        userId: "usr_auditor_scoped",
+        role: ROLES.AUDITOR,
+        tenantId
+      });
+
+    const getGlobalAuditorToken = () =>
+      signUserToken({
+        userId: "usr_auditor_global",
+        role: ROLES.AUDITOR,
+        scopes: ["GLOBAL_AUDIT"]
+      });
+
+    const getUnassignedAuditorToken = () =>
+      signUserToken({
+        userId: "usr_auditor_unassigned",
+        role: ROLES.AUDITOR,
+        tenantId: null,
+        scopes: []
+      });
+
+    it("Auditor Test 1: Auditor can read only records in its assigned scope", async () => {
+      let capturedFilter = null;
+      vi.spyOn(paymentCaseService, "listPaymentCases").mockImplementation(async (filter) => {
+        capturedFilter = filter;
+        return { cases: [{ caseId: "CASE-01" }], pagination: { page: 1, limit: 50, total: 1, pages: 1 } };
+      });
+
+      const scopedToken = getScopedAuditorToken("sh_tenant_alpha");
+      const res = await request(app)
+        .get("/api/payment-cases")
+        .set("Authorization", `Bearer ${scopedToken}`);
+
+      expect(res.status).toBe(200);
+      expect(capturedFilter.tenantId).toBe("sh_tenant_alpha");
+    });
+
+    it("Auditor Test 2: Auditor cannot read another tenant's record by changing its ID", async () => {
+      vi.spyOn(paymentCaseService, "getPaymentCaseById").mockImplementation(async (caseId, scopedTenantId) => {
+        const caseInDb = { caseId, tenantId: "sh_tenant_beta" };
+        if (scopedTenantId && caseInDb.tenantId !== scopedTenantId) {
+          throw AppError.notFound(`PaymentCase not found for caseId '${caseId}'`);
+        }
+        return caseInDb;
+      });
+
+      const scopedToken = getScopedAuditorToken("sh_tenant_alpha");
+      const res = await request(app)
+        .get("/api/payment-cases/CASE-BETA-SECRET")
+        .set("Authorization", `Bearer ${scopedToken}`);
+
+      // Returns 404 to prevent resource existence leaks across tenants
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+    });
+
+    it("Auditor Test 3: Auditor cannot obtain cross-tenant results through query filters", async () => {
+      const scopedToken = getScopedAuditorToken("sh_tenant_alpha");
+      const res = await request(app)
+        .get("/api/payment-cases?tenantId=sh_tenant_beta")
+        .set("Authorization", `Bearer ${scopedToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toMatch(/cross-tenant access prohibited for scoped auditor/i);
+    });
+
+    it("Auditor Test 4: Auditor cannot perform mutations (POST, PUT, PATCH, DELETE are denied with 403)", async () => {
+      const scopedToken = getScopedAuditorToken("sh_tenant_alpha");
+
+      const postRes = await request(app)
+        .post("/api/payment-cases")
+        .set("Authorization", `Bearer ${scopedToken}`)
+        .send({ caseId: "CASE-ILLEGAL", amountPaise: 50000, currency: "INR" });
+      expect(postRes.status).toBe(403);
+      expect(postRes.body.error.message).toMatch(/strictly read-only/i);
+
+      const patchRes = await request(app)
+        .patch("/api/payment-cases/CASE-01/safe-hold")
+        .set("Authorization", `Bearer ${scopedToken}`)
+        .send({ isSafeHold: true });
+      expect(patchRes.status).toBe(403);
+      expect(patchRes.body.error.message).toMatch(/strictly read-only/i);
+    });
+
+    it("Auditor Test 5: Global scope is denied unless the explicit privileged grant is present", async () => {
+      const unassignedToken = getUnassignedAuditorToken();
+      const res = await request(app)
+        .get("/api/payment-cases")
+        .set("Authorization", `Bearer ${unassignedToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toMatch(/no tenant context bound to auditor identity/i);
+    });
+
+    it("Auditor Test 6: Approved privileged global audit access is permitted and audited", async () => {
+      let capturedFilter = null;
+      vi.spyOn(paymentCaseService, "listPaymentCases").mockImplementation(async (filter) => {
+        capturedFilter = filter;
+        return { cases: [{ caseId: "CASE-GLOBAL" }], pagination: { page: 1, limit: 50, total: 1, pages: 1 } };
+      });
+
+      const globalAuditorToken = getGlobalAuditorToken();
+      const res = await request(app)
+        .get("/api/payment-cases")
+        .set("Authorization", `Bearer ${globalAuditorToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      // Global auditor is not constrained to a single tenant
+      expect(capturedFilter.tenantId).toBeUndefined();
+    });
+  });
 });
