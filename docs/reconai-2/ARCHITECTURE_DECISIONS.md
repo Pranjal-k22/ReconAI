@@ -209,3 +209,22 @@ ReconAI 2.0 requires robust multi-tenant boundaries, distinct machine/service pr
 3. **Row-Level Tenant Scoping:** Tenant and customer IDs are derived from verified tokens and injected directly into Mongoose filters. Spoofed IDs in request bodies or query parameters are strictly blocked or overridden.
 4. **Legacy Data Isolation:** Pre-existing records without explicit tenant ownership default to `tenantId: null` and remain quarantined from normal tenant queries to eliminate cross-tenant data leakage.
 5. **Non-Executing Safety Guardrails:** AI and controller identities remain strictly non-executing in Phase 3. Live payment operations and autonomous disbursement remain prohibited.
+
+---
+
+## ADR-010: Phase 3 Security Correction — Auditor Scope, Identity Provenance, Service Binding, and Persistent Revocation
+
+### Context
+A focused security audit identified that:
+1. `AUDITOR` had been described with global read-only access rather than strict tenant scoping.
+2. Human account credential verification lacked explicit salted hashing and verifiable account provenance.
+3. Service token issuance allowed callers to request arbitrary roles without fixed server-side identity bindings.
+4. Production environments risked silent fallback to predictable development secrets.
+5. In-memory token revocation was not durable across service restarts or distributed container instances.
+
+### Decision
+1. **Constrained Auditor Scope:** `AUDITOR` is tenant-scoped by default to `token.tenantId`. Cross-tenant querying is strictly prohibited unless an explicit privileged `GLOBAL_AUDIT` claim is present in `token.scopes`. Approved global audit requests emit an append-only `GLOBAL_AUDIT_ACCESSED` audit event. All mutations (`POST`, `PUT`, `PATCH`, `DELETE`) by an auditor are unconditionally rejected with `HTTP 403 Forbidden`. Cross-tenant lookups return `404 Not Found` to prevent existence leaks.
+2. **Human Credential Provenance:** Human authentication validates against the persistent `UserAccount` store using salted `scrypt` hashing (N=16384, r=8, p=1) and constant-time `crypto.timingSafeEqual`. Claims (role, tenantId, customerId, scopes) are derived solely from verified server records—never caller-submitted request fields. Failed logins return generic error messages to eliminate account enumeration.
+3. **Fixed Service Identity Credential Binding:** Machine services must present discrete credentials verified against a fixed server-side service registry (`serviceRegistry.js`). Credentials map 1:1 to immutable service profiles (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`). Caller-supplied role or scope overrides are rejected with `HTTP 403 Forbidden`. Secrets are evaluated using constant-time comparison.
+4. **Fail-Closed Production Signing Secrets:** `env.js` validates in `NODE_ENV === "production"` that `JWT_SECRET` and `SERVICE_TOKEN_SECRET` are at least 32 characters, distinct from each other, and do not match prohibited development defaults. Missing or insecure production configuration immediately aborts application startup.
+5. **Durable Token Revocation:** Invalidated tokens (by JTI) are persisted to the database via the `RevokedToken` Mongoose collection with MongoDB TTL indexing (`expiresAt: 1`, `expireAfterSeconds: 0`). Middleware evaluates both in-memory cache and persistent datastore on every protected request. In production, datastore unavailability triggers fail-closed denial.

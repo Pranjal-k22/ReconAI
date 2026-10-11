@@ -45,11 +45,21 @@ Phase 3 introduces an enterprise-grade multi-tenant security architecture for Re
 }
 ```
 
-### 2.3 Expiry, Revocation & Rotation
+### 2.3 Expiry, Durable Revocation & Rotation
 - **Human Tokens:** Expire in 1 hour (`JWT_EXPIRES_IN=1h`).
 - **Machine Service Tokens:** Short-lived tokens with 15-minute expiry (`15m`).
-- **Revocation:** In-memory high-speed JTI revocation cache (`revokeToken(jti)`). Invoked during `POST /api/auth/logout`.
-- **Secret Rotation:** Secrets are decoupled into environment variables (`JWT_SECRET` and `SERVICE_TOKEN_SECRET`) requiring minimum 16-character cryptographic keys. Key rotation occurs via environment config updates without requiring application code changes.
+- **Durable Token Revocation:** Revocations are persisted to the database via the `RevokedToken` collection with a MongoDB TTL index (`expiresAt: 1, expireAfterSeconds: 0`), backed by an in-memory fast-path cache. Revocation persists across service restarts and multiple container instances. In production, if the revocation store is unreachable, protected routes fail closed (`503 Service Unavailable`).
+- **Production Secret Validation:** In production (`NODE_ENV === "production"`), `JWT_SECRET` and `SERVICE_TOKEN_SECRET` must be distinct, at least 32 characters, and cannot match known development fallbacks. Startup aborts immediately if secrets are insecure.
+
+### 2.4 Human Login Credential Provenance
+- **Account Verification:** Authenticates against `UserAccount` collection using salted `scrypt` hashing (N=16384, r=8, p=1) and `crypto.timingSafeEqual`.
+- **Zero User Enumeration:** Invalid identifiers or incorrect passwords return a generic "Invalid credentials" error (`HTTP 401 Unauthorized`).
+- **Server-Derived Claims:** Token claims (`role`, `tenantId`, `customerId`, `scopes`) are loaded exclusively from verified account records. Caller-supplied role or tenant fields in the request body are strictly ignored.
+
+### 2.5 Fixed Service Identity Credential Binding
+- **Machine Authentication:** Authenticates against `serviceRegistry` via `POST /api/auth/service-token` using `x-service-id` and `x-service-secret`.
+- **Fixed Profile Binding:** Credentials are bound 1:1 to immutable server-side profiles (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`).
+- **Prohibition of Elevation:** Callers cannot request arbitrary roles or tenant scopes; overrides trigger `HTTP 403 Forbidden`.
 
 ---
 
@@ -60,7 +70,7 @@ Phase 3 introduces an enterprise-grade multi-tenant security architecture for Re
 | **`CUSTOMER`** | HUMAN | Retail customer | Bound strictly to `customerId` & `tenantId`. View own cases/claims only. |
 | **`SHOP`** | HUMAN | Merchant / store operator | Bound strictly to `tenantId`. View store orders, cases, and settlements. Cannot see other merchants. |
 | **`ADMIN`** | HUMAN | Operations administrator | Cross-tenant inspection, safe-hold review, policy threshold management. All actions audited. |
-| **`AUDITOR`** | HUMAN | Compliance officer | Global read-only visibility. All mutations/writes rejected. |
+| **`AUDITOR`** | HUMAN | Compliance officer | **Tenant-scoped by default**. Strictly read-only (`POST`/`PUT`/`PATCH`/`DELETE` denied with 403). Cross-tenant access requires explicit `GLOBAL_AUDIT` claim and logs audit events. |
 | **`CUSTOMER_AI`** | SERVICE | Customer assistant | Scoped to customer evidence. Cannot see wholesale costs or provider secrets. Non-executing. |
 | **`SHOP_AI`** | SERVICE | Store assistant | Scoped to store evidence. Cannot see customer PII or cross-tenant data. Non-executing. |
 | **`PAYMENT_CONTROLLER`**| SERVICE | Core engine service | Propose/simulate actions and append events. Strictly prohibited from live disbursement or provider execution. |
@@ -146,8 +156,10 @@ SERVICE_TOKEN_AUDIENCE=reconai-service
 
 ## 8. Verification & Test Summary
 
-- **Backend Test Suite:** 49 test files passed (49/49), 262 tests passed (262/262).
+- **Backend Test Suite:** 50 test files passed (50/50), 280 tests passed (280/280).
+- **Security Hardening Suite:** 11/11 tests passed covering production secret validation, salted scrypt hashing, account provenance, fixed service credential binding, and durable TTL revocation.
+- **Auditor Tenant Isolation Suite:** 6/6 integration tests passed verifying scoped auditor restrictions, cross-tenant denial, mutation prohibition (403), global audit grant verification, and audit trail logging.
 - **Deterministic Reconciliation Engine:** 120/120 scenarios evaluated at 100.00% accuracy.
-- **Frontend Production Build:** `vite build` completed successfully in 23.05s with 0 errors.
+- **Frontend Production Build:** `vite build` completed successfully with 0 errors.
 - **Git Hygiene:** `git diff --check` executed with 0 errors.
 - **Financial Safety:** Provider write execution endpoints remain completely absent. Phase 4 webhook and multi-agent workers have not started.

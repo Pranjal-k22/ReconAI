@@ -23,9 +23,9 @@ To certify that ReconAI 2.0 has successfully evolved into an enterprise-grade au
 └────────────────────────────────────────┴───────────────────────────────┘
 ```
 
-### Gate 1: Zero Cross-Tenant Access Leaks
-- **Criterion**: In automated security penetration tests, a user or AI agent authenticated with `tenantId: "sh_alpha"` or `customerId: "cust_001"` must receive `HTTP 403 Forbidden` or `HTTP 404 Not Found` when attempting to query or act on any resource owned by `tenantId: "sh_beta"` or `customerId: "cust_002"`.
-- **Measurement**: 100% pass rate across multi-tenant authorization test suites; 0 data leaks.
+### Gate 1: Zero Cross-Tenant Access Leaks & Scoped Auditor Enclosure
+- **Criterion**: In automated security penetration tests, any user, AI agent, or auditor authenticated with `tenantId: "sh_alpha"` or `customerId: "cust_001"` must receive `HTTP 403 Forbidden` or `HTTP 404 Not Found` when attempting to query or act on any resource owned by `tenantId: "sh_beta"` or `customerId: "cust_002"`. Auditors are strictly scoped to their assigned tenant; cross-tenant auditing requires verified server-side `GLOBAL_AUDIT` claims and logs audit events. Human credentials require salted `scrypt` provenance, machine credentials bind to immutable service identities, and token revocations persist in a TTL database.
+- **Measurement**: 100% pass rate across multi-tenant authorization, auditor isolation, and security hardening test suites; 0 data leaks.
 
 ### Gate 2: Zero Duplicate Financial Writes Under Concurrency
 - **Criterion**: When 100 concurrent threads or distributed worker nodes attempt to resolve the same eligible payment case simultaneously, exactly **one** provider write action is dispatched, and the remaining 99 requests are cleanly rejected by the concurrency lock or idempotency ledger.

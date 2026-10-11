@@ -1,13 +1,15 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import { getEnv } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
+import { RevokedToken } from "../../models/RevokedToken.js";
 
 /**
  * ReconAI 2.0 - Token & Identity Service
  *
  * Provides cryptographic token generation, verification, algorithm enforcement,
- * and token revocation for Human and Machine/Service identities.
+ * and durable persistent token revocation for Human and Machine/Service identities.
  */
 
 export const ROLES = Object.freeze({
@@ -200,17 +202,69 @@ export function verifyToken(token, { expectedAudience = null } = {}) {
 }
 
 /**
- * Revokes a token by its unique JWT ID (jti).
+ * Checks if a token JTI has been revoked in-memory or in persistent store.
  */
-export function revokeToken(jti) {
+export async function isTokenRevoked(jti) {
+  if (!jti || typeof jti !== "string") return false;
+  const cleanJti = jti.trim();
+
+  if (revokedTokens.has(cleanJti)) {
+    return true;
+  }
+
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      const exists = await RevokedToken.exists({ jti: cleanJti });
+      if (exists) {
+        revokedTokens.add(cleanJti);
+        return true;
+      }
+    } catch {
+      // In production, if persistent revocation backend fails, fail closed
+      const env = getEnv();
+      if (env.NODE_ENV === "production") {
+        throw AppError.internal("Revocation store unavailable; failing closed");
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Revokes a token by its unique JWT ID (jti) both in-memory and persistently.
+ */
+export async function revokeToken(jti, { expiresAt = null, reason = "LOGOUT" } = {}) {
   if (jti && typeof jti === "string") {
-    revokedTokens.add(jti.trim());
+    const cleanJti = jti.trim();
+    revokedTokens.add(cleanJti);
+
+    if (mongoose.connection && mongoose.connection.readyState === 1) {
+      try {
+        await RevokedToken.findOneAndUpdate(
+          { jti: cleanJti },
+          {
+            jti: cleanJti,
+            expiresAt: expiresAt || new Date(Date.now() + 24 * 60 * 60 * 1000),
+            reason
+          },
+          { upsert: true, new: true }
+        );
+      } catch {
+        // Fallback to in-memory set
+      }
+    }
   }
 }
 
 /**
  * Clears revoked tokens list (primarily used for test cleanup).
  */
-export function clearRevocationList() {
+export async function clearRevocationList() {
   revokedTokens.clear();
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      await RevokedToken.deleteMany({});
+    } catch {}
+  }
 }

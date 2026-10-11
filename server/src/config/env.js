@@ -3,6 +3,13 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+export const PROHIBITED_DEV_SECRETS = Object.freeze([
+  "reconai-dev-jwt-secret-key-32chars-min!",
+  "reconai-service-token-secret-32chars-min!",
+  "reconai-test-jwt-secret-key-32chars-min!",
+  "reconai-test-service-token-secret-32chars-min!"
+]);
+
 const envSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(5000),
@@ -40,6 +47,43 @@ const envSchema = z
         message: "MONGODB_URI is required in development and production modes"
       });
     }
+
+    if (data.NODE_ENV === "production") {
+      // Production signing secret validations: must be >= 32 chars and not match known dev fallbacks
+      if (
+        !data.JWT_SECRET ||
+        data.JWT_SECRET.length < 32 ||
+        PROHIBITED_DEV_SECRETS.includes(data.JWT_SECRET) ||
+        data.JWT_SECRET.toLowerCase().includes("dev")
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["JWT_SECRET"],
+          message: "Production requires a distinct, cryptographically strong JWT_SECRET (min 32 chars) not matching development fallbacks"
+        });
+      }
+
+      if (
+        !data.SERVICE_TOKEN_SECRET ||
+        data.SERVICE_TOKEN_SECRET.length < 32 ||
+        PROHIBITED_DEV_SECRETS.includes(data.SERVICE_TOKEN_SECRET) ||
+        data.SERVICE_TOKEN_SECRET.toLowerCase().includes("dev")
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SERVICE_TOKEN_SECRET"],
+          message: "Production requires a distinct, cryptographically strong SERVICE_TOKEN_SECRET (min 32 chars) not matching development fallbacks"
+        });
+      }
+
+      if (data.JWT_SECRET && data.SERVICE_TOKEN_SECRET && data.JWT_SECRET === data.SERVICE_TOKEN_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SERVICE_TOKEN_SECRET"],
+          message: "JWT_SECRET and SERVICE_TOKEN_SECRET must be distinct keys"
+        });
+      }
+    }
   });
 
 let validatedEnv = null;
@@ -49,8 +93,8 @@ export const validateEnv = (customEnv = process.env) => {
 
   if (!result.success) {
     const formattedErrors = result.error.format();
-    const errorMsg = "Invalid environment variables setup: MONGODB_URI is required in development and production modes";
-    const error = new Error(errorMsg);
+    const messages = result.error.errors.map((e) => e.message).join("; ");
+    const error = new Error(`Invalid environment variables setup: ${messages}`);
     error.format = formattedErrors;
     throw error;
   }
