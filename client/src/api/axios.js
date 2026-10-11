@@ -10,10 +10,34 @@ const api = axios.create({
   }
 });
 
+// Request interceptor to attach bearer token if present
+api.interceptors.request.use(
+  (config) => {
+    try {
+      const token = localStorage.getItem("reconai_token");
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    } catch {
+      // Ignore localStorage access failures in restricted environments
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // Response interceptor for error normalization
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Cleanly handle expired / invalid session
+    if (error.response && error.response.status === 401) {
+      try {
+        localStorage.removeItem("reconai_token");
+      } catch {
+        // Ignore
+      }
+    }
     let message = "An unexpected network or server error occurred.";
     let code = "UNKNOWN_ERROR";
     let details = null;

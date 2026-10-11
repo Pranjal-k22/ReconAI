@@ -3,13 +3,27 @@ import request from "supertest";
 import app from "../../src/app.js";
 import * as exceptionInvestigator from "../../src/services/ai/exceptionInvestigator.js";
 import { AppError } from "../../src/utils/AppError.js";
+import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 
 describe("AI Investigation API Routes (POST /api/exceptions/:exceptionId/investigate)", () => {
+  const adminToken = signUserToken({
+    userId: "usr_admin_ai_investigate",
+    role: ROLES.ADMIN
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("POST /api/exceptions/:exceptionId/investigate should return 200 with analysis data", async () => {
+  it("REJECTS unauthenticated access to /api/exceptions/:exceptionId/investigate with 401", async () => {
+    const res = await request(app)
+      .post("/api/exceptions/EXC-ROUTE-001/investigate")
+      .send({ actorId: "test-api-reviewer" });
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
+  });
+
+  it("POST /api/exceptions/:exceptionId/investigate should return 200 with analysis data when authenticated", async () => {
     const mockInvestigation = {
       exceptionId: "EXC-ROUTE-001",
       source: "FALLBACK",
@@ -27,6 +41,7 @@ describe("AI Investigation API Routes (POST /api/exceptions/:exceptionId/investi
 
     const res = await request(app)
       .post("/api/exceptions/EXC-ROUTE-001/investigate")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ actorId: "test-api-reviewer" });
 
     expect(res.status).toBe(200);
@@ -44,6 +59,7 @@ describe("AI Investigation API Routes (POST /api/exceptions/:exceptionId/investi
 
     const res = await request(app)
       .post("/api/exceptions/EXC-NONEXISTENT/investigate")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ actorId: "test-api-reviewer" });
 
     expect(res.status).toBe(404);

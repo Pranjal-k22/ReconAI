@@ -24,7 +24,13 @@ const envSchema = z
         }
         return true;
       })
-      .default(true)
+      .default(true),
+    JWT_SECRET: z.string().min(16).default("reconai-dev-jwt-secret-key-32chars-min!"),
+    JWT_EXPIRES_IN: z.string().default("1h"),
+    JWT_ISSUER: z.string().default("reconai-auth-service"),
+    JWT_AUDIENCE: z.string().default("reconai-api"),
+    SERVICE_TOKEN_SECRET: z.string().min(16).default("reconai-service-token-secret-32chars-min!"),
+    SERVICE_TOKEN_AUDIENCE: z.string().default("reconai-service")
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "test" && (!data.MONGODB_URI || data.MONGODB_URI.trim() === "")) {

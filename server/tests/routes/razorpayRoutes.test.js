@@ -4,13 +4,25 @@ import app from "../../src/app.js";
 import * as paymentSyncService from "../../src/services/razorpay/paymentSyncService.js";
 import * as settlementSyncService from "../../src/services/razorpay/settlementSyncService.js";
 import * as razorpayStatusService from "../../src/services/razorpay/razorpayStatusService.js";
+import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 
 describe("Razorpay REST APIs & Integration Status Endpoint", () => {
+  const adminToken = signUserToken({
+    userId: "usr_admin_rzp",
+    role: ROLES.ADMIN
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("POST /api/razorpay/sync/payments should trigger payment sync and return summary", async () => {
+  it("REJECTS unauthenticated access to /api/razorpay/sync/payments with 401", async () => {
+    const res = await request(app).post("/api/razorpay/sync/payments");
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
+  });
+
+  it("POST /api/razorpay/sync/payments should trigger payment sync and return summary with valid auth", async () => {
     const mockSummary = {
       batchId: "RZP-PAY-TEST-001",
       mode: "test",
@@ -26,6 +38,7 @@ describe("Razorpay REST APIs & Integration Status Endpoint", () => {
 
     const res = await request(app)
       .post("/api/razorpay/sync/payments")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ from: 1785542400, to: 1788134400 });
 
     expect(res.status).toBe(200);
@@ -51,6 +64,7 @@ describe("Razorpay REST APIs & Integration Status Endpoint", () => {
 
     const res = await request(app)
       .post("/api/razorpay/sync/settlements")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ year: 2026, month: 9 });
 
     expect(res.status).toBe(200);
@@ -67,7 +81,9 @@ describe("Razorpay REST APIs & Integration Status Endpoint", () => {
 
     vi.spyOn(razorpayStatusService, "getIntegrationStatus").mockReturnValue(mockStatus);
 
-    const res = await request(app).get("/api/integrations/status");
+    const res = await request(app)
+      .get("/api/integrations/status")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);

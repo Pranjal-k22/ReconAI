@@ -5,8 +5,14 @@ import { FinanceControllerRun } from "../../src/models/FinanceControllerRun.js";
 import * as financeControllerAgent from "../../src/services/finance/financeControllerAgent.js";
 import * as reconciliationService from "../../src/services/reconciliation/reconciliationService.js";
 import * as evaluationService from "../../src/services/evaluation/evaluationService.js";
+import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 
 describe("Finance Controller Agent & REST API Test Suite", () => {
+  const adminToken = signUserToken({
+    userId: "usr_admin_fc",
+    role: ROLES.ADMIN
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -127,8 +133,21 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
 
       vi.spyOn(financeControllerAgent, "runFinanceControllerBatch").mockResolvedValue(mockRun);
 
+      // Verify unauthenticated rejection
+      const unauthRes = await request(app)
+        .post("/api/finance-controller/run")
+        .send({
+          name: "API Test Run",
+          sourceMode: "SYNTHETIC",
+          importBatchId: "BATCH-DEMO-V1",
+          autoInvestigate: true
+        });
+      expect(unauthRes.status).toBe(401);
+      expect(unauthRes.body.success).toBe(false);
+
       const res = await request(app)
         .post("/api/finance-controller/run")
+        .set("Authorization", `Bearer ${adminToken}`)
         .send({
           name: "API Test Run",
           sourceMode: "SYNTHETIC",
@@ -145,6 +164,7 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
     it("POST /api/finance-controller/run returns 400 Bad Request for unsupported sourceMode", async () => {
       const res = await request(app)
         .post("/api/finance-controller/run")
+        .set("Authorization", `Bearer ${adminToken}`)
         .send({ name: "Invalid", sourceMode: "INVALID_MODE" });
 
       expect(res.status).toBe(400);
@@ -160,7 +180,9 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
 
       vi.spyOn(financeControllerAgent, "listControllerRuns").mockResolvedValue(mockList);
 
-      const res = await request(app).get("/api/finance-controller/runs?page=1&limit=20");
+      const res = await request(app)
+        .get("/api/finance-controller/runs?page=1&limit=20")
+        .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -171,7 +193,9 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
       const mockRun = { runId: "FCRUN-001", controllerState: "COMPLETED", status: "COMPLETED" };
       vi.spyOn(financeControllerAgent, "getControllerRunById").mockResolvedValue(mockRun);
 
-      const res = await request(app).get("/api/finance-controller/runs/FCRUN-001");
+      const res = await request(app)
+        .get("/api/finance-controller/runs/FCRUN-001")
+        .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -190,7 +214,9 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
 
       vi.spyOn(financeControllerAgent, "getControllerRunReport").mockResolvedValue(mockReport);
 
-      const res = await request(app).get("/api/finance-controller/runs/FCRUN-001/report");
+      const res = await request(app)
+        .get("/api/finance-controller/runs/FCRUN-001/report")
+        .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -209,7 +235,9 @@ describe("Finance Controller Agent & REST API Test Suite", () => {
 
       vi.spyOn(financeControllerAgent, "getControllerRunStatus").mockResolvedValue(mockStatus);
 
-      const res = await request(app).get("/api/finance-controller/runs/FCRUN-001/status");
+      const res = await request(app)
+        .get("/api/finance-controller/runs/FCRUN-001/status")
+        .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);

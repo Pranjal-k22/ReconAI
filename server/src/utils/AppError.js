@@ -28,4 +28,12 @@ export class AppError extends Error {
   static rateLimited(message = "Too many requests, please try again later", details = null) {
     return new AppError(message, 429, "RATE_LIMITED", details);
   }
+
+  static unauthorized(message = "Unauthorized", details = null) {
+    return new AppError(message, 401, "UNAUTHORIZED", details);
+  }
+
+  static forbidden(message = "Forbidden", details = null) {
+    return new AppError(message, 403, "FORBIDDEN", details);
+  }
 }

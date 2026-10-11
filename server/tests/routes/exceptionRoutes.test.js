@@ -3,10 +3,22 @@ import request from "supertest";
 import app from "../../src/app.js";
 import * as exceptionService from "../../src/services/exceptions/exceptionService.js";
 import * as humanReviewService from "../../src/services/exceptions/humanReviewService.js";
+import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 
 describe("Exception REST API Routes", () => {
+  const adminToken = signUserToken({
+    userId: "usr_admin_exc",
+    role: ROLES.ADMIN
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("REJECTS unauthenticated requests with 401 Unauthorized", async () => {
+    const res = await request(app).get("/api/exceptions");
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
   });
 
   it("GET /api/exceptions lists paginated exceptions", async () => {
@@ -17,7 +29,9 @@ describe("Exception REST API Routes", () => {
 
     vi.spyOn(exceptionService, "listExceptions").mockResolvedValue(mockList);
 
-    const res = await request(app).get("/api/exceptions");
+    const res = await request(app)
+      .get("/api/exceptions")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -28,7 +42,9 @@ describe("Exception REST API Routes", () => {
     const mockSummary = { totalCount: 40, totalOpen: 40, openFinancialImpactPaise: 31316000 };
     vi.spyOn(exceptionService, "getExceptionsSummary").mockResolvedValue(mockSummary);
 
-    const res = await request(app).get("/api/exceptions/summary");
+    const res = await request(app)
+      .get("/api/exceptions/summary")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -39,7 +55,9 @@ describe("Exception REST API Routes", () => {
     const mockExc = { exceptionId: "EXC-001", type: "AMOUNT_MISMATCH", status: "OPEN" };
     vi.spyOn(exceptionService, "getExceptionById").mockResolvedValue(mockExc);
 
-    const res = await request(app).get("/api/exceptions/EXC-001");
+    const res = await request(app)
+      .get("/api/exceptions/EXC-001")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -56,6 +74,7 @@ describe("Exception REST API Routes", () => {
 
     const res = await request(app)
       .patch("/api/exceptions/EXC-001/decision")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({
         decision: "MARK_RESOLVED",
         resolutionNotes: "Verified amount mismatch against finance portal manually.",
@@ -70,6 +89,7 @@ describe("Exception REST API Routes", () => {
   it("PATCH /api/exceptions/:exceptionId/decision returns 400 for short resolutionNotes", async () => {
     const res = await request(app)
       .patch("/api/exceptions/EXC-001/decision")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({
         decision: "MARK_RESOLVED",
         resolutionNotes: "ok" // Less than 5 chars!

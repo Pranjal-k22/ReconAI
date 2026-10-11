@@ -6,7 +6,13 @@ import { httpLogger } from "./config/logger.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import { notFoundHandler } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { authenticate, requireRoles, requireTenantScope } from "./middleware/authMiddleware.js";
+import { ROLES } from "./services/auth/tokenService.js";
 import healthRoutes from "./routes/healthRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import paymentCaseRoutes from "./routes/paymentCaseRoutes.js";
+import paymentActionRoutes from "./routes/paymentActionRoutes.js";
+import paymentEventRoutes from "./routes/paymentEventRoutes.js";
 import reconciliationRoutes from "./routes/reconciliationRoutes.js";
 import exceptionRoutes from "./routes/exceptionRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
@@ -38,14 +44,59 @@ if (env.NODE_ENV !== "test") {
 // Rate limiting
 app.use("/api", apiLimiter);
 
-// API Routes
+// Public API Routes (Explicitly Justified)
+// 1. GET /api/health: Public liveness/readiness probe for deployment orchestrators
 app.use("/api", healthRoutes);
-app.use("/api/reconciliation", reconciliationRoutes);
-app.use("/api/exceptions", exceptionRoutes);
-app.use("/api/audit", auditRoutes);
-app.use("/api/razorpay", razorpayRoutes);
-app.use("/api/integrations", integrationRoutes);
-app.use("/api/finance-controller", financeRoutes);
+// 2. /api/auth: Public login and service-token issuance endpoints (authenticated inside for /me and /logout)
+app.use("/api/auth", authRoutes);
+
+// Protected ReconAI 2.0 Ledger & Identity Routes
+app.use("/api/payment-cases", paymentCaseRoutes);
+app.use("/api/payment-actions", paymentActionRoutes);
+app.use("/api/payment-events", paymentEventRoutes);
+
+// Protected Core Financial & Reconciliation Routes (Deny by default)
+app.use(
+  "/api/reconciliation",
+  authenticate,
+  requireRoles(ROLES.ADMIN, ROLES.SHOP, ROLES.AUDITOR),
+  requireTenantScope,
+  reconciliationRoutes
+);
+app.use(
+  "/api/exceptions",
+  authenticate,
+  requireRoles(ROLES.ADMIN, ROLES.SHOP, ROLES.AUDITOR),
+  requireTenantScope,
+  exceptionRoutes
+);
+app.use(
+  "/api/audit",
+  authenticate,
+  requireRoles(ROLES.ADMIN, ROLES.AUDITOR),
+  auditRoutes
+);
+app.use(
+  "/api/razorpay",
+  authenticate,
+  requireRoles(ROLES.ADMIN, ROLES.SHOP),
+  requireTenantScope,
+  razorpayRoutes
+);
+app.use(
+  "/api/integrations",
+  authenticate,
+  requireRoles(ROLES.ADMIN, ROLES.SHOP),
+  requireTenantScope,
+  integrationRoutes
+);
+app.use(
+  "/api/finance-controller",
+  authenticate,
+  requireRoles(ROLES.ADMIN, ROLES.AUDITOR, ROLES.SHOP),
+  requireTenantScope,
+  financeRoutes
+);
 
 
 // 404 Handler for unmatched routes

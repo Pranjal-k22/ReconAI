@@ -3,10 +3,22 @@ import request from "supertest";
 import app from "../../src/app.js";
 import * as reconciliationService from "../../src/services/reconciliation/reconciliationService.js";
 import * as evaluationService from "../../src/services/evaluation/evaluationService.js";
+import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 
 describe("Reconciliation REST API Routes", () => {
+  const adminToken = signUserToken({
+    userId: "usr_admin_recon",
+    role: ROLES.ADMIN
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("REJECTS unauthenticated requests with 401 Unauthorized", async () => {
+    const res = await request(app).get("/api/reconciliation/runs");
+    expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
   });
 
   it("POST /api/reconciliation/runs executes a batch reconciliation run", async () => {
@@ -24,6 +36,7 @@ describe("Reconciliation REST API Routes", () => {
 
     const res = await request(app)
       .post("/api/reconciliation/runs")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ name: "Demo Run", sourceMode: "SYNTHETIC" });
 
     expect(res.status).toBe(201);
@@ -35,6 +48,7 @@ describe("Reconciliation REST API Routes", () => {
   it("POST /api/reconciliation/runs returns 400 Bad Request for invalid sourceMode", async () => {
     const res = await request(app)
       .post("/api/reconciliation/runs")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ name: "Test", sourceMode: "INVALID_MODE" });
 
     expect(res.status).toBe(400);
@@ -49,7 +63,9 @@ describe("Reconciliation REST API Routes", () => {
 
     vi.spyOn(reconciliationService, "listReconciliationRuns").mockResolvedValue(mockList);
 
-    const res = await request(app).get("/api/reconciliation/runs?page=1&limit=20");
+    const res = await request(app)
+      .get("/api/reconciliation/runs?page=1&limit=20")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -60,7 +76,9 @@ describe("Reconciliation REST API Routes", () => {
     const mockRun = { runId: "RUN-001", status: "COMPLETED" };
     vi.spyOn(reconciliationService, "getReconciliationRunById").mockResolvedValue(mockRun);
 
-    const res = await request(app).get("/api/reconciliation/runs/RUN-001");
+    const res = await request(app)
+      .get("/api/reconciliation/runs/RUN-001")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -75,7 +93,9 @@ describe("Reconciliation REST API Routes", () => {
 
     vi.spyOn(reconciliationService, "getRunResults").mockResolvedValue(mockResults);
 
-    const res = await request(app).get("/api/reconciliation/runs/RUN-001/results?classification=MATCHED");
+    const res = await request(app)
+      .get("/api/reconciliation/runs/RUN-001/results?classification=MATCHED")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -86,7 +106,9 @@ describe("Reconciliation REST API Routes", () => {
     const mockMetrics = { matchedCount: 80, exceptionCount: 40 };
     vi.spyOn(reconciliationService, "getRunMetrics").mockResolvedValue(mockMetrics);
 
-    const res = await request(app).get("/api/reconciliation/runs/RUN-001/metrics");
+    const res = await request(app)
+      .get("/api/reconciliation/runs/RUN-001/metrics")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -102,7 +124,9 @@ describe("Reconciliation REST API Routes", () => {
 
     vi.spyOn(evaluationService, "evaluateReconciliationRun").mockResolvedValue(mockEvaluation);
 
-    const res = await request(app).get("/api/reconciliation/runs/RUN-001/evaluation");
+    const res = await request(app)
+      .get("/api/reconciliation/runs/RUN-001/evaluation")
+      .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
