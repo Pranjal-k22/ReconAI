@@ -373,6 +373,18 @@ ReconAI/
    - Created real-MongoDB integration test suite for durable evidence persistence, indexing, and tenant isolation (`server/tests/integration/evidencePersistence.integration.test.js` [4 tests]).
    - Re-verified all regression gates: 395 backend unit tests across 57 test files, 37 real-MongoDB integration tests across 5 files, frontend production build, and 120/120 reconciliation benchmark (100.00% match rate).
    - Documented full traceability matrix in `docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md`.
+13. **Phase 6 Corrective Review: Evidence Accuracy & Action-Boundary Separation**: `fix(reconai-2): correct case 1 evidence classification and enforce non-executable boundaries`
+   - **Case 1 Evidence Accuracy**: Addressed causal inference contradiction where `CAPTURED` + `PENDING` was previously classified as `FRONTEND_DROPPED_AFTER_SUCCESS` while client drop was unobserved.
+     - Documented contradiction in `EDGE_CASE_POLICY_MATRIX.md` and `PHASE_6_CLASSIFICATION_ENGINE.md`.
+     - Strict rule enforced: `CAPTURED` + `PENDING` co-occurrence establishes a payment/order status mismatch (`CASE_6_PAID_GATEWAY_UNPAID_ORDER`, `STATUS_MISMATCH`), NOT proof of frontend timeout.
+     - Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`) now strictly requires positive authenticated frontend checkout telemetry (`authenticatedFrontendEvent: { authenticated: true, ... }`).
+     - Added positive test verifying authenticated frontend evidence requirement, and regression test proving `CAPTURED` + `PENDING` alone classifies as status mismatch without causal inference.
+   - **Action-Boundary Separation & Elimination of `actionEligibility`**:
+     - Removed `actionEligibility` entirely from `EvidenceRecord` model and `classifyPaymentScenario`.
+     - Replaced with descriptive, non-executable `suggestedNextStep` (`ADVISORY_...`).
+     - Added explicit non-executability contract to all findings: `isExecutable: false`, `authoritative: false`, `requiresPolicyEngine: true`.
+     - Added regression tests proving classification findings cannot initiate financial mutations or bypass future policy gates, and confirmed Razorpay adapter is 100% read-only with zero mutation endpoints.
+   - All 399 backend unit tests pass across 57 files; all 37 integration tests pass across 5 suites; frontend build passes; git diff clean; 120/120 benchmark passing at 100.00%.
 
 ---
 

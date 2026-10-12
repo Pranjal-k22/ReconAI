@@ -4,14 +4,16 @@ import {
   sanitizeClaimText
 } from "../../src/services/classification/evidenceClassifier.js";
 import { SCENARIO_IDS } from "../../src/models/EvidenceRecord.js";
+import { ACTION_STATUSES } from "../../src/models/PaymentAction.js";
+import * as razorpayClient from "../../src/services/razorpay/razorpayClient.js";
 
 describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved Scenarios)", () => {
   const TENANT = "tenant_merch_01";
 
   // -------------------------------------------------------------------------
-  // Case 1: Frontend Timeout After Payment Success
+  // Case 1: Frontend Timeout After Payment Success (Positive & Regression Tests)
   // -------------------------------------------------------------------------
-  it("Case 1: FRONTEND_TIMEOUT_PAYMENT_SUCCESS identifies dropped client and recommends ledger repair", () => {
+  it("Case 1 (Positive): FRONTEND_TIMEOUT_PAYMENT_SUCCESS requires authenticated frontend event to verify client timeout", () => {
     const finding = classifyPaymentScenario({
       gatewayPayment: {
         gatewayPaymentId: "pay_001",
@@ -27,7 +29,15 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
         currency: "INR",
         tenantId: TENANT
       },
-      context: { frontendTimeout: true }
+      context: {
+        authenticatedFrontendEvent: {
+          eventId: "fe_evt_001",
+          eventType: "CHECKOUT_TIMEOUT",
+          authenticated: true,
+          sessionId: "sess_checkout_001",
+          timestamp: new Date()
+        }
+      }
     });
 
     expect(finding.scenarioId).toBe("CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS");
@@ -36,8 +46,72 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.ruleId).toBe("RULE_CASE_1_FRONTEND_TIMEOUT");
     expect(finding.safeHold).toBe(false);
     expect(finding.recommendation).toBe("UPDATE_MERCHANT_LOCAL_LEDGER");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_RECONCILE_LOCAL_LEDGER");
+    expect(finding.actionEligibility).toBeUndefined();
+    expect(finding.isExecutable).toBe(false);
+    expect(finding.authoritative).toBe(false);
+    expect(finding.requiresPolicyEngine).toBe(true);
+    // Verified provider capture fact
     expect(finding.facts.some((f) => f.authority === "PROVIDER_VERIFIED" && f.value === "CAPTURED")).toBe(true);
-    expect(finding.supportingEvidence.length).toBeGreaterThan(0);
+    // Verified authenticated frontend checkout fact
+    expect(finding.facts.some((f) => f.dimension === "FRONTEND_CHECKOUT" && f.authority === "SYSTEM_RECORD")).toBe(true);
+    expect(finding.supportingEvidence.some((e) => e.entityType === "FrontendClientEvent")).toBe(true);
+    expect(finding.missingEvidence).toHaveLength(0);
+  });
+
+  it("Case 1 (Regression): CAPTURED plus PENDING alone cannot establish frontend timeout and classifies as STATUS_MISMATCH", () => {
+    // Sub-case A: Provider CAPTURED and merchant order PENDING without any frontend context
+    const findingNoContext = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_mismatch",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001-mismatch",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      }
+    });
+
+    // Proves that causation is NOT inferred: must classify as payment/order status mismatch
+    expect(findingNoContext.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingNoContext.category).toBe("STATUS_MISMATCH");
+    expect(findingNoContext.reasonCode).toBe("STATUS_MISMATCH");
+    expect(findingNoContext.ruleId).toBe("RULE_CASE_6_STATUS_MISMATCH");
+    expect(findingNoContext.missingEvidence).toContain("Authenticated frontend checkout acknowledgment or drop event (unobserved)");
+    expect(findingNoContext.suggestedNextStep).toBe("ADVISORY_RECONCILE_LOCAL_LEDGER");
+    expect(findingNoContext.actionEligibility).toBeUndefined();
+
+    // Sub-case B: Provider CAPTURED and merchant order PENDING with unauthenticated context flag
+    const findingUnauthenticated = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_unauth",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_unauth",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      context: { frontendTimeout: true } // Unauthenticated boolean flag without cryptographic/session verification
+    });
+
+    // Unauthenticated context flag is treated as an unverified claim, not proof of frontend timeout
+    expect(findingUnauthenticated.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingUnauthenticated.category).toBe("STATUS_MISMATCH");
+    expect(findingUnauthenticated.reasonCode).toBe("STATUS_MISMATCH");
+    expect(findingUnauthenticated.missingEvidence).toContain("Authenticated frontend checkout acknowledgment or drop event (unobserved)");
+    expect(findingUnauthenticated.claims.some((c) => c.claimType === "FRONTEND_TIMEOUT_CLAIM" && c.verified === false)).toBe(true);
   });
 
   // -------------------------------------------------------------------------
@@ -70,7 +144,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("CUSTOMER_DEBIT_ON_GATEWAY_PENDING");
     expect(finding.ruleId).toBe("RULE_CASE_2_CUSTOMER_DEBIT_PENDING");
     expect(finding.recommendation).toBe("WAIT_AND_MONITOR");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_WAIT_AND_MONITOR");
+    expect(finding.actionEligibility).toBeUndefined();
     // Crucial check: customer debit is in claims array with verified: false, NOT in facts
     expect(finding.claims.length).toBe(1);
     expect(finding.claims[0].authority).toBe("CUSTOMER_CLAIM");
@@ -169,7 +244,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("DELAYED_SETTLEMENT");
     expect(finding.ruleId).toBe("RULE_CASE_5_DELAYED_SETTLEMENT");
     expect(finding.recommendation).toBe("WAIT_FOR_SETTLEMENT");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_WAIT_FOR_SETTLEMENT_WINDOW");
+    expect(finding.actionEligibility).toBeUndefined();
     expect(finding.safeHold).toBe(false);
   });
 
@@ -297,7 +373,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("PARTIAL_PAYMENT");
     expect(finding.ruleId).toBe("RULE_CASE_9_PARTIAL_PAYMENT");
     expect(finding.recommendation).toBe("HOLD_PARTIALLY_PAID");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_HOLD_PARTIALLY_PAID");
+    expect(finding.actionEligibility).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -359,7 +436,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("REFUND_PENDING_TIMEOUT");
     expect(finding.ruleId).toBe("RULE_CASE_11_REFUND_PENDING");
     expect(finding.recommendation).toBe("MONITOR_REFUND");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_MONITOR_REFUND");
+    expect(finding.actionEligibility).toBeUndefined();
     expect(finding.safeHold).toBe(false);
   });
 
@@ -640,7 +718,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.safeHold).toBe(true);
     expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
     expect(finding.recommendation).toBe("ESCALATE_TO_GATEWAY_SUPPORT");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_ESCALATE_TO_GATEWAY_SUPPORT");
+    expect(finding.actionEligibility).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -671,7 +750,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.safeHold).toBe(true);
     expect(finding.safeHoldCode).toBe("LATE_CAPTURE_CANCELLED_ORDER");
     expect(finding.recommendation).toBe("SAFE_HOLD_PRESERVE_CANCELLATION");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTOMATIC_REOPEN");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_SAFE_HOLD_PRESERVE_CANCELLATION");
+    expect(finding.actionEligibility).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -840,7 +920,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.safeHold).toBe(true);
     expect(finding.safeHoldCode).toBe("FRAUD_SUSPICION");
     expect(finding.recommendation).toBe("FREEZE_AUTOMATION_SAFE_HOLD");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_FREEZE_AUTOMATION_SAFE_HOLD");
+    expect(finding.actionEligibility).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -874,7 +955,8 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.safeHold).toBe(true);
     expect(finding.safeHoldCode).toBe("FORMAL_DISPUTE");
     expect(finding.recommendation).toBe("ROUTE_TO_REPRESENTMENT_SAFE_HOLD");
-    expect(finding.actionEligibility).toBe("NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION");
+    expect(finding.suggestedNextStep).toBe("ADVISORY_HOLD_FOR_FORMAL_DISPUTE");
+    expect(finding.actionEligibility).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -922,5 +1004,72 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
     expect(finding.recommendation).toBe("UNKNOWN_OUTCOME_MONITOR");
     expect(finding.confidence).toBe(0.0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Strict Separation from Phase 8 Action Eligibility & Read-Only Adapter
+  // -------------------------------------------------------------------------
+  describe("Phase 6 Non-Executability & Strict Separation from Phase 8 Action Engine", () => {
+    it("proves classification findings have no executable action authorization", () => {
+      const finding = classifyPaymentScenario({
+        gatewayPayment: {
+          gatewayPaymentId: "pay_iso_01",
+          status: "CAPTURED",
+          amountPaise: 50000,
+          currency: "INR",
+          tenantId: TENANT
+        },
+        merchantOrder: {
+          merchantOrderId: "ORD-ISO-01",
+          status: "PAID",
+          amountPaise: 50000,
+          currency: "INR",
+          tenantId: TENANT
+        },
+        context: {
+          duplicatePaymentAttempts: true,
+          capturedPayments: [
+            { gatewayPaymentId: "pay_iso_01", amountPaise: 50000 },
+            { gatewayPaymentId: "pay_iso_02", amountPaise: 50000 }
+          ]
+        }
+      });
+
+      // Verification of non-authorization properties
+      expect(finding.actionEligibility).toBeUndefined();
+      expect(finding.isExecutable).toBe(false);
+      expect(finding.authoritative).toBe(false);
+      expect(finding.requiresPolicyEngine).toBe(true);
+      expect(finding.suggestedNextStep).toBe("ADVISORY_FLAG_DUPLICATE_PAYMENT");
+      expect(finding.recommendation).toBe("REFUND_DUPLICATE_PAYMENT");
+    });
+
+    it("proves findings cannot initiate financial mutations or bypass future policy gates", () => {
+      // Phase 2 Action model only permits non-executing intent statuses
+      expect(ACTION_STATUSES).toEqual([
+        "PROPOSED",
+        "SIMULATED",
+        "REJECTED_BY_POLICY",
+        "HELD_IN_SAFE_HOLD"
+      ]);
+      expect(ACTION_STATUSES).not.toContain("EXECUTED");
+      expect(ACTION_STATUSES).not.toContain("EXECUTION_CONFIRMED");
+      expect(ACTION_STATUSES).not.toContain("ENQUEUED_FOR_EXECUTION");
+    });
+
+    it("verifies Razorpay adapter client is strictly read-only with zero mutation endpoints", () => {
+      // The client only exports query and read functions
+      expect(typeof razorpayClient.fetchRazorpayApi).toBe("function");
+      expect(typeof razorpayClient.isRazorpayConfigured).toBe("function");
+      expect(typeof razorpayClient.validateTestModeSafety).toBe("function");
+      expect(typeof razorpayClient.getBasicAuthHeader).toBe("function");
+
+      // Verify no refund, capture, void, transfer, or write methods exist
+      expect(razorpayClient.executeRefund).toBeUndefined();
+      expect(razorpayClient.createRefund).toBeUndefined();
+      expect(razorpayClient.capturePayment).toBeUndefined();
+      expect(razorpayClient.voidPayment).toBeUndefined();
+      expect(razorpayClient.initiatePayout).toBeUndefined();
+    });
   });
 });

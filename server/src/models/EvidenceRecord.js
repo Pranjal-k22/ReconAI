@@ -177,9 +177,9 @@ const evidenceRecordSchema = new mongoose.Schema(
       required: [true, "recommendation is required"],
       trim: true
     },
-    actionEligibility: {
+    suggestedNextStep: {
       type: String,
-      default: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION"
+      default: "ADVISORY_HOLD_FOR_REVIEW"
     },
     evaluationKey: {
       type: String,

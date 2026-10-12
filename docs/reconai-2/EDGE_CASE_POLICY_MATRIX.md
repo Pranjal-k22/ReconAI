@@ -21,16 +21,17 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 
 ### Case 1: Frontend Timeout After Payment Success
 - **Detection Signal**: Browser disconnects or checkout times out; merchant order remains `ORDER_PENDING`.
-- **Authoritative Evidence**: Provider webhook `payment.captured` or server GET `/v1/payments/:id` confirms `status === 'CAPTURED'`.
-- **Missing / Uncertain Evidence**: Frontend client acknowledgment.
-- **Autonomous Action Eligibility**: **ELIGIBLE** for `UPDATE_MERCHANT_LOCAL_LEDGER`.
+- **Authoritative Evidence**: Provider webhook `payment.captured` or server GET `/v1/payments/:id` confirms `status === 'CAPTURED'`, **AND** authenticated client checkout telemetry records an explicit session drop/timeout event.
+- **Missing / Uncertain Evidence**: None when authenticated client telemetry is present. If frontend telemetry is unobserved, client timeout cannot be inferred.
+- **Autonomous Action Eligibility**: **ELIGIBLE** for `UPDATE_MERCHANT_LOCAL_LEDGER` (non-authoritative recommendation in Phase 6; deterministic execution reserved for Phase 8).
 - **Required Verification**: Amount, currency, and `merchantOrderId` match exactly; zero duplicate payments.
 - **Retry / Monitoring Policy**: Poll provider if webhook not received within 60s of timeout.
 - **Duplicate-Action Protections**: Order state transition check (`if order.status === 'PAID'` $\rightarrow$ no-op).
 - **Safe-Hold / Escalation Condition**: Order already cancelled by merchant before payment arrived.
 - **Customer Notification**: *"Your payment of ₹X was verified successfully. Order confirmed."*
 - **Audit Event Requirements**: `MERCHANT_LEDGER_REPAIRED`, `CASE_RESOLVED`.
-- **Test Acceptance Criterion**: Given order `PENDING` and gateway `CAPTURED`, engine updates order to `PAID` without manual review.
+- **Test Acceptance Criterion**: Given order `PENDING`, gateway `CAPTURED`, and verified authenticated frontend timeout event, engine classifies `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` and recommends ledger repair. If frontend telemetry is unobserved, system strictly avoids causal inference and classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`).
+- **Policy Contradiction Documentation**: *The original Phase 1 title asserted causation ('Frontend Timeout') based solely on provider capture and local order pending, while listing frontend acknowledgment as unobserved. Under strict ReconAI evidence governance, causation cannot be inferred from two records being inconsistent. Case 1 classification requires positive authenticated client telemetry; otherwise, the case is classified as a status mismatch pending owner review.*
 
 ---
 

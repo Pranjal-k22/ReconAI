@@ -138,6 +138,8 @@ describe("ReconAI 2.0 - Real MongoDB Evidence Persistence & Tenant Isolation Int
     expect(retrieved).not.toBeNull();
     expect(retrieved.scenarioId).toBe("CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED");
     expect(retrieved.recommendation).toBe("SAFE_HOLD_PRESERVE_CANCELLATION");
+    expect(retrieved.suggestedNextStep).toBe("ADVISORY_SAFE_HOLD_PRESERVE_CANCELLATION");
+    expect(retrieved.actionEligibility).toBeUndefined();
   });
 
   it("2. Deduplicates evaluations on unique compound key (tenantId + evaluationKey)", async () => {

@@ -28,7 +28,7 @@ Phase 6 implements a deterministic, explainable classification and evidence-coll
 
 | # | Scenario ID | Discrepancy Category | Reason Code | Deterministic Rule ID | Authoritative Evidence | Facts vs. Claims Distinction | Safe Hold Code | Recommendation | Test Coverage |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` | `FRONTEND_DROPPED_AFTER_SUCCESS` | `FRONTEND_DROPPED_AFTER_SUCCESS` | `RULE_CASE_1_FRONTEND_TIMEOUT` | Provider `CAPTURED` event; Order `PENDING` | Provider capture is confirmed fact; frontend dropped acknowledgment | `NONE` | `UPDATE_MERCHANT_LOCAL_LEDGER` | `evidenceClassifier.test.js` (Case 1) |
+| 1 | `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` | `FRONTEND_DROPPED_AFTER_SUCCESS` | `FRONTEND_DROPPED_AFTER_SUCCESS` | `RULE_CASE_1_FRONTEND_TIMEOUT` | Provider `CAPTURED` event; Authenticated client checkout timeout/drop event; Order `PENDING` | Provider capture and authenticated client timeout are confirmed facts; causation requires positive authenticated telemetry | `NONE` | `UPDATE_MERCHANT_LOCAL_LEDGER` | `evidenceClassifier.test.js` (Case 1 Positive & Regression) |
 | 2 | `CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` | `CUSTOMER_DEBIT_ON_GATEWAY_PENDING` | `CUSTOMER_DEBIT_ON_GATEWAY_PENDING` | `RULE_CASE_2_CUSTOMER_DEBIT_PENDING` | Provider `PENDING`; Customer debit statement | Customer debit is unverified claim; Gateway pending is confirmed fact | `NONE` / `ADMIN_HOLD` (if >60m) | `WAIT_AND_MONITOR` | `evidenceClassifier.test.js` (Case 2) |
 | 3 | `CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED` | `CUSTOMER_DEBIT_ON_GATEWAY_FAILURE` | `CUSTOMER_DEBIT_ON_GATEWAY_FAILURE` | `RULE_CASE_3_CUSTOMER_DEBIT_FAILED` | Provider `FAILED`; Customer debit claim | Gateway failure is verified fact; debit claim tracked per RBI TAT | `NONE` / `ADMIN_HOLD` (if overdue) | `TRACK_AUTO_REVERSAL` | `evidenceClassifier.test.js` (Case 3) |
 | 4 | `CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT` | `LATE_AUTHORIZATION` | `LATE_AUTHORIZATION` | `RULE_CASE_4_LATE_AUTHORIZATION` | Provider `AUTHORIZED` event after checkout timeout | Authorization is verified fact; inventory availability is unverified | `NONE` | `CHECK_INVENTORY_THEN_CAPTURE_OR_VOID` | `evidenceClassifier.test.js` (Case 4) |
@@ -80,8 +80,9 @@ To store immutable, tenant-scoped classification findings without duplicating la
   - `safeHold`: Boolean flag indicating if immediate hold is required.
   - `safeHoldCode`: Controlled enum from `SAFE_HOLD_CODES`.
   - `safeHoldReason`: Bounded explanation string ($\le 256$ chars).
-  - `recommendation`: Controlled recommendation string.
-  - `actionEligibility`: Action eligibility string (explicitly confirms no execution took place).
+  - `recommendation`: Controlled recommendation string (strictly advisory).
+  - `suggestedNextStep`: Non-executable advisory descriptive guidance string (e.g. `ADVISORY_RECONCILE_LOCAL_LEDGER`, `ADVISORY_WAIT_AND_MONITOR`, `ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW`). All action authorization fields (`actionEligibility`) are strictly removed.
+  - Non-executability contract: Classification findings explicitly emit `isExecutable: false`, `authoritative: false`, `requiresPolicyEngine: true`.
   - `evaluationKey`: Compound evaluation key for durable deduplication.
   - `supportingEvidence`: Array of entity references (`sourceSystem`, `entityType`, `entityId`, `eventId`, `timestamp`).
   - `redactedMetadata`: Sanitized metadata with sensitive tokens stripped via `sanitizeMetadata`.
@@ -97,13 +98,13 @@ To store immutable, tenant-scoped classification findings without duplicating la
 
 | Gate | Description | Observed Result | Status |
 |---|---|---|---|
-| 1 | Focused classification/evidence unit tests | 32 passed in `evidenceClassifier.test.js` | **PASS** |
-| 2 | Complete 30-scenario coverage suite | All 30 scenarios asserted with exact IDs and codes | **PASS** |
+| 1 | Focused classification/evidence unit tests | 36 passed in `evidenceClassifier.test.js` (including Case 1 positive and regression tests) | **PASS** |
+| 2 | Complete 30-scenario coverage suite | All 30 scenarios asserted with exact IDs, codes, facts, claims, safe-holds | **PASS** |
 | 3 | Real-MongoDB evidence persistence and isolation tests | 4 passed in `evidencePersistence.integration.test.js` | **PASS** |
 | 4 | Monitoring state-machine, scheduler, runtime-wiring tests | 34 passed in `tests/monitoring` | **PASS** |
 | 5 | Full webhook signature and ingestion suite | 25 passed in `tests/webhook` | **PASS** |
 | 6 | Full real-MongoDB integration suite | 37 passed across 5 test suites | **PASS** |
-| 7 | Full backend unit suite (`npm test`) | 395 passed across 57 test files | **PASS** |
+| 7 | Full backend unit suite (`npm test`) | 399 passed across 57 test files | **PASS** |
 | 8 | Frontend production build (`npm run build`) | Built in 8.36s with zero errors | **PASS** |
 | 9 | `git diff --check` | Clean diff, zero trailing whitespace/conflict markers | **PASS** |
 | 10 | 120-scenario reconciliation benchmark | 120/120 classifications match (100.00% match rate) | **PASS** |

@@ -17,7 +17,9 @@ import { sanitizeMetadata } from "../../models/helpers/validators.js";
  * 5. Strict Integer Math: Exact paise arithmetic; no floating point.
  * 6. Tenant Isolation: Rejects cross-tenant evidence.
  * 7. Untrusted Text Neutralization: Input text is sanitized; instructions ignored.
- * 8. Zero Financial Execution: Produces classifications & recommendations only.
+ * 8. Zero Financial Execution: Produces classifications & advisory recommendations only.
+ *    Does not authorize, execute, enqueue, or enable financial mutations or ledger repairs.
+ *    Phase 8 deterministic action eligibility matrix and Phase 7 AI agents are strictly isolated.
  */
 
 const FRAUD_KEYWORDS_REGEX = /(?:unauthorized|stolen\s+card|fraud|compromised|hacked|stolen\s+phone|identity\s+theft|account\s+takeover)/i;
@@ -142,6 +144,58 @@ export function classifyPaymentScenario({
     }
   }
 
+  // Register authenticated frontend events if present as verified facts
+  const authenticatedFrontendEvent =
+    (context.authenticatedFrontendEvent &&
+      context.authenticatedFrontendEvent.authenticated === true &&
+      (context.authenticatedFrontendEvent.eventType === "CHECKOUT_TIMEOUT" ||
+        context.authenticatedFrontendEvent.eventType === "FRONTEND_DROPPED" ||
+        context.authenticatedFrontendEvent.eventType === "FRONTEND_TIMEOUT")
+      ? context.authenticatedFrontendEvent
+      : null) ||
+    lifecycleEvents.find(
+      (e) =>
+        (e.sourceSystem === "CUSTOMER_CLAIM" ||
+          e.sourceSystem === "MERCHANT_ORDER" ||
+          e.sourceSystem === "RECONAI_SYSTEM" ||
+          e.sourceSystem === "MERCHANT_FRONTEND") &&
+        (e.authenticated === true || e.metadata?.authenticated === true) &&
+        (e.normalizedEventType === "INCONSISTENCY_DETECTED" ||
+          e.normalizedEventType === "CHECKOUT_TIMEOUT" ||
+          e.metadata?.clientEvent === "FRONTEND_TIMEOUT" ||
+          e.clientEvent === "FRONTEND_TIMEOUT")
+    ) ||
+    null;
+
+  if (authenticatedFrontendEvent) {
+    facts.push({
+      dimension: "FRONTEND_CHECKOUT",
+      value: authenticatedFrontendEvent.eventType || authenticatedFrontendEvent.clientEvent || "CHECKOUT_TIMEOUT",
+      source: "AUTHENTICATED_FRONTEND_CLIENT",
+      authority: "SYSTEM_RECORD",
+      verifiedAt: authenticatedFrontendEvent.timestamp || new Date(),
+      evidenceRef: authenticatedFrontendEvent.eventId || "FRONTEND_EVENT_REF"
+    });
+    supportingEvidence.push({
+      sourceSystem: "MERCHANT_FRONTEND",
+      entityType: "FrontendClientEvent",
+      entityId: authenticatedFrontendEvent.sessionId || authenticatedFrontendEvent.eventId || null,
+      eventId: authenticatedFrontendEvent.eventId || null,
+      timestamp: authenticatedFrontendEvent.timestamp || new Date()
+    });
+  } else if (context.frontendTimeout === true || context.browserDropped === true) {
+    // Unauthenticated frontend timeout claim: record as unverified claim, NOT a fact
+    claims.push({
+      claimType: "FRONTEND_TIMEOUT_CLAIM",
+      claimedValue: "Frontend timeout claimed via unauthenticated context flag",
+      source: "UNAUTHENTICATED_CONTEXT",
+      authority: "UNKNOWN_AUTHORITY",
+      receivedAt: new Date(),
+      evidenceRef: null,
+      verified: false
+    });
+  }
+
   // =========================================================================
   // 1. SECURITY & BOUNDARY RULES
   // =========================================================================
@@ -170,7 +224,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "POLICY_REJECTED",
       safeHoldReason: "Cross-tenant access or data correlation mismatch detected.",
       recommendation: "REJECT_CROSS_TENANT",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SECURITY_BLOCK",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Request or payload references mismatched tenant identifiers. Immediate security rejection enforced.",
       redactedMetadata: sanitizeMetadata(context)
@@ -204,7 +261,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "POLICY_REJECTED",
       safeHoldReason: "Webhook payload failed cryptographic signature verification.",
       recommendation: "REJECT_FORGED_EVENT",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SECURITY_BLOCK",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Incoming webhook payload failed HMAC-SHA256 timing-safe signature comparison. Payload quarantined and dropped.",
       redactedMetadata: sanitizeMetadata(context)
@@ -228,7 +288,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "LOCK_ACQUISITION_REJECT",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_REJECT_CONCURRENT_MUTATION",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Concurrent mutation attempt detected on active lease. Secondary attempt safely rejected without state mutation.",
       redactedMetadata: sanitizeMetadata(context)
@@ -253,7 +316,10 @@ export function classifyPaymentScenario({
       safeHoldCode: unresolvable ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: unresolvable ? "Database outage recovery failed to reconcile provider state." : null,
       recommendation: "DATABASE_LEASE_RECOVERY",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_RECOVER_DATABASE_LEASE",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Database network failure encountered during processing. In-flight action lease preserves state until safe reconnect query.",
       redactedMetadata: sanitizeMetadata(context)
@@ -284,7 +350,10 @@ export function classifyPaymentScenario({
       safeHoldCode: excessiveExpirations ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: excessiveExpirations ? "Action lease expired more than 3 times." : null,
       recommendation: "EXPIRED_LEASE_RECLAIM",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_RECLAIM_EXPIRED_LEASE",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Action lease expired while case in progress. Reclaimed by recovery scheduler to query provider idempotency key.",
       redactedMetadata: sanitizeMetadata(context)
@@ -315,7 +384,10 @@ export function classifyPaymentScenario({
       safeHoldCode: maxRetriesExceeded ? "PROVIDER_ERROR" : "NONE",
       safeHoldReason: maxRetriesExceeded ? "Provider API unavailable after 5 retries." : null,
       recommendation: "EXPONENTIAL_BACKOFF_RETRY",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_EXPONENTIAL_BACKOFF_RETRY",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: `Provider API returned throttled or unavailable response (HTTP ${context.providerError?.status || "error"}). Retrying with jittered exponential backoff.`,
       redactedMetadata: sanitizeMetadata(context)
@@ -358,7 +430,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "FORMAL_DISPUTE",
       safeHoldReason: "Formal chargeback opened with payment network. Automated refund prohibited.",
       recommendation: "ROUTE_TO_REPRESENTMENT_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_HOLD_FOR_FORMAL_DISPUTE",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Formal dispute initiated by cardholder bank. Automated refunds are strictly frozen to prevent double loss; routed to evidence representment.",
       redactedMetadata: sanitizeMetadata(context)
@@ -386,7 +461,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "FRAUD_SUSPICION",
       safeHoldReason: "Unauthorized payment or fraud allegation reported.",
       recommendation: "FREEZE_AUTOMATION_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_FREEZE_AUTOMATION_SAFE_HOLD",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Fraud allegation or high-velocity risk flag detected. All automated actions frozen; placed under safe-hold for security review.",
       redactedMetadata: sanitizeMetadata(context)
@@ -413,7 +491,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "NO_OP_DUPLICATE_ACK",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_ACKNOWLEDGE_DUPLICATE",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Duplicate webhook delivery recognized by durable event identity ledger. Acknowledged with HTTP 200 without duplicate mutation.",
       redactedMetadata: sanitizeMetadata(context)
@@ -441,7 +522,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "NO_OP_DROP_STALE",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_DROP_STALE_EVENT",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Incoming lifecycle event timestamp is stale relative to terminal canonical state. Dropped monotonically without state mutation.",
       redactedMetadata: sanitizeMetadata(context)
@@ -468,7 +552,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "FORWARD_STATE_JUMP",
-      actionEligibility: "ELIGIBLE_FOR_STATE_PROGRESSION",
+      suggestedNextStep: "ADVISORY_FORWARD_STATE_JUMP",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Advanced payment.captured webhook arrived out-of-order before authorization was registered. State progresses directly to CAPTURED.",
       redactedMetadata: sanitizeMetadata(context)
@@ -499,7 +586,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "AMBIGUOUS_PAYMENTS",
       safeHoldReason: "Multiple plausible payment candidates matched without deterministic linkage.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Ambiguous payment pairing candidates detected. Confidence below threshold (< 0.95); immediate safe-hold enforced for operator review.",
       redactedMetadata: sanitizeMetadata(context)
@@ -530,7 +620,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "ADMIN_HOLD",
       safeHoldReason: "Conflicting order identifiers between gateway payment and merchant order.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Cross-record conflict detected: provider notes point to a different order than merchant ledger. Placed in immediate safe hold.",
       redactedMetadata: sanitizeMetadata(context)
@@ -564,7 +657,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "ADMIN_HOLD",
       safeHoldReason: "Currency code mismatch between order and payment.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: `Payment currency (${gatewayPayment.currency}) does not match order currency (${merchantOrder.currency}). Automation locked into safe hold.`,
       redactedMetadata: sanitizeMetadata(context)
@@ -593,7 +689,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "ADMIN_HOLD",
       safeHoldReason: "Partial capture detected without approved merchant policy.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: `Gateway amount captured (${amountCaptured} paise) is less than authorized (${amountAuthorized} paise). Safe hold applied.`,
       redactedMetadata: sanitizeMetadata(context)
@@ -626,7 +725,10 @@ export function classifyPaymentScenario({
       safeHoldCode: expired ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: expired ? "Partial payment window expired without remaining balance." : null,
       recommendation: "HOLD_PARTIALLY_PAID",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND",
+      suggestedNextStep: "ADVISORY_HOLD_PARTIALLY_PAID",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: `Payment amount (${gatewayPayment.amountPaise} paise) is less than order amount (${merchantOrder.amountPaise} paise). Held in PARTIALLY_PAID.`,
       redactedMetadata: sanitizeMetadata(context)
@@ -657,7 +759,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "ADMIN_HOLD",
       safeHoldReason: "Discrepancy between order amount and payment amount.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: `Integer paise amount mismatch detected (${gatewayPayment.amountPaise} vs ${merchantOrder.amountPaise}). Case locked in safe hold.`,
       redactedMetadata: sanitizeMetadata(context)
@@ -700,7 +805,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "ADMIN_HOLD",
       safeHoldReason: "Refund attempt failed at provider network.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Provider refund failure recorded. Immediate safe-hold applied; automated retry prohibited without admin review.",
       redactedMetadata: sanitizeMetadata(context)
@@ -729,7 +837,10 @@ export function classifyPaymentScenario({
       safeHoldCode: overdue ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: overdue ? "Refund pending for longer than 7 business days." : null,
       recommendation: "MONITOR_REFUND",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+      suggestedNextStep: "ADVISORY_MONITOR_REFUND",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Refund is currently in flight with the provider/banking network. Duplicate refund requests strictly blocked; scheduled for monitoring.",
       redactedMetadata: sanitizeMetadata(context)
@@ -757,7 +868,10 @@ export function classifyPaymentScenario({
       safeHoldCode: exceeds ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: exceeds ? "Refunded amount exceeds captured total." : null,
       recommendation: "UPDATE_MERCHANT_LOCAL_LEDGER",
-      actionEligibility: "ELIGIBLE_FOR_LEDGER_ADJUSTMENT",
+      suggestedNextStep: "ADVISORY_RECONCILE_LOCAL_LEDGER",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: `Partial refund of ${amountRefunded} paise recorded. Recommend adjusting merchant ledger balance.`,
       redactedMetadata: sanitizeMetadata(context)
@@ -786,7 +900,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER",
       safeHoldReason: "Late capture received for cancelled order. Order cancellation preserved.",
       recommendation: "SAFE_HOLD_PRESERVE_CANCELLATION",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTOMATIC_REOPEN",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_PRESERVE_CANCELLATION",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Capture arrived on cancelled merchant order. Per ReconAI Safeguard 6: Order cancellation preserved under safe hold; no automatic refund or reopen.",
       redactedMetadata: sanitizeMetadata(context)
@@ -809,7 +926,10 @@ export function classifyPaymentScenario({
       safeHoldCode: context.amountsDiffer ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: context.amountsDiffer ? "Duplicate payment attempts have different amounts." : null,
       recommendation: "REFUND_DUPLICATE_PAYMENT",
-      actionEligibility: "ELIGIBLE_FOR_DUPLICATE_REFUND_RECOMMENDATION",
+      suggestedNextStep: "ADVISORY_FLAG_DUPLICATE_PAYMENT",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Multiple captured payment attempts identified for single merchant order. Primary payment retained; second attempt isolated for refund recommendation.",
       redactedMetadata: sanitizeMetadata(context)
@@ -840,7 +960,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "CHECK_INVENTORY_THEN_CAPTURE_OR_VOID",
-      actionEligibility: "ELIGIBLE_FOR_INVENTORY_CHECK",
+      suggestedNextStep: "ADVISORY_CHECK_INVENTORY_BEFORE_DECISION",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Late gateway authorization confirmed after checkout timeout. Recommends checking merchant inventory to auto-capture or auto-void.",
       redactedMetadata: sanitizeMetadata(context)
@@ -870,7 +993,10 @@ export function classifyPaymentScenario({
       safeHoldCode: overdue ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: overdue ? "Payment remains pending past 60 minutes window." : null,
       recommendation: "WAIT_AND_MONITOR",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND",
+      suggestedNextStep: "ADVISORY_WAIT_AND_MONITOR",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Customer submitted bank debit claim while gateway status remains PENDING. Debit claim labeled unverified claim; scheduled for automated polling without refund.",
       redactedMetadata: sanitizeMetadata(context)
@@ -895,7 +1021,10 @@ export function classifyPaymentScenario({
       safeHoldCode: reversalOverdue ? "ADMIN_HOLD" : "NONE",
       safeHoldReason: reversalOverdue ? "Auto-reversal not confirmed within statutory window." : null,
       recommendation: "TRACK_AUTO_REVERSAL",
-      actionEligibility: "ELIGIBLE_FOR_REVERSAL_TRACKING",
+      suggestedNextStep: "ADVISORY_TRACK_AUTO_REVERSAL",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Gateway payment confirmed FAILED with cardholder debit claim. Auto-reversal tracking initiated per RBI statutory TAT window.",
       redactedMetadata: sanitizeMetadata(context)
@@ -924,7 +1053,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "RECONSTRUCT_FROM_POLL",
-      actionEligibility: "ELIGIBLE_FOR_STATE_RECONSTRUCTION",
+      suggestedNextStep: "ADVISORY_RECONSTRUCT_FROM_POLL",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Provider API poll confirmed payment is CAPTURED, but webhooks were lost in transit. Canonical state reconstructed from direct poll.",
       redactedMetadata: sanitizeMetadata(context)
@@ -956,7 +1088,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "MERCHANT_LEDGER_DEDUPLICATION",
-      actionEligibility: "ELIGIBLE_FOR_LEDGER_DEDUPLICATION",
+      suggestedNextStep: "ADVISORY_DEDUPLICATE_LEDGER_ROWS",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Duplicate payout records for identical settlement UTR detected. Deduplicated safely in settlement ledger.",
       redactedMetadata: sanitizeMetadata(context)
@@ -967,14 +1102,14 @@ export function classifyPaymentScenario({
   // 11. FRONTEND DROPPED & STATUS MISMATCH CHECKS
   // =========================================================================
 
-  // Case 1: Frontend Timeout After Payment Success
   const isOrderPending =
     !merchantOrder ||
     merchantOrder.status === "PENDING" ||
     merchantOrder.status === "CREATED" ||
     merchantOrder.status === "ORDER_PENDING";
 
-  if (isCaptured && isOrderPending && (context.frontendTimeout === true || context.browserDropped === true)) {
+  // Case 1: Frontend Timeout After Payment Success (requires verified positive authenticated frontend evidence)
+  if (isCaptured && isOrderPending && authenticatedFrontendEvent) {
     return {
       scenarioId: "CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS",
       category: "FRONTEND_DROPPED_AFTER_SUCCESS",
@@ -984,19 +1119,24 @@ export function classifyPaymentScenario({
       facts,
       claims,
       contradictions: [],
-      missingEvidence: ["Client-side browser acknowledgment"],
+      missingEvidence: [], // Positively observed via authenticated frontend telemetry
       safeHold: false,
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "UPDATE_MERCHANT_LOCAL_LEDGER",
-      actionEligibility: "ELIGIBLE_FOR_MERCHANT_LEDGER_REPAIR",
+      suggestedNextStep: "ADVISORY_RECONCILE_LOCAL_LEDGER",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
-      explanation: "Gateway payment confirmed CAPTURED while merchant order timed out on frontend. Safe to repair merchant order status to PAID.",
+      explanation: "Gateway payment confirmed CAPTURED and authenticated client checkout session confirms frontend timeout/drop. Local merchant order remains PENDING.",
       redactedMetadata: sanitizeMetadata(context)
     };
   }
 
   // Case 6: Paid Gateway Payment But Unpaid Order (General Status Mismatch)
+  // When gateway payment is CAPTURED and merchant order is PENDING, but no authenticated frontend event exists,
+  // do NOT infer causation (frontend timeout). Classify faithfully as a payment/order status mismatch.
   if (isCaptured && isOrderPending) {
     return {
       scenarioId: "CASE_6_PAID_GATEWAY_UNPAID_ORDER",
@@ -1007,14 +1147,19 @@ export function classifyPaymentScenario({
       facts,
       claims,
       contradictions: ["Gateway payment is CAPTURED but merchant order is PENDING."],
-      missingEvidence: [],
+      missingEvidence: [
+        "Authenticated frontend checkout acknowledgment or drop event (unobserved)"
+      ],
       safeHold: false,
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "UPDATE_MERCHANT_LOCAL_LEDGER",
-      actionEligibility: "ELIGIBLE_FOR_MERCHANT_LEDGER_REPAIR",
+      suggestedNextStep: "ADVISORY_RECONCILE_LOCAL_LEDGER",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
-      explanation: "Verified provider payment is CAPTURED but merchant ledger shows order unpaid. Recommends updating merchant order to PAID.",
+      explanation: "Verified provider payment is CAPTURED while merchant order remains PENDING. In the absence of authenticated frontend checkout telemetry, causation (frontend drop) is unobserved and not inferred; classified as payment/order status mismatch requiring local ledger reconciliation.",
       redactedMetadata: sanitizeMetadata(context)
     };
   }
@@ -1044,7 +1189,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "ADMIN_HOLD",
       safeHoldReason: "Settlement record missing beyond T+5 days SLA.",
       recommendation: "ESCALATE_TO_GATEWAY_SUPPORT",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND",
+      suggestedNextStep: "ADVISORY_ESCALATE_TO_GATEWAY_SUPPORT",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Payment captured successfully but settlement missing beyond statutory T+5 days. Customer funds untouched; escalated to gateway support.",
       redactedMetadata: sanitizeMetadata(context)
@@ -1072,7 +1220,10 @@ export function classifyPaymentScenario({
       safeHoldCode: "NONE",
       safeHoldReason: null,
       recommendation: "WAIT_FOR_SETTLEMENT",
-      actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_REFUND",
+      suggestedNextStep: "ADVISORY_WAIT_FOR_SETTLEMENT_WINDOW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Payment is captured and settlement is within standard T+2 banking window. Settlement delay is not a payment failure; customer refund strictly blocked.",
       redactedMetadata: sanitizeMetadata(context)
@@ -1080,7 +1231,7 @@ export function classifyPaymentScenario({
   }
 
   // =========================================================================
-  // 12. UNKNOWN / UNRESOLVED UNCERTAINTY SAFE FALLBACK
+  // 13. UNKNOWN / UNRESOLVED UNCERTAINTY SAFE FALLBACK
   // =========================================================================
 
   missingEvidence.push("Definitive payment lifecycle signal");
@@ -1098,7 +1249,10 @@ export function classifyPaymentScenario({
     safeHoldCode: "ADMIN_HOLD",
     safeHoldReason: "Available evidence does not match any deterministic payment lifecycle rule.",
     recommendation: "UNKNOWN_OUTCOME_MONITOR",
-    actionEligibility: "NOT_ELIGIBLE_FOR_AUTONOMOUS_ACTION",
+    suggestedNextStep: "ADVISORY_HOLD_FOR_REVIEW",
+    isExecutable: false,
+    authoritative: false,
+    requiresPolicyEngine: true,
     supportingEvidence,
     explanation: "Available evidence is insufficient, contradictory, or inconclusive. Case locked in safe hold; no speculative transitions allowed.",
     redactedMetadata: sanitizeMetadata(context)
@@ -1158,7 +1312,7 @@ export async function persistEvidenceFinding(finding, {
     safeHoldCode: finding.safeHoldCode,
     safeHoldReason: finding.safeHoldReason,
     recommendation: finding.recommendation,
-    actionEligibility: finding.actionEligibility,
+    suggestedNextStep: finding.suggestedNextStep || "ADVISORY_HOLD_FOR_REVIEW",
     evaluationKey: evaluationKey || `${tenantId}:${caseId || merchantOrderId || gatewayPaymentId}:${finding.scenarioId}`,
     supportingEvidence: finding.supportingEvidence,
     explanation: finding.explanation,
