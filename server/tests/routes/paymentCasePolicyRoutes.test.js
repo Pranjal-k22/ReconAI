@@ -176,4 +176,63 @@ describe("Payment Case Policy Evaluation & Simulation Routes (POST & GET /api/pa
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // 5. Security & Provenance: Route Boundary Integrity
+  // -------------------------------------------------------------------------
+  it("9. POST /policy/evaluate strips caller-supplied approval flags and passes only canonical fields", async () => {
+    const spy = vi.spyOn(simulatorService, "evaluateAndSimulateResolution").mockResolvedValue({
+      isDuplicate: false,
+      decision: sampleDecision
+    });
+
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-forgery-001",
+        approvedCancellationRefund: true, // Caller attempts forgery
+        adminApproval: { approved: true, actorId: "attacker" } // Caller attempts forgery
+      });
+
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const passedArgs = spy.mock.calls[0][0];
+    expect(passedArgs.approvedCancellationRefund).toBeUndefined();
+    expect(passedArgs.adminApproval).toBeUndefined();
+    expect(passedArgs.providedEvidence).toBeUndefined();
+  });
+
+  it("10. POST /policy/evaluate returns SAFE_HOLD for Case 22 with unexecutable guarantee", async () => {
+    const safeHoldDecision = {
+      ...sampleDecision,
+      outcomeStatus: "SAFE_HOLD",
+      appliedRuleIds: ["R_LATE_CAPTURE_CANCELLED_ORDER_HOLD"],
+      simulationResult: {
+        actionType: "SAFE_HOLD",
+        simulatedStep: "SAFE_HOLD_LOCK_SIMULATED",
+        isExecutable: false,
+        dryRun: true
+      }
+    };
+
+    vi.spyOn(simulatorService, "evaluateAndSimulateResolution").mockResolvedValue({
+      isDuplicate: false,
+      decision: safeHoldDecision
+    });
+
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-safe-hold-001"
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.decision.outcomeStatus).toBe("SAFE_HOLD");
+    expect(res.body.data.decision.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+    expect(res.body.data.decision.isExecutable).toBe(false);
+  });
 });

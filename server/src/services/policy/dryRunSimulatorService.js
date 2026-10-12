@@ -303,7 +303,10 @@ export async function evaluateAndSimulateResolution({
       currency: policyResult.currency,
       initiatedByActorType: "POLICY_ENGINE",
       initiatedByActorId: actorId || "reconai-policy-engine",
-      reasonCode: policyResult.appliedRuleIds[0] || "POLICY_DECISION",
+      reasonCode:
+        policyResult.appliedRuleIds.find(
+          (r) => r !== "R_AI_ADVISORY_CHECK" && r !== "R_PROVIDER_CAPABILITY_READ_ONLY"
+        ) || policyResult.appliedRuleIds[0] || "POLICY_DECISION",
       evidenceReferences: policyResult.approvedEvidenceReferences,
       policyEvaluationResult: {
         decisionId,

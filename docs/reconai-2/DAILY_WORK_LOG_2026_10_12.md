@@ -512,11 +512,13 @@ ReconAI/
   - Formula: `availableRefundablePaise = authoritativeCapturedPaise - (completedRefundsPaise + pendingRefundsPaise + inFlightCommitmentsPaise)`.
   - In-flight simulation commitments from prior active `PaymentAction` records (`actionStatus: ["SIMULATED", "PROPOSED"]`) are loaded and deducted.
   - Fail-closed on currency mismatch (INR only), unverified partial capture, and missing capture evidence.
-- **Case 22 (Late Capture on Cancelled Order)**:
-  - Deterministically evaluates to `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with action status `HELD_IN_SAFE_HOLD`.
-  - AI advisory suggestions cannot override this rule.
+- **Case 22 (Late Capture on Cancelled Order) Approval Provenance Audit**:
+  - Proved that `approvedCancellationRefund` and `adminApproval` were transient input parameters without any trusted server-side authorization record or durable approval model in ReconAI.
+  - Per the owner-approved rule, removed the exception path: Case 22 deterministically evaluates to `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with action status `HELD_IN_SAFE_HOLD`.
+  - Caller-supplied approval flags and AI refund recommendations are rejected as non-authoritative.
+  - Route layer (`paymentCaseRoutes.js`) strips any caller-supplied approval fields.
+  - Added conflict detection across candidate captured-amount fields (`capturedAmountPaise`, `amountCapturedPaise`, `rawData.amount_captured`); conflicting evidence fails closed immediately to `SAFE_HOLD` (`R_CAPTURED_AMOUNT_CONFLICT_FAIL_CLOSED`).
   - Order cannot be reopened via `UPDATE_MERCHANT_LOCAL_LEDGER`.
-  - Only explicit approved cancellation evidence (`approvedCancellationRefund: true` or `adminApproval.approved: true`) permits simulation.
   - Canonical `MerchantOrder` remains `CANCELLED` and unmutated.
 - **Case 7 (Conclusive Duplicate Payment Verification)**:
   - Conclusive evidence requires >= 2 distinct payment attempts for the same correlated order, both verified `CAPTURED`, bound to the same tenant, with matching currencies/amounts, and candidate score >= 0.95.

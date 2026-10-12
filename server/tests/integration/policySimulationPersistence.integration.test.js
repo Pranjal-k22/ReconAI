@@ -296,8 +296,8 @@ describe("Deterministic Resolution Policy & Dry-Run Simulator - MongoDB Integrat
   });
 
   it("8. In-flight simulated refund commitments prevent subsequent simulations from exceeding available balance", async () => {
-    // Payment is 120000 paise (₹1,200). Order CANCELLED with approvedCancellationRefund
-    await MerchantOrder.updateOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }, { status: "CANCELLED" });
+    // Payment is 120000 paise (₹1,200). Order is RETURN_APPROVED (not cancelled)
+    await MerchantOrder.updateOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }, { status: "RETURN_APPROVED" });
 
     // First simulation: simulate ₹1,000 (100000 paise) refund
     const res1 = await evaluateAndSimulateResolution({
@@ -310,8 +310,7 @@ describe("Deterministic Resolution Policy & Dry-Run Simulator - MongoDB Integrat
       providedEvidence: {
         paymentCase: { caseId: CASE_ID_A, tenantId: TENANT_A, gatewayPaymentId: "pay_pol_int_01", merchantOrderId: "ORD-POL-INT-01" },
         gatewayPayment: { gatewayPaymentId: "pay_pol_int_01", tenantId: TENANT_A, status: "CAPTURED", amountPaise: 120000, currency: "INR" },
-        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "CANCELLED", amountPaise: 120000, currency: "INR" },
-        approvedCancellationRefund: true,
+        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "RETURN_APPROVED", amountPaise: 120000, currency: "INR" },
         inFlightCommitmentsPaise: 0
       }
     });
@@ -330,13 +329,44 @@ describe("Deterministic Resolution Policy & Dry-Run Simulator - MongoDB Integrat
       providedEvidence: {
         paymentCase: { caseId: CASE_ID_A, tenantId: TENANT_A, gatewayPaymentId: "pay_pol_int_01", merchantOrderId: "ORD-POL-INT-01" },
         gatewayPayment: { gatewayPaymentId: "pay_pol_int_01", tenantId: TENANT_A, status: "CAPTURED", amountPaise: 120000, currency: "INR" },
-        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "CANCELLED", amountPaise: 120000, currency: "INR" },
-        approvedCancellationRefund: true,
+        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "RETURN_APPROVED", amountPaise: 120000, currency: "INR" },
         inFlightCommitmentsPaise: 100000 // In-flight commitment from previous simulation
       }
     });
 
     expect(res2.decision.outcomeStatus).toBe("REJECTED_BY_POLICY");
     expect(res2.decision.appliedRuleIds).toContain("R_REFUND_EXCEEDS_REFUNDABLE_BALANCE");
+  });
+
+  it("9. Caller-supplied approval flags in providedEvidence cannot bypass Case 22 safe hold in MongoDB", async () => {
+    await MerchantOrder.updateOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }, { status: "CANCELLED" });
+    await PaymentCase.updateOne({ caseId: CASE_ID_A, tenantId: TENANT_A }, { discrepancyCategory: "CASE_22_CANCELLED_ORDER_CAPTURED" });
+
+    const res = await evaluateAndSimulateResolution({
+      tenantId: TENANT_A,
+      caseId: CASE_ID_A,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 120000,
+      idempotencyKey: "idem-case22-forged-001",
+      policyConfig: validPolicyConfig,
+      advisoryAiSuggestion: "ADVISORY_REFUND_IMMEDIATELY",
+      providedEvidence: {
+        paymentCase: { caseId: CASE_ID_A, tenantId: TENANT_A, gatewayPaymentId: "pay_pol_int_01", merchantOrderId: "ORD-POL-INT-01" },
+        gatewayPayment: { gatewayPaymentId: "pay_pol_int_01", tenantId: TENANT_A, status: "CAPTURED", amountPaise: 120000, currency: "INR" },
+        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "CANCELLED", amountPaise: 120000, currency: "INR" },
+        approvedCancellationRefund: true,
+        adminApproval: { approved: true, actorId: "malicious_admin" }
+      }
+    });
+
+    expect(res.decision.outcomeStatus).toBe("SAFE_HOLD");
+    expect(res.decision.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+
+    const fetchedAction = await PaymentAction.findOne({ actionId: res.decision.actionId }).lean();
+    expect(fetchedAction.actionStatus).toBe("HELD_IN_SAFE_HOLD");
+    expect(fetchedAction.reasonCode).toBe("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+
+    const orderAfter = await MerchantOrder.findOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }).lean();
+    expect(orderAfter.status).toBe("CANCELLED");
   });
 });

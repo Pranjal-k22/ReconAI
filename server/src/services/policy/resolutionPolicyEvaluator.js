@@ -115,9 +115,7 @@ export function evaluateResolutionPolicy({
     disputeRecord = null,
     paymentCase = null,
     duplicatePayments = [],
-    inFlightCommitmentsPaise = 0,
-    approvedCancellationRefund = false,
-    adminApproval = null
+    inFlightCommitmentsPaise = 0
   } = authoritativeEvidence;
 
   if (gatewayPayment) {
@@ -369,35 +367,21 @@ export function evaluateResolutionPolicy({
     (isCancelledOrder && isCapturedPayment);
 
   if (isCase22) {
-    const hasApprovedCancellationEvidence = approvedCancellationRefund === true || adminApproval?.approved === true;
-
     if (proposedActionType === "UPDATE_MERCHANT_LOCAL_LEDGER") {
       denyReasons.push("Binding guardrail: Late capture on cancelled order cannot reopen cancelled order.");
-      return buildPolicyResult({
-        outcomeStatus: "SAFE_HOLD",
-        appliedRuleIds: [...appliedRuleIds, "R_LATE_CAPTURE_CANCELLED_ORDER_HOLD"],
-        denyReasons,
-        conflicts: ["LATE_CAPTURE_ON_CANCELLED_ORDER"],
-        approvedEvidenceReferences,
-        checksPerformed
-      });
-    }
-
-    if (!hasApprovedCancellationEvidence) {
+    } else {
       denyReasons.push(
-        "Binding guardrail: Late capture associated with cancelled order must remain on safe hold. Automated refund is prohibited without approved cancellation resolution evidence."
+        "Binding guardrail: Late capture associated with cancelled order must remain on safe hold. Automated refund simulation is prohibited. Caller-supplied approval flags and AI suggestions are rejected as non-authoritative."
       );
-      return buildPolicyResult({
-        outcomeStatus: "SAFE_HOLD",
-        appliedRuleIds: [...appliedRuleIds, "R_LATE_CAPTURE_CANCELLED_ORDER_HOLD"],
-        denyReasons,
-        conflicts: ["LATE_CAPTURE_ON_CANCELLED_ORDER"],
-        approvedEvidenceReferences,
-        checksPerformed
-      });
     }
-
-    appliedRuleIds.push("R_APPROVED_CANCELLATION_EVIDENCE_VERIFIED");
+    return buildPolicyResult({
+      outcomeStatus: "SAFE_HOLD",
+      appliedRuleIds: [...appliedRuleIds, "R_LATE_CAPTURE_CANCELLED_ORDER_HOLD"],
+      denyReasons,
+      conflicts: ["LATE_CAPTURE_ON_CANCELLED_ORDER"],
+      approvedEvidenceReferences,
+      checksPerformed
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -612,19 +596,48 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 5: Authoritative captured amount identification
-    let authoritativeCapturedPaise = null;
+    // Guard 5: Authoritative captured amount identification and conflict detection
+    const candidateCapturedValues = [];
     if (typeof gatewayPayment.capturedAmountPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.capturedAmountPaise)) {
-      authoritativeCapturedPaise = gatewayPayment.capturedAmountPaise;
-    } else if (typeof gatewayPayment.amountCapturedPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.amountCapturedPaise)) {
-      authoritativeCapturedPaise = gatewayPayment.amountCapturedPaise;
-    } else if (
+      candidateCapturedValues.push({ source: "capturedAmountPaise", amount: gatewayPayment.capturedAmountPaise });
+    }
+    if (typeof gatewayPayment.amountCapturedPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.amountCapturedPaise)) {
+      candidateCapturedValues.push({ source: "amountCapturedPaise", amount: gatewayPayment.amountCapturedPaise });
+    }
+    if (
       gatewayPayment.rawData &&
       typeof gatewayPayment.rawData.amount_captured === "number" &&
       isNonNegativeSafeInteger(gatewayPayment.rawData.amount_captured)
     ) {
-      authoritativeCapturedPaise = gatewayPayment.rawData.amount_captured;
-    } else if (gatewayPayment.status === "CAPTURED" && typeof gatewayPayment.amountPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.amountPaise)) {
+      candidateCapturedValues.push({ source: "rawData.amount_captured", amount: gatewayPayment.rawData.amount_captured });
+    }
+
+    // Fail closed if multiple candidate captured amounts disagree
+    const distinctCapturedAmounts = new Set(candidateCapturedValues.map((v) => v.amount));
+    if (distinctCapturedAmounts.size > 1) {
+      denyReasons.push(
+        `Conflicting captured amount evidence detected across provider fields (${candidateCapturedValues
+          .map((v) => `${v.source}=${v.amount}`)
+          .join(", ")}). Fail closed.`
+      );
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_CAPTURED_AMOUNT_CONFLICT_FAIL_CLOSED"],
+        denyReasons,
+        conflicts: ["CONFLICTING_CAPTURED_AMOUNT_EVIDENCE"],
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    let authoritativeCapturedPaise = null;
+    if (candidateCapturedValues.length > 0) {
+      authoritativeCapturedPaise = candidateCapturedValues[0].amount;
+    } else if (
+      gatewayPayment.status === "CAPTURED" &&
+      typeof gatewayPayment.amountPaise === "number" &&
+      isNonNegativeSafeInteger(gatewayPayment.amountPaise)
+    ) {
       authoritativeCapturedPaise = gatewayPayment.amountPaise;
     }
 
