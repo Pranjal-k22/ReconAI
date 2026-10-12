@@ -469,3 +469,40 @@ ReconAI/
   - Phase 7 is COMPLETE and PASSING.
   - Phase 8 has NOT started.
 
+---
+
+## 10. Phase 8 — Deterministic Resolution Policy Engine and Dry-Run Simulator
+
+- **Objective**: Implement server-side deterministic resolution policy engine and dry-run simulation layer:
+  - Pure evaluator logic (`resolutionPolicyEvaluator.js`) enforcing positive evidence, fail-closed refund limits, risk controls, and non-executable outputs.
+  - Approved dry-run action catalogue: `WAIT_AND_MONITOR`, `RECHECK_PROVIDER_STATUS`, `UPDATE_MERCHANT_LOCAL_LEDGER`, `REQUEST_REFUND`, `SAFE_HOLD`, `NOTIFY_PARTIES`, `EXTERNAL_ESCALATION_REQUIRED`.
+  - Mandatory refund safety policy: fail-closed velocity & transaction limits, unverified customer debit claim rejection, failed gateway payment rejection, refundable balance bounds check, in-flight refund deduplication, dispute/fraud quarantine.
+  - Durable persistence via `PolicyDecision` model with unique compound index `{ tenantId: 1, idempotencyKey: 1 }`.
+  - Non-executing action ledger recording via `PaymentAction` (`actionStatus: "SIMULATED"`).
+  - Complete 30-scenario policy matrix traceability assertions.
+- **Architectural Safeguards**:
+  - AI proposals from Phase 7 are strictly advisory; server policy engine holds sole authority.
+  - Zero provider write APIs called or enabled; `razorpayClient.js` contains no mutation methods.
+  - Zero financial mutations: `GatewayPayment`, `MerchantOrder`, settlement records, and `PaymentCase` states are 100% unmutated.
+  - Replaying identical idempotencyKey returns cached decision without duplicate writes; different input with same key returns controlled HTTP 409 conflict.
+- **API Endpoints Added**:
+  - `POST /api/payment-cases/:caseId/policy/evaluate`: Evaluates deterministic policy and executes local simulation plan.
+  - `GET /api/payment-cases/:caseId/policy/decisions`: Retrieves past policy decisions for the case scoped to tenant.
+- **Verification Gates**:
+  - `resolutionPolicyEvaluator.test.js`: 47 passed (including all 30 scenario matrix assertions)
+  - `paymentCasePolicyRoutes.test.js`: 8 passed
+  - `policySimulationPersistence.integration.test.js`: 6 passed
+  - `tests/monitoring`: 34 passed across 3 test suites
+  - `tests/webhook`: 25 passed across 2 test suites
+  - Full real-MongoDB integration suite (`npm run test:integration`): 47 passed across 7 test suites
+  - Full backend unit suite (`npm test`): 487 passed across 62 test files
+  - Frontend production build (`npm run build` in `client`): Built in 8.27s with zero errors
+  - `git diff --check`: Clean diff, 0 issues
+  - 120-scenario reconciliation benchmark: 120/120 passing (100.00%)
+- **Binding Safety Confirmation**:
+  - Zero financial write APIs or provider mutations called or enabled.
+  - Local simulation and persistence only (`executionState: "NON_EXECUTABLE_SIMULATION"`).
+  - Phase 8 is COMPLETE and PASSING.
+  - Phase 9 has NOT started.
+
+

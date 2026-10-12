@@ -9,6 +9,10 @@ import {
   runMultiAgentInvestigation,
   getInvestigationsByCaseId
 } from "../services/ai/multiAgentInvestigator.js";
+import {
+  evaluateAndSimulateResolution,
+  getDecisionsByCaseId
+} from "../services/policy/dryRunSimulatorService.js";
 import { authenticate, requireRoles, requireTenantScope } from "../middleware/authMiddleware.js";
 import { ROLES } from "../services/auth/tokenService.js";
 import { AppError } from "../utils/AppError.js";
@@ -199,5 +203,84 @@ router.get("/:caseId/investigations", async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * POST /api/payment-cases/:caseId/policy/evaluate - Evaluates deterministic resolution policy and simulates eligible action
+ */
+router.post(
+  "/:caseId/policy/evaluate",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER, ROLES.SHOP),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const {
+        proposedActionType,
+        amountPaise,
+        currency = "INR",
+        idempotencyKey,
+        policyConfig,
+        policyVersion,
+        advisoryAiSuggestion
+      } = req.body || {};
+
+      if (!proposedActionType) {
+        throw AppError.badRequest("proposedActionType is required");
+      }
+      if (!idempotencyKey) {
+        throw AppError.badRequest("idempotencyKey is required");
+      }
+
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER;
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
+
+      if (!scopedTenantId) {
+        throw AppError.badRequest("tenantId could not be determined for policy evaluation");
+      }
+
+      const result = await evaluateAndSimulateResolution({
+        tenantId: scopedTenantId,
+        caseId,
+        actorId: req.user.sub || req.user.userId,
+        actorRole: req.user.role,
+        proposedActionType,
+        amountPaise,
+        currency,
+        idempotencyKey,
+        policyConfig,
+        policyVersion,
+        advisoryAiSuggestion
+      });
+
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/payment-cases/:caseId/policy/decisions - Retrieves past policy decisions
+ */
+router.get(
+  "/:caseId/policy/decisions",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER, ROLES.SHOP, ROLES.AUDITOR),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER ||
+        (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.query?.tenantId : req.user.tenantId;
+
+      const decisions = await getDecisionsByCaseId(caseId, scopedTenantId);
+      res.status(200).json({ success: true, data: decisions });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;
