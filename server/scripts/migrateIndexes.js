@@ -129,6 +129,7 @@ export async function migratePaymentLifecycleIndexes(db) {
 export async function migrateProviderOperationIndexes(db) {
   const collection = db.collection("provideroperations");
   await collection.createIndex({ tenantId: 1, idempotencyKey: 1 }, { unique: true, background: true });
+  await collection.createIndex({ tenantId: 1, providerIdempotencyKey: 1 }, { background: true });
   await collection.createIndex({ tenantId: 1, caseId: 1 }, { background: true });
   await collection.createIndex({ tenantId: 1, operationStatus: 1 }, { background: true });
   await collection.createIndex({ providerOperationId: 1 }, { background: true });

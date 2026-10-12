@@ -607,3 +607,34 @@ ReconAI/
   - Case 22 remains unconditionally in safe hold.
   - Unverified provider outcomes are never marked complete.
   - Phase 10 has not started. Stopped for review.
+
+### Entry 10: Phase 9 Final Correction — Provider Idempotency and Exact Outcome Identity Verification
+
+- **Audits and Architecture Changes**:
+  - **Provider Refund Idempotency**:
+    - Verified official Razorpay refunds contract supports the `X-Refund-Idempotency` header on `POST /v1/payments/:id/refund`.
+    - Bound `providerIdempotencyKey` directly to `operationId` and persisted it in `ProviderOperation` with state `REQUESTED` prior to dispatch.
+    - Configured `razorpaySandboxAdapter.js` to dispatch `X-Refund-Idempotency` header.
+    - Guaranteed retries and status rechecks reuse the exact same `providerIdempotencyKey` and identical payload.
+    - Timeouts or network interruptions never generate a new provider idempotency key.
+    - Handled HTTP 409 Conflict conservatively as `OUTCOME_UNKNOWN` (`DISPATCH_CONFLICT_UNKNOWN`) without assuming success or failure.
+    - Preserved MongoDB tenant-scoped unique index `{ tenantId: 1, idempotencyKey: 1 }` and added index `{ tenantId: 1, providerIdempotencyKey: 1 }`.
+  - **Exact Authoritative Outcome Identity Verification**:
+    - Upgraded `verifySandboxRefundStatus` in `razorpaySandboxAdapter.js` to strictly enforce:
+      - Expected refund ID (`sanitized.id === refundId`)
+      - Expected payment ID (`sanitized.payment_id === gatewayPaymentId`)
+      - Exact requested refund amount in paise (`sanitized.amount === expectedAmountPaise`)
+      - Expected currency (`sanitized.currency === expectedCurrency`)
+      - Supported provider status (`processed`, `failed`, `pending`)
+    - Missing fields, mismatched identities, amount/currency discrepancies, or contradictory evidence fail closed to `SAFE_HOLD`.
+    - Explicitly rejected HTTP 200 responses if identity fields do not match, transitioning to `SAFE_HOLD`.
+    - Conclusive failure (`VERIFIED_FAILED`) is only assigned when provider status is `failed` and all identities match. Contradictory failure records transition to `SAFE_HOLD`.
+- **Test Suites & Regressions**:
+  - `tests/provider/razorpaySandboxAdapter.test.js`: 23 tests passing (added `X-Refund-Idempotency` header test, exact identity verification tests, missing field tests, wrong currency/amount tests, contradictory failure test).
+  - `tests/provider/providerOutcomeVerification.test.js`: 9 tests passing (added HTTP 200 rejection tests for wrong payment ID, wrong amount, missing identity fields, unexpected status).
+  - `tests/integration/providerSandboxDispatchPersistence.integration.test.js`: 12 tests passing (added MongoDB integration tests for `X-Refund-Idempotency` persistence and header dispatch, HTTP 409 conservative handling, and `SAFE_HOLD` transition on wrong payment ID).
+- **Stopping Invariants**:
+  - No live writes enabled or executed.
+  - Refund limits fail closed.
+  - Case 22 remains in `SAFE_HOLD`.
+  - Phase 10 has not started.

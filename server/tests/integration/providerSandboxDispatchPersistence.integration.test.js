@@ -477,4 +477,153 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
       expect(op.verificationEvidence.email).toBeUndefined();
     });
   });
+
+  describe("5. Provider Idempotency Header, 409 Conflict, and Identity Mismatch Verification", () => {
+    it("persists providerIdempotencyKey and sends exact X-Refund-Idempotency header tied to operation", async () => {
+      let capturedHeaders = null;
+      let capturedBody = null;
+
+      const mockFetch = vi.fn()
+        .mockImplementationOnce(async (url, opts) => {
+          capturedHeaders = opts.headers;
+          capturedBody = JSON.parse(opts.body);
+          return {
+            status: 200,
+            ok: true,
+            json: async () => ({
+              id: "rfnd_idem_hdr_01",
+              payment_id: "pay_test_prov_001",
+              amount: 12000,
+              currency: "INR",
+              status: "pending"
+            })
+          };
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          json: async () => ({
+            id: "rfnd_idem_hdr_01",
+            payment_id: "pay_test_prov_001",
+            amount: 12000,
+            currency: "INR",
+            status: "processed"
+          })
+        });
+
+      const res = await dispatchSandboxAction({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        actorId: "admin-1",
+        actorRole: "ADMIN",
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-check-header-01",
+        policyConfig: approvedPolicyConfig,
+        customFetch: mockFetch
+      });
+
+      expect(res.dispatchBlocked).toBe(false);
+      expect(res.operation.operationStatus).toBe("VERIFIED_SUCCEEDED");
+
+      // Verify persisted operation in MongoDB
+      const op = await ProviderOperation.findOne({
+        tenantId: TENANT_A,
+        idempotencyKey: "idem-check-header-01"
+      }).lean();
+
+      expect(op).toBeDefined();
+      expect(op.providerIdempotencyKey).toBe(op.operationId);
+      expect(capturedHeaders["X-Refund-Idempotency"]).toBe(op.operationId);
+      expect(capturedBody.amount).toBe(12000);
+      expect(capturedBody.notes.reconaiCaseId).toBe(CASE_ID_A);
+    });
+
+    it("treats provider HTTP 409 Conflict conservatively as OUTCOME_UNKNOWN without assuming success or failure", async () => {
+      const mockFetch = vi.fn().mockImplementationOnce(async () => {
+        return {
+          status: 409,
+          ok: false,
+          json: async () => ({
+            error: {
+              code: "BAD_REQUEST_ERROR",
+              description: "A refund with the same idempotency key is already in progress"
+            }
+          })
+        };
+      });
+
+      const res = await dispatchSandboxAction({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        actorId: "admin-1",
+        actorRole: "ADMIN",
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-409-conflict-01",
+        policyConfig: approvedPolicyConfig,
+        customFetch: mockFetch
+      });
+
+      expect(res.dispatchBlocked).toBe(false);
+      expect(res.operation.operationStatus).toBe("OUTCOME_UNKNOWN");
+      expect(res.operation.verificationStatus).toBe("DISPATCH_CONFLICT_UNKNOWN");
+
+      const op = await ProviderOperation.findOne({
+        tenantId: TENANT_A,
+        idempotencyKey: "idem-409-conflict-01"
+      }).lean();
+
+      expect(op.operationStatus).toBe("OUTCOME_UNKNOWN");
+      expect(op.failureReason).toContain("409 Conflict");
+    });
+
+    it("transitions operation to SAFE_HOLD in MongoDB when authoritative read returns wrong payment ID", async () => {
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          json: async () => ({
+            id: "rfnd_wrong_payment_test",
+            payment_id: "pay_test_prov_001",
+            amount: 12000,
+            currency: "INR",
+            status: "pending"
+          })
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          json: async () => ({
+            id: "rfnd_wrong_payment_test",
+            payment_id: "pay_unrelated_foreign_payment_999", // Wrong payment ID!
+            amount: 12000,
+            currency: "INR",
+            status: "processed"
+          })
+        });
+
+      const res = await dispatchSandboxAction({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        actorId: "admin-1",
+        actorRole: "ADMIN",
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-wrong-payment-01",
+        policyConfig: approvedPolicyConfig,
+        customFetch: mockFetch
+      });
+
+      expect(res.dispatchBlocked).toBe(false);
+      expect(res.operation.operationStatus).toBe("SAFE_HOLD");
+      expect(res.operation.safeHoldReason).toContain("does not match expected");
+
+      const op = await ProviderOperation.findOne({
+        tenantId: TENANT_A,
+        idempotencyKey: "idem-wrong-payment-01"
+      }).lean();
+
+      expect(op.operationStatus).toBe("SAFE_HOLD");
+      expect(op.verificationStatus).toBe("PAYMENT_ID_MISMATCH");
+      expect(op.safeHoldReason).toContain("does not match expected");
+    });
+  });
 });

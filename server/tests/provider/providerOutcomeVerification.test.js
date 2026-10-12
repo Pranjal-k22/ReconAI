@@ -174,4 +174,101 @@ describe("Independent Provider Outcome Verification Semantics", () => {
       expect(hash1).not.toBe(hash2);
     });
   });
+
+  describe("4. HTTP 200 Acceptance Rejection & Conservative Conflict Handling", () => {
+    it("HTTP 200 with wrong payment ID or amount must NEVER produce VERIFIED_SUCCEEDED; fails to SAFE_HOLD", async () => {
+      const getFetchWrongPayment = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_ok_01",
+          payment_id: "pay_unrelated_foreign_payment",
+          amount: 25000,
+          currency: "INR",
+          status: "processed"
+        })
+      });
+
+      const resPaymentMismatch = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_ok_01",
+        expectedAmountPaise: 25000,
+        customFetch: getFetchWrongPayment
+      });
+
+      expect(resPaymentMismatch.verified).toBe(false);
+      expect(resPaymentMismatch.outcome).toBe("SAFE_HOLD");
+      expect(resPaymentMismatch.status).toBe("PAYMENT_ID_MISMATCH");
+
+      const getFetchWrongAmount = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_ok_01",
+          payment_id: "pay_test_001",
+          amount: 99999,
+          currency: "INR",
+          status: "processed"
+        })
+      });
+
+      const resAmountMismatch = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_ok_01",
+        expectedAmountPaise: 25000,
+        customFetch: getFetchWrongAmount
+      });
+
+      expect(resAmountMismatch.verified).toBe(false);
+      expect(resAmountMismatch.outcome).toBe("SAFE_HOLD");
+      expect(resAmountMismatch.status).toBe("AMOUNT_MISMATCH");
+    });
+
+    it("HTTP 200 with missing required fields fails to SAFE_HOLD", async () => {
+      const getFetchMissing = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          status: "processed"
+          // missing id, payment_id, amount
+        })
+      });
+
+      const resMissing = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_ok_01",
+        expectedAmountPaise: 25000,
+        customFetch: getFetchMissing
+      });
+
+      expect(resMissing.verified).toBe(false);
+      expect(resMissing.outcome).toBe("SAFE_HOLD");
+      expect(resMissing.status).toBe("PROVIDER_PAYLOAD_INCOMPLETE");
+    });
+
+    it("HTTP 200 with unexpected status fails to SAFE_HOLD", async () => {
+      const getFetchUnexpected = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_ok_01",
+          payment_id: "pay_test_001",
+          amount: 25000,
+          currency: "INR",
+          status: "unknown_custom_provider_state"
+        })
+      });
+
+      const resUnexpected = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_ok_01",
+        expectedAmountPaise: 25000,
+        customFetch: getFetchUnexpected
+      });
+
+      expect(resUnexpected.verified).toBe(false);
+      expect(resUnexpected.outcome).toBe("SAFE_HOLD");
+      expect(resUnexpected.status).toBe("UNEXPECTED_PROVIDER_STATUS");
+    });
+  });
 });

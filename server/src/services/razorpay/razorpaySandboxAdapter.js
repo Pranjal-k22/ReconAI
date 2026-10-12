@@ -134,6 +134,7 @@ export async function executeSandboxRefund({
   amountPaise,
   notes = {},
   receipt = null,
+  providerIdempotencyKey = null,
   customFetch = null
 }) {
   // 1. Enforce sandbox gate
@@ -162,14 +163,20 @@ export async function executeSandboxRefund({
     requestBody.receipt = receipt.slice(0, 40);
   }
 
+  // 4. Pass stable provider idempotency header
+  const extraHeaders = {};
+  if (providerIdempotencyKey && typeof providerIdempotencyKey === "string" && providerIdempotencyKey.trim()) {
+    extraHeaders["X-Refund-Idempotency"] = providerIdempotencyKey.trim();
+  }
+
   logger.info(
-    { gatewayPaymentId: cleanPaymentId, amountPaise },
+    { gatewayPaymentId: cleanPaymentId, amountPaise, providerIdempotencyKey },
     "Dispatching sandbox refund to Razorpay test endpoint"
   );
 
-  // 4. Dispatch via centralized POST wrapper
+  // 5. Dispatch via centralized POST wrapper
   const endpoint = `/v1/payments/${cleanPaymentId}/refund`;
-  const rawResponse = await postRazorpayApi(endpoint, requestBody, customFetch);
+  const rawResponse = await postRazorpayApi(endpoint, requestBody, customFetch, extraHeaders);
 
   const sanitizedResponse = sanitizeProviderPayload(rawResponse);
 
@@ -189,11 +196,21 @@ export async function executeSandboxRefund({
  * Calls GET /v1/payments/:paymentId/refunds/:refundId to independently verify
  * whether the refund has reached a terminal state (processed or failed) or remains pending.
  *
- * Does NOT require sandbox writes enabled (read verification is safe read-only).
+ * Strictly verifies authoritative provider identity fields before confirming outcome:
+ * - Expected refund ID matches
+ * - Expected payment ID matches
+ * - Exact requested refund amount in paise matches
+ * - Expected currency matches
+ * - Supported provider refund status ("processed", "failed", "pending")
+ *
+ * Missing fields, mismatched identities, mismatched amount/currency, or unexpected status
+ * fail closed to SAFE_HOLD.
  */
 export async function verifySandboxRefundStatus({
   gatewayPaymentId,
   refundId,
+  expectedAmountPaise = null,
+  expectedCurrency = "INR",
   customFetch = null
 }) {
   if (!gatewayPaymentId || !refundId) {
@@ -205,25 +222,90 @@ export async function verifySandboxRefundStatus({
     };
   }
 
-  const cleanPaymentId = gatewayPaymentId.trim();
-  const cleanRefundId = refundId.trim();
+  const cleanPaymentId = String(gatewayPaymentId).trim();
+  const cleanRefundId = String(refundId).trim();
 
   try {
     const endpoint = `/v1/payments/${cleanPaymentId}/refunds/${cleanRefundId}`;
     const rawResponse = await fetchRazorpayApi(endpoint, {}, customFetch);
     const sanitized = sanitizeProviderPayload(rawResponse);
 
-    const statusStr = (sanitized.status || "").toLowerCase();
+    // 1. Incomplete payload guard: verify essential identity fields are present
+    if (
+      !sanitized ||
+      typeof sanitized !== "object" ||
+      !sanitized.id ||
+      !sanitized.payment_id ||
+      typeof sanitized.amount !== "number" ||
+      !sanitized.status
+    ) {
+      return {
+        verified: false,
+        outcome: "SAFE_HOLD",
+        status: "PROVIDER_PAYLOAD_INCOMPLETE",
+        safeHoldReason: "Authoritative provider response is missing required identity fields (id, payment_id, amount, or status)",
+        rawResponse: sanitized
+      };
+    }
 
+    const providerRefundId = String(sanitized.id).trim();
+    const providerPaymentId = String(sanitized.payment_id).trim();
+    const providerAmount = Math.round(sanitized.amount);
+    const providerCurrency = (sanitized.currency || "INR").toUpperCase();
+    const targetCurrency = (expectedCurrency || "INR").toUpperCase();
+    const statusStr = String(sanitized.status).trim().toLowerCase();
+
+    // 2. Exact Identity Matching Checks
+    if (cleanRefundId && providerRefundId !== cleanRefundId) {
+      return {
+        verified: false,
+        outcome: "SAFE_HOLD",
+        status: "REFUND_ID_MISMATCH",
+        safeHoldReason: `Authoritative provider refund ID '${providerRefundId}' does not match expected '${cleanRefundId}'`,
+        rawResponse: sanitized
+      };
+    }
+
+    if (cleanPaymentId && providerPaymentId !== cleanPaymentId) {
+      return {
+        verified: false,
+        outcome: "SAFE_HOLD",
+        status: "PAYMENT_ID_MISMATCH",
+        safeHoldReason: `Authoritative provider payment ID '${providerPaymentId}' does not match expected '${cleanPaymentId}'`,
+        rawResponse: sanitized
+      };
+    }
+
+    if (expectedAmountPaise !== null && providerAmount !== expectedAmountPaise) {
+      return {
+        verified: false,
+        outcome: "SAFE_HOLD",
+        status: "AMOUNT_MISMATCH",
+        safeHoldReason: `Authoritative provider refund amount ₹${(providerAmount / 100).toFixed(2)} does not match expected ₹${(expectedAmountPaise / 100).toFixed(2)}`,
+        rawResponse: sanitized
+      };
+    }
+
+    if (targetCurrency && providerCurrency !== targetCurrency) {
+      return {
+        verified: false,
+        outcome: "SAFE_HOLD",
+        status: "CURRENCY_MISMATCH",
+        safeHoldReason: `Authoritative provider refund currency '${providerCurrency}' does not match expected '${targetCurrency}'`,
+        rawResponse: sanitized
+      };
+    }
+
+    // 3. Status Semantics Validation
     if (statusStr === "processed") {
       return {
         verified: true,
         outcome: "VERIFIED_SUCCEEDED",
         status: "PROCESSED",
-        providerRefundId: cleanRefundId,
-        gatewayPaymentId: cleanPaymentId,
-        amountPaise: typeof sanitized.amount === "number" ? Math.round(sanitized.amount) : null,
-        currency: sanitized.currency || "INR",
+        providerRefundId,
+        gatewayPaymentId: providerPaymentId,
+        amountPaise: providerAmount,
+        currency: providerCurrency,
         rawResponse: sanitized
       };
     }
@@ -233,9 +315,9 @@ export async function verifySandboxRefundStatus({
         verified: true,
         outcome: "VERIFIED_FAILED",
         status: "FAILED",
-        providerRefundId: cleanRefundId,
-        gatewayPaymentId: cleanPaymentId,
-        failureReason: sanitized.error_description || "Provider reported refund failed",
+        providerRefundId,
+        gatewayPaymentId: providerPaymentId,
+        failureReason: sanitized.error_description || "Authoritative provider read confirmed refund failed",
         rawResponse: sanitized
       };
     }
@@ -245,19 +327,21 @@ export async function verifySandboxRefundStatus({
         verified: false,
         outcome: "OUTCOME_UNKNOWN",
         status: "PENDING",
-        providerRefundId: cleanRefundId,
-        gatewayPaymentId: cleanPaymentId,
+        providerRefundId,
+        gatewayPaymentId: providerPaymentId,
         details: "Refund is pending processing with banking partner",
         rawResponse: sanitized
       };
     }
 
+    // Any unrecognized or unsupported status value fails closed to SAFE_HOLD
     return {
       verified: false,
-      outcome: "OUTCOME_UNKNOWN",
-      status: statusStr.toUpperCase() || "UNKNOWN",
-      providerRefundId: cleanRefundId,
-      gatewayPaymentId: cleanPaymentId,
+      outcome: "SAFE_HOLD",
+      status: "UNEXPECTED_PROVIDER_STATUS",
+      safeHoldReason: `Authoritative provider response contained unexpected refund status '${statusStr}'`,
+      providerRefundId,
+      gatewayPaymentId: providerPaymentId,
       rawResponse: sanitized
     };
   } catch (err) {

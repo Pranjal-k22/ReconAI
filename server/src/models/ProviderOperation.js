@@ -66,6 +66,12 @@ const providerOperationSchema = new mongoose.Schema(
       required: [true, "idempotencyKey is required"],
       trim: true
     },
+    providerIdempotencyKey: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     operationType: {
       type: String,
       required: [true, "operationType is required"],
@@ -179,6 +185,7 @@ const providerOperationSchema = new mongoose.Schema(
 );
 
 providerOperationSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true });
+providerOperationSchema.index({ tenantId: 1, providerIdempotencyKey: 1 });
 providerOperationSchema.index({ tenantId: 1, caseId: 1 });
 providerOperationSchema.index({ tenantId: 1, operationStatus: 1 });
 

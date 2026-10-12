@@ -263,14 +263,22 @@ export async function dispatchSandboxAction({
         const verifyResult = await verifySandboxRefundStatus({
           gatewayPaymentId: gatewayPayment.gatewayPaymentId,
           refundId: existingOp.providerOperationId,
+          expectedAmountPaise: existingOp.amountPaise,
+          expectedCurrency: existingOp.currency,
           customFetch
         });
 
-        if (verifyResult.verified) {
+        if (
+          verifyResult.outcome === "VERIFIED_SUCCEEDED" ||
+          verifyResult.outcome === "VERIFIED_FAILED" ||
+          verifyResult.outcome === "SAFE_HOLD"
+        ) {
           const updatedOp = await ProviderOperation.findByIdAndUpdate(
             existingOp._id,
             {
               operationStatus: verifyResult.outcome,
+              safeHoldReason: verifyResult.safeHoldReason || null,
+              failureReason: verifyResult.failureReason || null,
               verificationEvidence: verifyResult.rawResponse,
               verificationStatus: verifyResult.status,
               verifiedAt: new Date()
@@ -304,6 +312,7 @@ export async function dispatchSandboxAction({
 
   // Durably record before network dispatch
   const operationId = generateOperationId();
+  const providerIdempotencyKey = operationId;
   let providerOp;
 
   try {
@@ -312,6 +321,7 @@ export async function dispatchSandboxAction({
       tenantId: cleanTenantId,
       caseId: cleanCaseId,
       idempotencyKey: cleanIdempotencyKey,
+      providerIdempotencyKey,
       operationType: "REFUND",
       operationStatus: "REQUESTED",
       gatewayPaymentId: gatewayPayment.gatewayPaymentId,
@@ -351,6 +361,7 @@ export async function dispatchSandboxAction({
     dispatchResponse = await executeSandboxRefund({
       gatewayPaymentId: gatewayPayment.gatewayPaymentId,
       amountPaise: targetAmountPaise,
+      providerIdempotencyKey: providerOp.providerIdempotencyKey || providerOp.operationId,
       notes: {
         reconaiCaseId: cleanCaseId,
         tenantId: cleanTenantId,
@@ -369,20 +380,26 @@ export async function dispatchSandboxAction({
   // -------------------------------------------------------------------------
   // Case A: Dispatch failed or timed out during POST
   if (dispatchError) {
-    const isTimeoutOrNetwork =
+    const isTimeoutOrNetworkOrConflict =
       dispatchError instanceof RazorpayProviderError &&
       (dispatchError.code === RAZORPAY_ERROR_CODES.TIMEOUT ||
-        dispatchError.code === RAZORPAY_ERROR_CODES.NETWORK_ERROR);
+        dispatchError.code === RAZORPAY_ERROR_CODES.NETWORK_ERROR ||
+        dispatchError.code === RAZORPAY_ERROR_CODES.CONFLICT);
 
-    // Timeout or network loss is strictly OUTCOME_UNKNOWN (not failure!)
-    const statusOnDispatchFail = isTimeoutOrNetwork ? "OUTCOME_UNKNOWN" : "VERIFIED_FAILED";
+    // Timeout, network loss, or 409 conflict is strictly OUTCOME_UNKNOWN (not failure!)
+    const statusOnDispatchFail = isTimeoutOrNetworkOrConflict ? "OUTCOME_UNKNOWN" : "VERIFIED_FAILED";
 
     const updatedOp = await ProviderOperation.findByIdAndUpdate(
       providerOp._id,
       {
         operationStatus: statusOnDispatchFail,
         failureReason: dispatchError.message.slice(0, 256),
-        verificationStatus: isTimeoutOrNetwork ? "DISPATCH_TIMEOUT_UNKNOWN" : "DISPATCH_FAILED"
+        verificationStatus:
+          dispatchError.code === RAZORPAY_ERROR_CODES.CONFLICT
+            ? "DISPATCH_CONFLICT_UNKNOWN"
+            : isTimeoutOrNetworkOrConflict
+            ? "DISPATCH_TIMEOUT_UNKNOWN"
+            : "DISPATCH_FAILED"
       },
       { new: true }
     ).lean();
@@ -401,6 +418,8 @@ export async function dispatchSandboxAction({
   const verifyResult = await verifySandboxRefundStatus({
     gatewayPaymentId: gatewayPayment.gatewayPaymentId,
     refundId: providerRefundId,
+    expectedAmountPaise: targetAmountPaise,
+    expectedCurrency: targetCurrency,
     customFetch
   });
 
@@ -409,18 +428,13 @@ export async function dispatchSandboxAction({
   let failureReason = null;
 
   if (verifyResult.outcome === "VERIFIED_SUCCEEDED") {
-    // Sanity check amount consistency
-    if (verifyResult.amountPaise !== null && verifyResult.amountPaise !== targetAmountPaise) {
-      finalOperationStatus = "SAFE_HOLD";
-      safeHoldReason = `Provider refund amount ₹${((verifyResult.amountPaise || 0) / 100).toFixed(
-        2
-      )} disagrees with requested amount ₹${(targetAmountPaise / 100).toFixed(2)}`;
-    } else {
-      finalOperationStatus = "VERIFIED_SUCCEEDED";
-    }
+    finalOperationStatus = "VERIFIED_SUCCEEDED";
   } else if (verifyResult.outcome === "VERIFIED_FAILED") {
     finalOperationStatus = "VERIFIED_FAILED";
     failureReason = verifyResult.failureReason || "Provider reported refund failed during verification";
+  } else if (verifyResult.outcome === "SAFE_HOLD") {
+    finalOperationStatus = "SAFE_HOLD";
+    safeHoldReason = verifyResult.safeHoldReason || "Authoritative provider evidence conflicts or identity mismatch detected";
   } else {
     // Pending, timeout, or ambiguous read
     finalOperationStatus = "OUTCOME_UNKNOWN";
@@ -497,11 +511,19 @@ export async function recheckProviderOperationStatus({
   const verifyResult = await verifySandboxRefundStatus({
     gatewayPaymentId: op.gatewayPaymentId,
     refundId: op.providerOperationId,
+    expectedAmountPaise: op.amountPaise,
+    expectedCurrency: op.currency,
     customFetch
   });
 
-  if (verifyResult.verified) {
+  if (
+    verifyResult.outcome === "VERIFIED_SUCCEEDED" ||
+    verifyResult.outcome === "VERIFIED_FAILED" ||
+    verifyResult.outcome === "SAFE_HOLD"
+  ) {
     op.operationStatus = verifyResult.outcome;
+    op.safeHoldReason = verifyResult.safeHoldReason || null;
+    op.failureReason = verifyResult.failureReason || null;
     op.verificationEvidence = sanitizeProviderPayload(verifyResult.rawResponse);
     op.verificationStatus = verifyResult.status;
     op.verifiedAt = new Date();

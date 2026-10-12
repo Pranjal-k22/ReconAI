@@ -155,10 +155,35 @@ describe("Razorpay Sandbox Provider Adapter", () => {
       expect(result.amountPaise).toBe(15000);
       expect(result.providerStatus).toBe("processed");
     });
+
+    it("sends X-Refund-Idempotency header when providerIdempotencyKey is passed", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_idem_header",
+          payment_id: "pay_test_001",
+          amount: 15000,
+          currency: "INR",
+          status: "processed"
+        })
+      });
+
+      await executeSandboxRefund({
+        gatewayPaymentId: "pay_test_001",
+        amountPaise: 15000,
+        providerIdempotencyKey: "OP-20261012-ABCDEF12",
+        customFetch: mockFetch
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders["X-Refund-Idempotency"]).toBe("OP-20261012-ABCDEF12");
+    });
   });
 
   describe("3. Authoritative Read Verification (verifySandboxRefundStatus)", () => {
-    it("classifies processed refund as VERIFIED_SUCCEEDED", async () => {
+    it("classifies processed refund matching all identity fields as VERIFIED_SUCCEEDED", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         status: 200,
         ok: true,
@@ -174,6 +199,8 @@ describe("Razorpay Sandbox Provider Adapter", () => {
       const result = await verifySandboxRefundStatus({
         gatewayPaymentId: "pay_test_001",
         refundId: "rfnd_test_100",
+        expectedAmountPaise: 5000,
+        expectedCurrency: "INR",
         customFetch: mockFetch
       });
 
@@ -181,9 +208,10 @@ describe("Razorpay Sandbox Provider Adapter", () => {
       expect(result.outcome).toBe("VERIFIED_SUCCEEDED");
       expect(result.status).toBe("PROCESSED");
       expect(result.amountPaise).toBe(5000);
+      expect(result.currency).toBe("INR");
     });
 
-    it("classifies failed refund as VERIFIED_FAILED", async () => {
+    it("classifies failed refund matching identities as VERIFIED_FAILED", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         status: 200,
         ok: true,
@@ -200,6 +228,8 @@ describe("Razorpay Sandbox Provider Adapter", () => {
       const result = await verifySandboxRefundStatus({
         gatewayPaymentId: "pay_test_001",
         refundId: "rfnd_test_101",
+        expectedAmountPaise: 5000,
+        expectedCurrency: "INR",
         customFetch: mockFetch
       });
 
@@ -207,6 +237,179 @@ describe("Razorpay Sandbox Provider Adapter", () => {
       expect(result.outcome).toBe("VERIFIED_FAILED");
       expect(result.status).toBe("FAILED");
       expect(result.failureReason).toBe("Card issuing bank declined refund");
+    });
+
+    it("rejects verification with SAFE_HOLD when provider returns wrong refund ID", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_wrong_id_999",
+          payment_id: "pay_test_001",
+          amount: 5000,
+          currency: "INR",
+          status: "processed"
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_expected_id_100",
+        expectedAmountPaise: 5000,
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("REFUND_ID_MISMATCH");
+      expect(result.safeHoldReason).toContain("does not match expected");
+    });
+
+    it("rejects verification with SAFE_HOLD when provider returns wrong payment ID", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_100",
+          payment_id: "pay_other_payment_999",
+          amount: 5000,
+          currency: "INR",
+          status: "processed"
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_100",
+        expectedAmountPaise: 5000,
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("PAYMENT_ID_MISMATCH");
+    });
+
+    it("rejects verification with SAFE_HOLD when provider returns wrong amount", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_100",
+          payment_id: "pay_test_001",
+          amount: 99999, // Mismatched amount
+          currency: "INR",
+          status: "processed"
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_100",
+        expectedAmountPaise: 5000,
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("AMOUNT_MISMATCH");
+    });
+
+    it("rejects verification with SAFE_HOLD when provider returns wrong currency", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_100",
+          payment_id: "pay_test_001",
+          amount: 5000,
+          currency: "USD",
+          status: "processed"
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_100",
+        expectedAmountPaise: 5000,
+        expectedCurrency: "INR",
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("CURRENCY_MISMATCH");
+    });
+
+    it("rejects verification with SAFE_HOLD when provider response is missing identity fields (id, payment_id, amount)", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          entity: "refund",
+          status: "processed"
+          // missing id, payment_id, amount
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_100",
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("PROVIDER_PAYLOAD_INCOMPLETE");
+    });
+
+    it("rejects verification with SAFE_HOLD when provider returns unexpected refund status", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_100",
+          payment_id: "pay_test_001",
+          amount: 5000,
+          currency: "INR",
+          status: "unsupported_custom_state"
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_100",
+        expectedAmountPaise: 5000,
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("UNEXPECTED_PROVIDER_STATUS");
+    });
+
+    it("rejects failure verification with SAFE_HOLD when status is failed but payment ID does not match (contradictory evidence)", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          id: "rfnd_test_101",
+          payment_id: "pay_wrong_payment", // Mismatched payment ID
+          amount: 5000,
+          currency: "INR",
+          status: "failed"
+        })
+      });
+
+      const result = await verifySandboxRefundStatus({
+        gatewayPaymentId: "pay_test_001",
+        refundId: "rfnd_test_101",
+        customFetch: mockFetch
+      });
+
+      expect(result.verified).toBe(false);
+      expect(result.outcome).toBe("SAFE_HOLD");
+      expect(result.status).toBe("PAYMENT_ID_MISMATCH");
     });
 
     it("classifies pending refund as OUTCOME_UNKNOWN", async () => {
@@ -225,6 +428,7 @@ describe("Razorpay Sandbox Provider Adapter", () => {
       const result = await verifySandboxRefundStatus({
         gatewayPaymentId: "pay_test_001",
         refundId: "rfnd_test_102",
+        expectedAmountPaise: 5000,
         customFetch: mockFetch
       });
 

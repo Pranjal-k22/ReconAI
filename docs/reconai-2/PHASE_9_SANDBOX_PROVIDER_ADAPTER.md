@@ -80,32 +80,56 @@ Startup validation in `server/src/config/env.js` immediately halts execution if 
 
 ---
 
-## 4. Conservative Provider Outcome Lifecycle
+## 4. Conservative Provider Outcome Lifecycle & Authoritative Identity Verification
 
 The domain model represents these 5 discrete states in `ProviderOperation`:
 
 | State | Definition | Triggering Evidence | Permitted Subsequent Transition |
 |---|---|---|---|
 | `REQUESTED` | Durably recorded in MongoDB prior to dispatch | Created before HTTP POST call | `OUTCOME_UNKNOWN`, `VERIFIED_SUCCEEDED`, `VERIFIED_FAILED`, `SAFE_HOLD` |
-| `OUTCOME_UNKNOWN` | Ambiguous state; timeout, network drop, or pending provider state | POST timed out, GET timed out, or GET returned `status: "pending"` | Can be rechecked via read-only GET; **never** blindly re-refunded |
-| `VERIFIED_SUCCEEDED` | Authoritative provider confirmation of completed refund | Authoritative GET returned `status: "processed"` and matching amount | Terminal state |
-| `VERIFIED_FAILED` | Authoritative provider confirmation that refund failed | Authoritative GET returned `status: "failed"` | Terminal state |
-| `SAFE_HOLD` | Conflicting evidence, currency mismatch, or amount discrepancy | Authoritative GET refunded amount disagrees with requested amount | Manual operator investigation |
+| `OUTCOME_UNKNOWN` | Ambiguous state; timeout, network drop, pending provider state, or HTTP 409 | POST timed out, network error, HTTP 409, GET timed out, or GET returned `status: "pending"` | Can be rechecked via read-only GET; **never** blindly re-refunded |
+| `VERIFIED_SUCCEEDED` | Authoritative provider confirmation of completed refund with exact identity match | Authoritative GET returned `status: "processed"`, exact refund ID, exact payment ID, exact amount in paise, and expected currency | Terminal state |
+| `VERIFIED_FAILED` | Authoritative provider confirmation that refund failed | Authoritative GET returned `status: "failed"` with matching refund ID, payment ID, amount, and currency | Terminal state |
+| `SAFE_HOLD` | Identity mismatch, incomplete response, currency mismatch, amount discrepancy, or contradictory evidence | Authoritative GET response missing required identity fields, refund ID mismatch, payment ID mismatch, amount mismatch, unsupported status, or contradictory response | Manual operator investigation |
+
+### Exact Identity Verification Rules
+Before marking a refund `VERIFIED_SUCCEEDED`, the authoritative provider response must strictly contain and match:
+1. **Expected Refund ID**: Must match `sanitized.id` exactly where known.
+2. **Expected Gateway Payment ID**: Must match `sanitized.payment_id` exactly.
+3. **Exact Requested Refund Amount (Paise)**: Must match `sanitized.amount` exactly.
+4. **Expected Currency**: Must match `sanitized.currency` (e.g. `INR`).
+5. **Supported Status**: Must be `processed` for success, or `failed` for conclusive failure.
+
+**Safe-Hold Failure Rules**:
+- Missing identity fields (`id`, `payment_id`, `amount`, `status`) fail closed to `SAFE_HOLD`.
+- Any mismatch in refund ID, payment ID, amount, or currency transitions the operation to `SAFE_HOLD`.
+- HTTP 200 with wrong identities is rejected and placed in `SAFE_HOLD`.
+- Contradictory evidence (e.g., status is `failed` but payment ID belongs to an unrelated record) transitions to `SAFE_HOLD`, preventing false conclusions.
 
 ---
 
-## 5. Persistence, Idempotency, and Concurrency Controls
+## 5. Provider Idempotency Header, Persistence, and Concurrency Controls
 
-1. **Durable Unique Index**:
+1. **Provider Outbound Idempotency Header (`X-Refund-Idempotency`)**:
+   - Razorpay refunds API officially supports the `X-Refund-Idempotency` header for outbound POST `/v1/payments/:id/refund`.
+   - The provider idempotency key is tied 1:1 to the durable `operationId` (e.g., `op_prov_...`) and persisted as `providerIdempotencyKey` in `ProviderOperation` with status `REQUESTED` before outbound dispatch.
+   - Retries and status rechecks unconditionally reuse the exact same `providerIdempotencyKey` and identical payload.
+   - Timeouts or network interruptions never generate a new provider idempotency key.
+2. **Durable Unique Indexes**:
    ```javascript
    providerOperationSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true });
+   providerOperationSchema.index({ tenantId: 1, providerIdempotencyKey: 1 });
    ```
-2. **Payload Hash Check**:
+3. **Payload Hash Check**:
    On repeated requests with the same `idempotencyKey`:
    - If payload hash matches: returns existing operation idempotently.
-   - If payload hash differs: rejects with `409 Conflict`.
-3. **Safe Replay on Unknown Outcome**:
-   If an existing operation is in `OUTCOME_UNKNOWN`, replaying the request does **not** issue a new refund. It triggers read-only status verification against `providerOperationId` if present, preserving financial safety.
+   - If payload hash differs: rejects immediately with `409 Conflict`.
+4. **Conservative HTTP 409 Provider Response Handling**:
+   - If the provider returns HTTP 409 Conflict, it is treated conservatively as `OUTCOME_UNKNOWN` (verification status: `DISPATCH_CONFLICT_UNKNOWN`).
+   - The system assumes neither success nor failure without authoritative verification.
+5. **Safe Replay on Unknown Outcome**:
+   - If an existing operation is in `OUTCOME_UNKNOWN`, replaying the request does **not** issue a new mutation.
+   - It triggers read-only status verification against `providerOperationId` if present, strictly enforcing financial safety.
 
 ---
 

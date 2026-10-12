@@ -11,6 +11,7 @@ export const RAZORPAY_ERROR_CODES = {
   TIMEOUT: "RAZORPAY_TIMEOUT",
   NETWORK_ERROR: "RAZORPAY_NETWORK_ERROR",
   INVALID_RESPONSE: "RAZORPAY_INVALID_RESPONSE",
+  CONFLICT: "RAZORPAY_CONFLICT",
   PROVIDER_ERROR: "RAZORPAY_PROVIDER_ERROR"
 };
 
@@ -171,7 +172,7 @@ export async function fetchRazorpayApi(endpointPath, queryParams = {}, customFet
  * Centralized POST request execution wrapper for Razorpay REST API with timeout and error normalization.
  * Must only be invoked when sandbox write gates are verified.
  */
-export async function postRazorpayApi(endpointPath, body = {}, customFetch = null) {
+export async function postRazorpayApi(endpointPath, body = {}, customFetch = null, extraHeaders = {}) {
   if (!isRazorpayConfigured() && !customFetch) {
     throw new RazorpayProviderError(
       RAZORPAY_ERROR_CODES.NOT_CONFIGURED,
@@ -203,7 +204,8 @@ export async function postRazorpayApi(endpointPath, body = {}, customFetch = nul
       headers: {
         Authorization: authHeader,
         "Content-Type": "application/json",
-        Accept: "application/json"
+        Accept: "application/json",
+        ...extraHeaders
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -216,6 +218,21 @@ export async function postRazorpayApi(endpointPath, body = {}, customFetch = nul
         throw new RazorpayProviderError(
           RAZORPAY_ERROR_CODES.AUTH_ERROR,
           "Razorpay API authentication failed. Please verify Key ID and Key Secret."
+        );
+      }
+      if (response.status === 409) {
+        let errDesc = "";
+        try {
+          if (typeof response.json === "function") {
+            const errJson = await response.json().catch(() => null);
+            if (errJson && errJson.error && errJson.error.description) {
+              errDesc = String(errJson.error.description);
+            }
+          }
+        } catch (_) {}
+        throw new RazorpayProviderError(
+          RAZORPAY_ERROR_CODES.CONFLICT,
+          `Razorpay API returned status 409 Conflict${errDesc ? `: ${errDesc}` : ""}`
         );
       }
       if (response.status === 429) {
