@@ -94,17 +94,27 @@ To store immutable, tenant-scoped classification findings without duplicating la
 
 ---
 
-## 4. Verification Gates and Results
+## 4. Frontend Telemetry Provenance & Trust Boundary Model
+
+A rigorous security analysis of frontend evidence provenance established that:
+1. **Absence of Client Ingestion Endpoint**: ReconAI currently hosts no client-side telemetry/beacon ingestion endpoints. `PaymentLifecycleEvent.SOURCE_SYSTEMS` does not include browser or client runtimes.
+2. **Caller Forgery Prevention**: Callers cannot supply `{ authenticated: true, sessionId: "...", eventId: "..." }` or any arbitrary boolean flag in `context` to elevate a client claim into a verified provider fact. Any caller-supplied frontend claim in `context` is strictly recorded in `claims` as an unverified customer claim (`authority: "CUSTOMER_CLAIM"`, `verified: false`).
+3. **Server-Verified Provenance Requirement**: Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`) is classified only when evidence originates from authoritative server-side ledger events (`RECONAI_SYSTEM` or `MERCHANT_ORDER`) carrying explicit cryptographic/server verification (`serverVerifiedTelemetry: true`) bound strictly to the matching tenant, merchant order, and gateway payment ID.
+4. **Safe Status Mismatch Fallback**: In the absence of server-verified telemetry (the default in the current architecture), `CAPTURED` gateway payment plus `PENDING` merchant order safely classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`) with explicit missing-evidence indicators explaining that trusted frontend checkout telemetry is unobserved.
+
+---
+
+## 5. Verification Gates and Results
 
 | Gate | Description | Observed Result | Status |
 |---|---|---|---|
-| 1 | Focused classification/evidence unit tests | 36 passed in `evidenceClassifier.test.js` (including Case 1 positive and regression tests) | **PASS** |
+| 1 | Focused classification/evidence unit tests | 41 passed in `evidenceClassifier.test.js` (including 7 comprehensive security provenance tests) | **PASS** |
 | 2 | Complete 30-scenario coverage suite | All 30 scenarios asserted with exact IDs, codes, facts, claims, safe-holds | **PASS** |
 | 3 | Real-MongoDB evidence persistence and isolation tests | 4 passed in `evidencePersistence.integration.test.js` | **PASS** |
 | 4 | Monitoring state-machine, scheduler, runtime-wiring tests | 34 passed in `tests/monitoring` | **PASS** |
 | 5 | Full webhook signature and ingestion suite | 25 passed in `tests/webhook` | **PASS** |
 | 6 | Full real-MongoDB integration suite | 37 passed across 5 test suites | **PASS** |
-| 7 | Full backend unit suite (`npm test`) | 399 passed across 57 test files | **PASS** |
-| 8 | Frontend production build (`npm run build`) | Built in 8.36s with zero errors | **PASS** |
+| 7 | Full backend unit suite (`npm test`) | 404 passed across 57 test files | **PASS** |
+| 8 | Frontend production build (`npm run build`) | Built in 8.70s with zero errors | **PASS** |
 | 9 | `git diff --check` | Clean diff, zero trailing whitespace/conflict markers | **PASS** |
 | 10 | 120-scenario reconciliation benchmark | 120/120 classifications match (100.00% match rate) | **PASS** |

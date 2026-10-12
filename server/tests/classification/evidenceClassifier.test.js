@@ -11,19 +11,21 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
   const TENANT = "tenant_merch_01";
 
   // -------------------------------------------------------------------------
-  // Case 1: Frontend Timeout After Payment Success (Positive & Regression Tests)
+  // Case 1: Frontend Telemetry Trust Provenance & Boundary Security Tests
   // -------------------------------------------------------------------------
-  it("Case 1 (Positive): FRONTEND_TIMEOUT_PAYMENT_SUCCESS requires authenticated frontend event to verify client timeout", () => {
+
+  // Test 1: Caller-supplied authenticated: true cannot establish trusted frontend event
+  it("Case 1 Security Test 1: Caller-supplied authenticated: true flag cannot independently establish trusted frontend event", () => {
     const finding = classifyPaymentScenario({
       gatewayPayment: {
-        gatewayPaymentId: "pay_001",
+        gatewayPaymentId: "pay_001_caller_auth",
         status: "CAPTURED",
         amountPaise: 50000,
         currency: "INR",
         tenantId: TENANT
       },
       merchantOrder: {
-        merchantOrderId: "ORD-001",
+        merchantOrderId: "ORD-001_caller_auth",
         status: "PENDING",
         amountPaise: 50000,
         currency: "INR",
@@ -31,13 +33,150 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
       },
       context: {
         authenticatedFrontendEvent: {
-          eventId: "fe_evt_001",
-          eventType: "CHECKOUT_TIMEOUT",
           authenticated: true,
-          sessionId: "sess_checkout_001",
-          timestamp: new Date()
+          eventType: "CHECKOUT_TIMEOUT"
         }
       }
+    });
+
+    // Caller cannot elevate claim to fact: falls back to STATUS_MISMATCH
+    expect(finding.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(finding.category).toBe("STATUS_MISMATCH");
+    expect(finding.facts.some((f) => f.dimension === "FRONTEND_CHECKOUT")).toBe(false);
+  });
+
+  // Test 2: Well-formed but forged session/event ID remains untrusted
+  it("Case 1 Security Test 2: Well-formed but forged session/event ID in context remains untrusted", () => {
+    const finding = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_forged",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_forged",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      context: {
+        authenticatedFrontendEvent: {
+          authenticated: true,
+          sessionId: "sess_checkout_99999_valid_format",
+          eventId: "evt_fe_forged_uuid_9999",
+          eventType: "CHECKOUT_TIMEOUT"
+        }
+      }
+    });
+
+    expect(finding.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(finding.category).toBe("STATUS_MISMATCH");
+    expect(finding.facts.some((f) => f.dimension === "FRONTEND_CHECKOUT")).toBe(false);
+    expect(
+      finding.claims.some(
+        (c) =>
+          c.claimType === "FRONTEND_TIMEOUT_CLAIM" &&
+          c.verified === false &&
+          c.evidenceRef === "evt_fe_forged_uuid_9999"
+      )
+    ).toBe(true);
+  });
+
+  // Test 3: CAPTURED plus PENDING without trusted frontend evidence yields payment/order status mismatch
+  it("Case 1 Security Test 3: CAPTURED plus PENDING without trusted frontend evidence yields STATUS_MISMATCH", () => {
+    const finding = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_no_fe",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_no_fe",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      }
+    });
+
+    expect(finding.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(finding.category).toBe("STATUS_MISMATCH");
+    expect(finding.reasonCode).toBe("STATUS_MISMATCH");
+    expect(finding.missingEvidence).toContain(
+      "Authenticated frontend checkout acknowledgment or drop event (unobserved)"
+    );
+  });
+
+  // Test 4: Unverified frontend claims are kept separate from verified facts
+  it("Case 1 Security Test 4: Unverified frontend claims are kept separate from verified facts in claims array", () => {
+    const finding = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_claims_sep",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_claims_sep",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      context: {
+        frontendTimeout: true,
+        browserDropped: true,
+        authenticatedFrontendEvent: {
+          authenticated: true,
+          eventId: "fe_unverified_claim_01"
+        }
+      }
+    });
+
+    // Facts must only contain verified provider capture and order pending
+    expect(finding.facts.every((f) => f.dimension !== "FRONTEND_CHECKOUT")).toBe(true);
+    // Claims array must store unverified claim
+    const timeoutClaim = finding.claims.find((c) => c.claimType === "FRONTEND_TIMEOUT_CLAIM");
+    expect(timeoutClaim).toBeDefined();
+    expect(timeoutClaim.verified).toBe(false);
+    expect(timeoutClaim.authority).toBe("CUSTOMER_CLAIM");
+  });
+
+  // Test 5: Case 1 is classified as frontend timeout only when evidence comes through actual trusted verification path
+  it("Case 1 Security Test 5: Case 1 classified as FRONTEND_TIMEOUT_PAYMENT_SUCCESS only when evidence comes through trusted server verification path", () => {
+    const finding = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_trusted",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_trusted",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      lifecycleEvents: [
+        {
+          eventId: "evt_server_verified_fe_001",
+          sourceSystem: "RECONAI_SYSTEM",
+          serverVerifiedTelemetry: true,
+          tenantId: TENANT,
+          merchantOrderId: "ORD-001_trusted",
+          gatewayPaymentId: "pay_001_trusted",
+          normalizedEventType: "CHECKOUT_TIMEOUT",
+          occurredAt: new Date()
+        }
+      ]
     });
 
     expect(finding.scenarioId).toBe("CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS");
@@ -51,67 +190,214 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.isExecutable).toBe(false);
     expect(finding.authoritative).toBe(false);
     expect(finding.requiresPolicyEngine).toBe(true);
-    // Verified provider capture fact
-    expect(finding.facts.some((f) => f.authority === "PROVIDER_VERIFIED" && f.value === "CAPTURED")).toBe(true);
-    // Verified authenticated frontend checkout fact
-    expect(finding.facts.some((f) => f.dimension === "FRONTEND_CHECKOUT" && f.authority === "SYSTEM_RECORD")).toBe(true);
-    expect(finding.supportingEvidence.some((e) => e.entityType === "FrontendClientEvent")).toBe(true);
+    // Facts contain verified provider fact AND verified server-side frontend fact
+    expect(
+      finding.facts.some(
+        (f) =>
+          f.dimension === "FRONTEND_CHECKOUT" &&
+          f.authority === "SYSTEM_RECORD" &&
+          f.evidenceRef === "evt_server_verified_fe_001"
+      )
+    ).toBe(true);
+    expect(
+      finding.supportingEvidence.some(
+        (e) => e.entityType === "PaymentLifecycleEvent" && e.eventId === "evt_server_verified_fe_001"
+      )
+    ).toBe(true);
     expect(finding.missingEvidence).toHaveLength(0);
   });
 
-  it("Case 1 (Regression): CAPTURED plus PENDING alone cannot establish frontend timeout and classifies as STATUS_MISMATCH", () => {
-    // Sub-case A: Provider CAPTURED and merchant order PENDING without any frontend context
-    const findingNoContext = classifyPaymentScenario({
+  // Test 6: Cross-tenant, mismatched order, or mismatched payment telemetry cannot be reused
+  it("Case 1 Security Test 6: Evidence from another tenant, order, or payment attempt cannot be reused to prove frontend timeout", () => {
+    // Sub-test 6A: Cross-tenant telemetry injection attempt
+    const findingCrossTenant = classifyPaymentScenario({
       gatewayPayment: {
-        gatewayPaymentId: "pay_001_mismatch",
+        gatewayPaymentId: "pay_001_tenant_victim",
         status: "CAPTURED",
         amountPaise: 50000,
         currency: "INR",
         tenantId: TENANT
       },
       merchantOrder: {
-        merchantOrderId: "ORD-001-mismatch",
+        merchantOrderId: "ORD-001_tenant_victim",
         status: "PENDING",
         amountPaise: 50000,
         currency: "INR",
         tenantId: TENANT
-      }
+      },
+      lifecycleEvents: [
+        {
+          eventId: "evt_attacker_telemetry_001",
+          sourceSystem: "RECONAI_SYSTEM",
+          serverVerifiedTelemetry: true,
+          tenantId: "tenant_attacker_999", // Different tenant!
+          merchantOrderId: "ORD-001_tenant_victim",
+          normalizedEventType: "CHECKOUT_TIMEOUT"
+        }
+      ]
     });
 
-    // Proves that causation is NOT inferred: must classify as payment/order status mismatch
-    expect(findingNoContext.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
-    expect(findingNoContext.category).toBe("STATUS_MISMATCH");
-    expect(findingNoContext.reasonCode).toBe("STATUS_MISMATCH");
-    expect(findingNoContext.ruleId).toBe("RULE_CASE_6_STATUS_MISMATCH");
-    expect(findingNoContext.missingEvidence).toContain("Authenticated frontend checkout acknowledgment or drop event (unobserved)");
-    expect(findingNoContext.suggestedNextStep).toBe("ADVISORY_RECONCILE_LOCAL_LEDGER");
-    expect(findingNoContext.actionEligibility).toBeUndefined();
+    expect(findingCrossTenant.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingCrossTenant.category).toBe("STATUS_MISMATCH");
 
-    // Sub-case B: Provider CAPTURED and merchant order PENDING with unauthenticated context flag
-    const findingUnauthenticated = classifyPaymentScenario({
+    // Sub-test 6B: Cross-order telemetry replay attempt
+    const findingCrossOrder = classifyPaymentScenario({
       gatewayPayment: {
-        gatewayPaymentId: "pay_001_unauth",
+        gatewayPaymentId: "pay_001_order_victim",
         status: "CAPTURED",
         amountPaise: 50000,
         currency: "INR",
         tenantId: TENANT
       },
       merchantOrder: {
-        merchantOrderId: "ORD-001_unauth",
+        merchantOrderId: "ORD-001_order_victim",
         status: "PENDING",
         amountPaise: 50000,
         currency: "INR",
         tenantId: TENANT
       },
-      context: { frontendTimeout: true } // Unauthenticated boolean flag without cryptographic/session verification
+      lifecycleEvents: [
+        {
+          eventId: "evt_replayed_order_telemetry_002",
+          sourceSystem: "RECONAI_SYSTEM",
+          serverVerifiedTelemetry: true,
+          tenantId: TENANT,
+          merchantOrderId: "ORD-DIFFERENT-ORDER-999", // Mismatched order!
+          normalizedEventType: "CHECKOUT_TIMEOUT"
+        }
+      ]
     });
 
-    // Unauthenticated context flag is treated as an unverified claim, not proof of frontend timeout
-    expect(findingUnauthenticated.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
-    expect(findingUnauthenticated.category).toBe("STATUS_MISMATCH");
-    expect(findingUnauthenticated.reasonCode).toBe("STATUS_MISMATCH");
-    expect(findingUnauthenticated.missingEvidence).toContain("Authenticated frontend checkout acknowledgment or drop event (unobserved)");
-    expect(findingUnauthenticated.claims.some((c) => c.claimType === "FRONTEND_TIMEOUT_CLAIM" && c.verified === false)).toBe(true);
+    expect(findingCrossOrder.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingCrossOrder.category).toBe("STATUS_MISMATCH");
+
+    // Sub-test 6C: Mismatched payment binding attempt
+    const findingMismatchedPayment = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_payment_victim",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_payment_victim",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      lifecycleEvents: [
+        {
+          eventId: "evt_mismatched_payment_telemetry_003",
+          sourceSystem: "RECONAI_SYSTEM",
+          serverVerifiedTelemetry: true,
+          tenantId: TENANT,
+          merchantOrderId: "ORD-001_payment_victim",
+          gatewayPaymentId: "pay_DIFFERENT_PAYMENT_999", // Mismatched gateway payment!
+          normalizedEventType: "CHECKOUT_TIMEOUT"
+        }
+      ]
+    });
+
+    expect(findingMismatchedPayment.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingMismatchedPayment.category).toBe("STATUS_MISMATCH");
+  });
+
+  // Test 7: Removing or corrupting referenced frontend evidence fails safely
+  it("Case 1 Security Test 7: Removing or corrupting referenced frontend evidence fails safely without asserting frontend timeout", () => {
+    // Sub-test 7A: Corrupted missing eventId
+    const findingMissingEventId = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_corrupted_id",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_corrupted_id",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      lifecycleEvents: [
+        {
+          eventId: "", // Empty / corrupted ID
+          sourceSystem: "RECONAI_SYSTEM",
+          serverVerifiedTelemetry: true,
+          tenantId: TENANT,
+          merchantOrderId: "ORD-001_corrupted_id",
+          normalizedEventType: "CHECKOUT_TIMEOUT"
+        }
+      ]
+    });
+
+    expect(findingMissingEventId.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingMissingEventId.category).toBe("STATUS_MISMATCH");
+
+    // Sub-test 7B: Corrupted missing server verification proof
+    const findingUnverifiedTelemetry = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_unverified_telemetry",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_unverified_telemetry",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      lifecycleEvents: [
+        {
+          eventId: "evt_corrupted_flag_001",
+          sourceSystem: "RECONAI_SYSTEM",
+          serverVerifiedTelemetry: false, // Explicit false
+          tenantId: TENANT,
+          merchantOrderId: "ORD-001_unverified_telemetry",
+          normalizedEventType: "CHECKOUT_TIMEOUT"
+        }
+      ]
+    });
+
+    expect(findingUnverifiedTelemetry.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingUnverifiedTelemetry.category).toBe("STATUS_MISMATCH");
+
+    // Sub-test 7C: Untrusted source system (e.g. CUSTOMER_CLAIM)
+    const findingCustomerClaimSource = classifyPaymentScenario({
+      gatewayPayment: {
+        gatewayPaymentId: "pay_001_untrusted_source",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      merchantOrder: {
+        merchantOrderId: "ORD-001_untrusted_source",
+        status: "PENDING",
+        amountPaise: 50000,
+        currency: "INR",
+        tenantId: TENANT
+      },
+      lifecycleEvents: [
+        {
+          eventId: "evt_customer_claim_001",
+          sourceSystem: "CUSTOMER_CLAIM", // Not authoritative system
+          serverVerifiedTelemetry: true,
+          tenantId: TENANT,
+          merchantOrderId: "ORD-001_untrusted_source",
+          normalizedEventType: "CHECKOUT_TIMEOUT"
+        }
+      ]
+    });
+
+    expect(findingCustomerClaimSource.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+    expect(findingCustomerClaimSource.category).toBe("STATUS_MISMATCH");
   });
 
   // -------------------------------------------------------------------------

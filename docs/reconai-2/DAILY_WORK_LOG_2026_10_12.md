@@ -395,3 +395,31 @@ ReconAI/
 - **Phase 6 Status:** Phase 6 (Deterministic Edge-Case Classification and Evidence Engine) is **COMPLETE and PASSING**.
 - **Phase 7 Status:** Phase 7 (AI Investigation & Agent Evaluation) has **NOT** started.
 - **Phase 8 Status:** Phase 8 (Autonomous Resolution Actions) has **NOT** started.
+
+---
+
+## 8. Phase 6 Final Security Check — Authenticated Frontend Evidence Provenance
+
+- **Investigation & Trust Boundary Verification**:
+  - Investigated the full trust path for `authenticatedFrontendEvent` across controllers, services, middleware, models, and tests.
+  - Verified that ReconAI has **no client-side telemetry ingestion endpoint** or browser beacon receiver.
+  - Identified that accepting caller-supplied `authenticated: true` in `context` constituted an unauthenticated trust elevation vulnerability.
+  - Hardened `evidenceClassifier.js`:
+    - Caller-supplied frontend flags/objects in `context` are strictly recorded in `claims` as unverified claims (`CUSTOMER_CLAIM`, `verified: false`), never as facts.
+    - Frontend telemetry requires authoritative server-verified ledger provenance (`RECONAI_SYSTEM` or `MERCHANT_ORDER` in `lifecycleEvents` with `serverVerifiedTelemetry: true`) bound strictly to matching `tenantId`, `merchantOrderId`, and `gatewayPaymentId`.
+    - In the absence of server-verified telemetry, `CAPTURED` + `PENDING` safely classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`) with explicit missing-evidence indicators.
+- **7 Security Provenance Tests Added**:
+  1. Caller-supplied `authenticated: true` flag in `context` cannot establish trusted frontend evidence.
+  2. Well-formed but forged session/event ID remains untrusted and is stored as an unverified claim.
+  3. `CAPTURED` plus `PENDING` without trusted frontend evidence yields `STATUS_MISMATCH`.
+  4. Unverified frontend claims are kept separate from verified facts in `claims` array.
+  5. Case 1 classifies as `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` only when evidence arrives through authoritative server-verified ledger events.
+  6. Cross-tenant, mismatched-order, or mismatched-payment telemetry cannot be reused to prove frontend timeout.
+  7. Corrupted or unverified telemetry fails safely to `STATUS_MISMATCH`.
+- **Verification Gates**:
+  - `evidenceClassifier.test.js`: 41 passed (including 7 security tests)
+  - Full backend unit suite (`npm test`): 404 passed across 57 test files
+  - Full integration suite (`npm run test:integration`): 37 passed across 5 test suites
+  - Frontend production build (`npm run build`): Built in 8.70s with zero errors
+  - `git diff --check`: Clean diff, zero issues
+  - 120-scenario reconciliation benchmark: 120/120 passing (100.00%)

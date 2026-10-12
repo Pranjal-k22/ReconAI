@@ -144,55 +144,90 @@ export function classifyPaymentScenario({
     }
   }
 
-  // Register authenticated frontend events if present as verified facts
-  const authenticatedFrontendEvent =
-    (context.authenticatedFrontendEvent &&
-      context.authenticatedFrontendEvent.authenticated === true &&
-      (context.authenticatedFrontendEvent.eventType === "CHECKOUT_TIMEOUT" ||
-        context.authenticatedFrontendEvent.eventType === "FRONTEND_DROPPED" ||
-        context.authenticatedFrontendEvent.eventType === "FRONTEND_TIMEOUT")
-      ? context.authenticatedFrontendEvent
-      : null) ||
-    lifecycleEvents.find(
-      (e) =>
-        (e.sourceSystem === "CUSTOMER_CLAIM" ||
-          e.sourceSystem === "MERCHANT_ORDER" ||
-          e.sourceSystem === "RECONAI_SYSTEM" ||
-          e.sourceSystem === "MERCHANT_FRONTEND") &&
-        (e.authenticated === true || e.metadata?.authenticated === true) &&
-        (e.normalizedEventType === "INCONSISTENCY_DETECTED" ||
-          e.normalizedEventType === "CHECKOUT_TIMEOUT" ||
-          e.metadata?.clientEvent === "FRONTEND_TIMEOUT" ||
-          e.clientEvent === "FRONTEND_TIMEOUT")
-    ) ||
-    null;
+  // -------------------------------------------------------------------------
+  // Frontend Evidence Provenance & Trust Verification
+  //
+  // SECURITY INVARIANT:
+  // Caller-provided context (e.g. context.authenticatedFrontendEvent, context.frontendTimeout)
+  // is NEVER trusted as verified facts. An unauthenticated caller cannot pass a boolean
+  // { authenticated: true } or forged IDs to elevate client claims into provider facts.
+  //
+  // Trusted frontend evidence requires authoritative server-side lifecycle ledger provenance:
+  // 1. Must originate from an internal server system (sourceSystem === "RECONAI_SYSTEM" or "MERCHANT_ORDER")
+  //    (never CUSTOMER_CLAIM, never untrusted caller input).
+  // 2. Must possess authoritative server-side verification proof (serverVerifiedTelemetry === true).
+  // 3. Must be strictly bound to the authoritative tenant (tenantId === targetTenantId).
+  // 4. Must be strictly bound to the authoritative order (merchantOrderId === targetOrderId).
+  // 5. If gatewayPaymentId is present on the event, must match targetPaymentId.
+  // 6. Must not be corrupted (requires eventId and valid timeout/drop event type).
+  // -------------------------------------------------------------------------
+  const targetTenantId = gatewayPayment?.tenantId || merchantOrder?.tenantId || paymentCase?.tenantId || null;
+  const targetOrderId = merchantOrder?.merchantOrderId || gatewayPayment?.merchantOrderId || null;
+  const targetPaymentId = gatewayPayment?.gatewayPaymentId || null;
 
-  if (authenticatedFrontendEvent) {
-    facts.push({
-      dimension: "FRONTEND_CHECKOUT",
-      value: authenticatedFrontendEvent.eventType || authenticatedFrontendEvent.clientEvent || "CHECKOUT_TIMEOUT",
-      source: "AUTHENTICATED_FRONTEND_CLIENT",
-      authority: "SYSTEM_RECORD",
-      verifiedAt: authenticatedFrontendEvent.timestamp || new Date(),
-      evidenceRef: authenticatedFrontendEvent.eventId || "FRONTEND_EVENT_REF"
-    });
-    supportingEvidence.push({
-      sourceSystem: "MERCHANT_FRONTEND",
-      entityType: "FrontendClientEvent",
-      entityId: authenticatedFrontendEvent.sessionId || authenticatedFrontendEvent.eventId || null,
-      eventId: authenticatedFrontendEvent.eventId || null,
-      timestamp: authenticatedFrontendEvent.timestamp || new Date()
-    });
-  } else if (context.frontendTimeout === true || context.browserDropped === true) {
-    // Unauthenticated frontend timeout claim: record as unverified claim, NOT a fact
+  // Unconditionally record any caller-supplied frontend claims in claims array as UNVERIFIED
+  if (
+    context.authenticatedFrontendEvent ||
+    context.frontendTimeout === true ||
+    context.browserDropped === true ||
+    context.frontendEvent
+  ) {
     claims.push({
       claimType: "FRONTEND_TIMEOUT_CLAIM",
-      claimedValue: "Frontend timeout claimed via unauthenticated context flag",
+      claimedValue: "Caller-supplied frontend checkout timeout claim (unverified; no client telemetry verification endpoint exists)",
       source: "UNAUTHENTICATED_CONTEXT",
-      authority: "UNKNOWN_AUTHORITY",
+      authority: "CUSTOMER_CLAIM",
       receivedAt: new Date(),
-      evidenceRef: null,
+      evidenceRef: context.authenticatedFrontendEvent?.eventId || context.frontendEvent?.eventId || null,
       verified: false
+    });
+  }
+
+  // Look for authoritative server-verified telemetry in lifecycleEvents only
+  const trustedFrontendEvent = lifecycleEvents.find((e) => {
+    // 1. Authoritative source only (never customer claims, never untrusted caller systems)
+    if (e.sourceSystem !== "RECONAI_SYSTEM" && e.sourceSystem !== "MERCHANT_ORDER") {
+      return false;
+    }
+    // 2. Explicit server verification proof
+    if (e.serverVerifiedTelemetry !== true && e.metadata?.serverVerifiedTelemetry !== true) {
+      return false;
+    }
+    // 3. Strict tenant boundary match (cannot reuse another tenant's telemetry)
+    if (!targetTenantId || e.tenantId !== targetTenantId) {
+      return false;
+    }
+    // 4. Strict order boundary match (cannot reuse another order's session)
+    if (!targetOrderId || e.merchantOrderId !== targetOrderId) {
+      return false;
+    }
+    // 5. Strict payment binding if specified
+    if (e.gatewayPaymentId && targetPaymentId && e.gatewayPaymentId !== targetPaymentId) {
+      return false;
+    }
+    // 6. Valid event type and eventId
+    if (!e.eventId || typeof e.eventId !== "string" || e.eventId.trim().length === 0) {
+      return false;
+    }
+    const evtType = e.normalizedEventType || e.metadata?.eventType || e.clientEvent;
+    return evtType === "CHECKOUT_TIMEOUT" || evtType === "FRONTEND_DROPPED" || evtType === "FRONTEND_TIMEOUT";
+  }) || null;
+
+  if (trustedFrontendEvent) {
+    facts.push({
+      dimension: "FRONTEND_CHECKOUT",
+      value: "CHECKOUT_TIMEOUT",
+      source: trustedFrontendEvent.sourceSystem,
+      authority: "SYSTEM_RECORD",
+      verifiedAt: trustedFrontendEvent.occurredAt || trustedFrontendEvent.createdAt || new Date(),
+      evidenceRef: trustedFrontendEvent.eventId
+    });
+    supportingEvidence.push({
+      sourceSystem: trustedFrontendEvent.sourceSystem,
+      entityType: "PaymentLifecycleEvent",
+      entityId: trustedFrontendEvent.eventId,
+      eventId: trustedFrontendEvent.eventId,
+      timestamp: trustedFrontendEvent.occurredAt || new Date()
     });
   }
 
@@ -1108,8 +1143,8 @@ export function classifyPaymentScenario({
     merchantOrder.status === "CREATED" ||
     merchantOrder.status === "ORDER_PENDING";
 
-  // Case 1: Frontend Timeout After Payment Success (requires verified positive authenticated frontend evidence)
-  if (isCaptured && isOrderPending && authenticatedFrontendEvent) {
+  // Case 1: Frontend Timeout After Payment Success (requires verified server-side evidence)
+  if (isCaptured && isOrderPending && trustedFrontendEvent) {
     return {
       scenarioId: "CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS",
       category: "FRONTEND_DROPPED_AFTER_SUCCESS",
@@ -1119,7 +1154,7 @@ export function classifyPaymentScenario({
       facts,
       claims,
       contradictions: [],
-      missingEvidence: [], // Positively observed via authenticated frontend telemetry
+      missingEvidence: [], // Positively observed via authoritative server-verified telemetry
       safeHold: false,
       safeHoldCode: "NONE",
       safeHoldReason: null,
@@ -1129,7 +1164,7 @@ export function classifyPaymentScenario({
       authoritative: false,
       requiresPolicyEngine: true,
       supportingEvidence,
-      explanation: "Gateway payment confirmed CAPTURED and authenticated client checkout session confirms frontend timeout/drop. Local merchant order remains PENDING.",
+      explanation: "Gateway payment confirmed CAPTURED and authoritative server-verified telemetry confirms frontend timeout/drop. Local merchant order remains PENDING.",
       redactedMetadata: sanitizeMetadata(context)
     };
   }
