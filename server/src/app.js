@@ -52,6 +52,23 @@ if (env.NODE_ENV !== "test") {
 // Rate limiting
 app.use("/api", apiLimiter);
 
+// Public root status probe for browser visitors on port 5000
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    service: "ReconAI 2.0 API Server",
+    status: "healthy",
+    frontendUrl: env.CLIENT_URL || "http://localhost:5173",
+    endpoints: {
+      health: "/api/health",
+      auth: "/api/auth/login",
+      paymentCases: "/api/payment-cases",
+      reconciliation: "/api/reconciliation/runs"
+    },
+    message: "ReconAI API backend is running. Access the application console at http://localhost:5173"
+  });
+});
+
 // Public API Routes (Explicitly Justified)
 // 1. GET /api/health: Public liveness/readiness probe for deployment orchestrators
 app.use("/api", healthRoutes);

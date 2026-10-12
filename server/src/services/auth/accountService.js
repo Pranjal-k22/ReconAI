@@ -255,3 +255,42 @@ export async function invalidateUserSessions(userId) {
 export function clearInMemoryAccounts() {
   inMemoryAccountStore.clear();
 }
+
+/**
+ * Provisions default demo accounts in the persistent database if not already present.
+ */
+export async function initDefaultAccounts() {
+  const defaultAccounts = [
+    {
+      userId: "usr_admin_01",
+      email: "admin@reconai.com",
+      password: "AdminPassword123!",
+      role: "ADMIN",
+      tenantId: "tenant_default",
+      scopes: ["GLOBAL_AUDIT", "FULL_ACCESS"]
+    },
+    {
+      userId: "usr_shop_01",
+      email: "shop@reconai.com",
+      password: "ShopPassword123!",
+      role: "SHOP",
+      tenantId: "tenant_default"
+    },
+    {
+      userId: "usr_auditor_01",
+      email: "auditor@reconai.com",
+      password: "AuditorPassword123!",
+      role: "AUDITOR",
+      tenantId: "tenant_default",
+      scopes: ["GLOBAL_AUDIT"]
+    }
+  ];
+
+  for (const acct of defaultAccounts) {
+    try {
+      await provisionUserAccount(acct);
+    } catch {
+      // Ignore if exists or error
+    }
+  }
+}

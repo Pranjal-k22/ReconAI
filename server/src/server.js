@@ -3,6 +3,7 @@ import { validateEnv } from "./config/env.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import { logger } from "./config/logger.js";
 import { startMonitoringWorker, stopMonitoringWorker } from "./services/monitoring/monitoringWorker.js";
+import { initDefaultAccounts } from "./services/auth/accountService.js";
 import app from "./app.js";
 
 let server = null;
@@ -23,6 +24,11 @@ export const startServer = async ({ customFetch = null } = {}) => {
         process.exit(1);
       }
       await connectDatabase(env.MONGODB_URI);
+
+      // Provision default demo accounts in development or demo mode
+      if (env.NODE_ENV !== "production" || env.DEMO_MODE) {
+        await initDefaultAccounts();
+      }
     }
 
     // Step 3: Start In-Process Payment Monitoring Worker if enabled

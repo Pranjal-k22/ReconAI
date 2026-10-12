@@ -3,9 +3,12 @@ import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { MobileSidebar } from "./MobileSidebar";
 import { Topbar } from "./Topbar";
+import { LoginModal } from "../common/LoginModal";
+import { useAuth } from "../../context/AuthContext";
 
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isLoginModalOpen, closeLoginModal } = useAuth();
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans antialiased">
@@ -26,6 +29,9 @@ export function AppLayout() {
           </div>
         </main>
       </div>
+
+      {/* Global Login Modal */}
+      <LoginModal isOpen={isLoginModalOpen} onClose={closeLoginModal} />
     </div>
   );
 }
