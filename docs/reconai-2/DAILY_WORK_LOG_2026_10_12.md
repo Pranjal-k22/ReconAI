@@ -2,9 +2,9 @@
 
 **Date:** 12/10/2026 (12 October 2026)  
 **Target Release:** ReconAI 2.0 — Final Phase 3 Authentication, RBAC, Tenant Isolation & Persistent Machine Authorization  
-**Canonical Branch:** `main`  
-**Current HEAD SHA:** `e7ae138a6893774b5d5ddd3c52e1f23da51d4f1b`  
-**Remote origin/main SHA:** `e7ae138a6893774b5d5ddd3c52e1f23da51d4f1b`  
+**Canonical Branch:** `main`
+**Current HEAD SHA:** `64349d45a427f286a5756ef0deb2aefe1334b781`
+**Remote origin/main SHA:** `64349d45a427f286a5756ef0deb2aefe1334b781`
 **Status:** `PASS_PENDING_REVIEW` (All verification gates passing, clean working tree, 0 unmerged branches)
 
 ---
@@ -330,6 +330,10 @@ ReconAI/
    Adjusted vitest suite timeout in `exceptionInvestigator.test.js` to ensure deterministic execution under heavy scrypt CPU load.
 5. **`e7ae138`**: `fix(reconai-2): persist machine authorization state`  
    Introduced durable `ServicePrincipal` Mongoose model with salted scrypt hashing, restart-safe idempotent bootstrapping, versioned credential rotation, multi-instance persistence verification, and 12 dedicated persistence tests.
+6. **`64349d4`**: `docs(reconai-2): document daily engineering progress and architecture for 12/10/2026`
+   Consolidated Phase 3 architectural progress, security invariants, and daily work log.
+7. **`test(reconai-2): add persistent service registry integration coverage`**:
+   Added repeatable real MongoDB persistence integration test suite (`servicePersistence.integration.test.js`) verifying 10 database-backed scenarios across reconnection, application reinitialization, and genuine separate OS process reads.
 
 ---
 

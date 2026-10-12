@@ -177,7 +177,8 @@ SERVICE_TOKEN_AUDIENCE=reconai-service
 
 ## 8. Verification & Test Summary
 
-- **Backend Test Suite:** 51 test files passed (51/51), 304 tests passed (304/304).
+- **Backend Unit Test Suite:** 51 test files passed (51/51), 304 tests passed (304/304) via `npm test`.
+- **Database Persistence Integration Suite:** 1 test file passed (1/1), 10 tests passed (10/10) via `npm run test:integration`.
 - **Security Hardening Suite:** 31/31 tests passed covering production secret validation, salted scrypt hashing, account provenance, fixed service credential binding, durable TTL revocation, immediate authorization-lifetime validation, 503 production fail-closed behavior, and durable machine-service reinitialization persistence.
 - **Auditor Tenant Isolation Suite:** 6/6 integration tests passed verifying scoped auditor restrictions, cross-tenant denial, mutation prohibition (403), global audit grant verification, and audit trail logging.
 - **ServicePrincipal Schema Suite:** 4/4 tests passed validating schema invariants, approved role enums, required credential fields, and timing-safe scrypt verification.
@@ -185,3 +186,53 @@ SERVICE_TOKEN_AUDIENCE=reconai-service
 - **Frontend Production Build:** `vite build` completed successfully with 0 errors.
 - **Git Hygiene:** `git diff --check` executed with 0 errors.
 - **Financial Safety:** Provider write execution endpoints remain completely absent. Phase 4 webhook and multi-agent workers have not started.
+
+---
+
+## 9. Real MongoDB Machine-Service Persistence Integration Testing
+
+### 9.1 Exact Integration Test Command
+```bash
+# Run dedicated real-database integration suite
+npm run test:integration
+
+# Or direct Vitest invocation
+npx vitest run tests/integration
+```
+
+### 9.2 Environment Configuration (Placeholders)
+Configured via `MONGODB_TEST_URI`:
+```env
+# Optional override for integration tests (defaults to isolated local instance):
+MONGODB_TEST_URI=mongodb://<host>:<port>/reconai_test_<suffix>
+```
+Default URI: `mongodb://127.0.0.1:27017/reconai_test_service_persistence`.
+
+### 9.3 Database Isolation & Cleanup Safeguards
+1. **Name-Based Isolation Guard:** The test runner verifies that the target database name explicitly contains `test`. If omitted, execution is halted immediately.
+2. **Production Block Guard:** If the database name contains `prod` or `production`, or matches `MONGODB_URI` (the primary application database), execution is refused.
+3. **Secret Redaction:** Connection strings in logs and reports are sanitized via `sanitizeMongoUri` (e.g. `//***:***@`) to prevent credential leakage.
+4. **Scoped Cleanup:** Each test scenario generates unique service IDs prefixed with `svc_integ_*`. The `afterAll` hook selectively removes only records created during the test run (`ServicePrincipal.deleteMany({ serviceId: { $in: [...] } })`), preserving default principals and existing collections.
+5. **Fail / Skip Guard:** If MongoDB is offline, the suite skips or fails with an explicit reason—never silently substituting in-memory Maps or mocked Mongoose models.
+
+### 9.4 Required Database Scenarios Tested
+1. **Creation & Auth:** Creates a `ServicePrincipal` in MongoDB, confirms persistence of scrypt hash/salt, and verifies timing-safe authentication.
+2. **Disablement Durability:** Disables the principal, disconnects MongoDB (`readyState === 0`), purges in-memory caches, reconnects, reinitializes registry, and confirms `isActive === false`.
+3. **Credential Rotation Durability:** Rotates credential, disconnects MongoDB, reconnects, confirms old secret is rejected, and verifies new secret authenticates with incremented `credentialVersion`.
+4. **Scope Removal Durability:** Removes `PROPOSE_ACTION` scope, disconnects MongoDB, reconnects, and confirms stripped scope is permanently removed.
+5. **Tenant Reassignment Durability:** Updates merchant tenant binding, disconnects MongoDB, reconnects, and confirms previous binding cannot be accessed.
+6. **Default Bootstrap Preservation:** Confirms that `initDefaultServices()` startup initialization preserves existing database records without re-enabling disabled services or reverting credentials.
+7. **Genuine Multi-Process Verification:** Spawns an independent Node.js OS child process (`execFileSync`) with clean memory space that connects to `MONGODB_TEST_URI` and verifies authoritative state matches.
+8. **Production Fail-Closed Invariant:** Confirms that when `NODE_ENV === "production"` and the database is offline, authentication requests immediately fail closed (`503 Service Unavailable`).
+9. **Zero Plaintext Storage:** Queries raw MongoDB documents with `.lean()` and verifies that plaintext secrets do not appear anywhere in stored records.
+10. **Targeted Cleanup:** Selectively removes all created test records and leaves default principals intact.
+
+### 9.5 Test Classification Matrix
+| Test Suite | Datastore Used | Purpose |
+| :--- | :--- | :--- |
+| `tests/models/servicePrincipal.test.js` | Mongoose Document Schema (Offline) | Model schema validation, enum enforcement, and scrypt hash calculation. |
+| `tests/auth/securityHardening.test.js` | In-Memory `Map` Datastore | Fast unit testing for CI/CD development runs without database dependencies. |
+| `tests/integration/servicePersistence.integration.test.js` | Real MongoDB Datastore (`MONGODB_TEST_URI`) | Verifiable database persistence, reconnection survival, and multi-process reads. |
+
+### 9.6 Known Limitations
+- The integration suite requires an accessible, isolated MongoDB database instance. In offline CI environments lacking MongoDB services, the integration suite skips clearly without reporting false-positive durability.

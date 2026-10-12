@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "test": "vitest run",
-    "test:watch": "vitest",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run tests/integration",
     "demo:generate": "node scripts/generateDemoData.js",
     "demo:seed": "node scripts/seedDemoData.js",
     "demo:reset": "node scripts/resetDemo.js"
