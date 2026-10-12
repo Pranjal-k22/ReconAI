@@ -63,7 +63,21 @@ const envSchema = z
     MONITORING_LEASE_DURATION_MS: z.coerce.number().int().positive().default(30000),
     MONITORING_MAX_CONCURRENT_READS: z.coerce.number().int().positive().default(5),
     MONITORING_MAX_ATTEMPTS: z.coerce.number().int().positive().default(4),
-    MONITORING_DEADLINE_MINUTES: z.coerce.number().int().positive().default(60)
+    MONITORING_DEADLINE_MINUTES: z.coerce.number().int().positive().default(60),
+    ORCHESTRATOR_WORKER_ENABLED: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => {
+        if (typeof val === "boolean") return val;
+        if (typeof val === "string") {
+          return val.toLowerCase() === "true" || val === "1";
+        }
+        return false;
+      })
+      .default(false),
+    ORCHESTRATOR_INTERVAL_MS: z.coerce.number().int().positive().default(30000),
+    ORCHESTRATOR_LEASE_DURATION_MS: z.coerce.number().int().positive().default(30000),
+    ORCHESTRATOR_MAX_CONCURRENT_TASKS: z.coerce.number().int().positive().default(5),
+    ORCHESTRATOR_MAX_ATTEMPTS: z.coerce.number().int().positive().default(4)
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "test" && (!data.MONGODB_URI || data.MONGODB_URI.trim() === "")) {

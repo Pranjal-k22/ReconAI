@@ -3,14 +3,17 @@ import { validateEnv } from "./config/env.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import { logger } from "./config/logger.js";
 import { startMonitoringWorker, stopMonitoringWorker } from "./services/monitoring/monitoringWorker.js";
+import { startOrchestrationWorker, stopOrchestrationWorker } from "./services/orchestration/orchestrationWorker.js";
 import { initDefaultAccounts } from "./services/auth/accountService.js";
 import app from "./app.js";
 
 let server = null;
 let monitoringWorker = null;
+let orchestrationWorker = null;
 let isShuttingDown = false;
 
 export const getMonitoringWorker = () => monitoringWorker;
+export const getOrchestrationWorker = () => orchestrationWorker;
 
 export const startServer = async ({ customFetch = null } = {}) => {
   try {
@@ -41,13 +44,23 @@ export const startServer = async ({ customFetch = null } = {}) => {
       });
     }
 
-    // Step 4: Start HTTP Server only after database connection succeeds
+    // Step 4: Start In-Process Autonomous Orchestration Worker if explicitly enabled
+    if (env.ORCHESTRATOR_WORKER_ENABLED === true) {
+      orchestrationWorker = startOrchestrationWorker({
+        intervalMs: env.ORCHESTRATOR_INTERVAL_MS || 30000,
+        maxTasks: env.ORCHESTRATOR_MAX_CONCURRENT_TASKS || 5,
+        leaseDurationMs: env.ORCHESTRATOR_LEASE_DURATION_MS || 30000,
+        customFetch
+      });
+    }
+
+    // Step 5: Start HTTP Server only after database connection succeeds
     const PORT = env.PORT || 5000;
     server = app.listen(PORT, () => {
       logger.info(`🚀 ReconAI API Server running on port ${PORT} [${env.NODE_ENV}]`);
     });
 
-    return { server, monitoringWorker };
+    return { server, monitoringWorker, orchestrationWorker };
   } catch (error) {
     logger.error(`❌ Server startup failed: ${error.message}`);
     process.exit(1);
@@ -60,10 +73,15 @@ export const handleGracefulShutdown = async (signal, { exitProcess = true } = {}
 
   logger.info(`Received ${signal}. Initiating graceful shutdown...`);
 
-  // Stop monitoring sweeps immediately
+  // Stop workers immediately
   if (monitoringWorker) {
     stopMonitoringWorker(monitoringWorker);
     monitoringWorker = null;
+  }
+
+  if (orchestrationWorker) {
+    stopOrchestrationWorker(orchestrationWorker);
+    orchestrationWorker = null;
   }
 
   if (server) {

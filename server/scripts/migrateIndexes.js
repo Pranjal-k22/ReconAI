@@ -140,6 +140,22 @@ export async function migrateProviderOperationIndexes(db) {
   };
 }
 
+/**
+ * Ensures indexes for OrchestrationTask model are created idempotently.
+ */
+export async function migrateOrchestrationTaskIndexes(db) {
+  const collection = db.collection("orchestrationtasks");
+  await collection.createIndex({ tenantId: 1, idempotencyKey: 1 }, { unique: true, background: true });
+  await collection.createIndex({ state: 1, nextRunAt: 1, lockedUntil: 1 }, { background: true });
+  await collection.createIndex({ tenantId: 1, caseId: 1 }, { background: true });
+  await collection.createIndex({ tenantId: 1, gatewayPaymentId: 1 }, { background: true });
+
+  return {
+    status: "SYNCHRONIZED",
+    message: "OrchestrationTask indexes successfully synchronized."
+  };
+}
+
 // Standalone execution entrypoint
 if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
   const sanitizeUri = (uri) => {
@@ -169,6 +185,9 @@ if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
 
       const providerResult = await migrateProviderOperationIndexes(mongoose.connection.db);
       logger.info(`✅ Provider index migration finished: ${providerResult.status} - ${providerResult.message}`);
+
+      const orchResult = await migrateOrchestrationTaskIndexes(mongoose.connection.db);
+      logger.info(`✅ OrchestrationTask index migration finished: ${orchResult.status} - ${orchResult.message}`);
 
       await mongoose.disconnect();
       process.exit(0);

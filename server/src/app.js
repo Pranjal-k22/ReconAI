@@ -20,6 +20,7 @@ import razorpayRoutes from "./routes/razorpayRoutes.js";
 import integrationRoutes from "./routes/integrationRoutes.js";
 import financeRoutes from "./routes/financeRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
+import orchestrationRoutes from "./routes/orchestrationRoutes.js";
 
 const env = getEnv();
 const app = express();
@@ -124,7 +125,7 @@ app.use(
   requireTenantScope,
   financeRoutes
 );
-
+app.use("/api/orchestration", orchestrationRoutes);
 
 // 404 Handler for unmatched routes
 app.use(notFoundHandler);

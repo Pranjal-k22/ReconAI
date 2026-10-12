@@ -25,6 +25,8 @@ import {
 import { authenticate, requireRoles, requireTenantScope } from "../middleware/authMiddleware.js";
 import { ROLES } from "../services/auth/tokenService.js";
 import { AppError } from "../utils/AppError.js";
+import { OrchestrationTask } from "../models/OrchestrationTask.js";
+import { queueOrchestrationTask } from "../services/orchestration/orchestrationService.js";
 
 const router = express.Router();
 
@@ -429,6 +431,68 @@ router.post(
       });
 
       res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/payment-cases/:caseId/orchestration/tasks
+ * Lists historical orchestration tasks for this case scoped to tenant.
+ */
+router.get(
+  "/:caseId/orchestration/tasks",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER, ROLES.SHOP, ROLES.AUDITOR),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER ||
+        (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.query?.tenantId : req.user.tenantId;
+
+      const tasks = await OrchestrationTask.find({ caseId, tenantId: scopedTenantId })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      res.status(200).json({ success: true, data: tasks });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/payment-cases/:caseId/orchestration/enqueue
+ * Manually enqueues an orchestration task for this case.
+ */
+router.post(
+  "/:caseId/orchestration/enqueue",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const { idempotencyKey, triggerSource = "API", metadata } = req.body;
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER;
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
+
+      if (!idempotencyKey) {
+        throw AppError.badRequest("idempotencyKey is required to enqueue orchestration task");
+      }
+
+      const task = await queueOrchestrationTask({
+        tenantId: scopedTenantId,
+        caseId,
+        idempotencyKey,
+        triggerSource,
+        metadata
+      });
+
+      res.status(201).json({ success: true, data: task });
     } catch (err) {
       next(err);
     }

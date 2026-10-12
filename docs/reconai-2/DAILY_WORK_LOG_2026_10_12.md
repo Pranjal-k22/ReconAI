@@ -637,4 +637,43 @@ ReconAI/
   - No live writes enabled or executed.
   - Refund limits fail closed.
   - Case 22 remains in `SAFE_HOLD`.
-  - Phase 10 has not started.
+  - Phase 9 final correction accepted.
+
+### Entry 11: Phase 10 — Autonomous Worker, Durable Orchestration & Safe Resolution Lifecycle
+
+- **Architecture Decisions & Boundaries**:
+  - Implemented `OrchestrationTask` domain model (`server/src/models/OrchestrationTask.js`) with 10 discrete states:
+    `QUEUED`, `CLAIMED`, `EVIDENCE_COLLECTION`, `POLICY_EVALUATION`, `WAITING_FOR_RECHECK`, `SAFE_HOLD`, `ESCALATION_REQUIRED`, `COMPLETED`, `FAILED_RETRYABLE`, `FAILED_TERMINAL`.
+  - Enforced strict non-executability invariant:
+    - Autonomous worker coordinates evidence collection, read-only status checks, and policy evaluation.
+    - Permanently forbidden from executing financial mutations (refunds, captures, order cancellations/reopenings).
+    - If policy allows refund, worker records `ESCALATION_REQUIRED` for human review (`MUTATION_REQUIRES_HUMAN_APPROVAL`).
+  - Case 22 (late capture after cancelled order) remains unconditionally held in `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with zero mutations.
+  - Missing approved refund limits fail closed before any action (`R_REFUND_LIMITS_MISSING_FAIL_CLOSED`).
+  - Atomic distributed claiming via MongoDB `findOneAndUpdate` with lease lock (`lockedUntil`, `lockedBy`), recovering stale leases when a worker crashes.
+  - Centralized configuration gate (`ORCHESTRATOR_WORKER_ENABLED=false` by default, fails closed).
+  - In-memory and API-accessible operator kill switch (`POST /api/orchestration/kill-switch` restricted to `ADMIN`).
+  - Redaction of raw tokens, secrets, passwords, and sensitive PII from task history and logs.
+  - Added additive index migration in `server/scripts/migrateIndexes.js` (`migrateOrchestrationTaskIndexes`).
+- **Regression Gates & Results**:
+  1. Orchestration state machine tests (`orchestrationStateMachine.test.js`): 8 passed (8)
+  2. Orchestrator gate, kill switch & service tests (`orchestratorGateAndService.test.js`): 13 passed (13)
+  3. Orchestration routes & kill switch tests (`orchestrationRoutes.test.js`): 14 passed (14)
+  4. Real MongoDB persistence & concurrency tests (`orchestrationPersistence.integration.test.js`): 5 passed (5)
+  5. Provider adapter and outcome-verification tests: 43 passed (43)
+  6. Policy evaluator and refund-limit tests: 68 passed (68)
+  7. Case 22 and Phase 6 classification tests: 41 passed (41)
+  8. Route authorization and tenant isolation tests: 64 passed (64)
+  9. Monitoring and worker runtime tests: 34 passed (34)
+  10. Webhook signature and ingestion tests: 25 passed (25)
+  11. Full real-MongoDB integration suite (`npm run test:integration`): 69 passed across 9 suites (69)
+  12. Full backend test suite (`npx vitest run`): 595 passed across 68 files (595)
+  13. Frontend production build (`npm run build`): 2,400 modules transformed, 0 errors
+  14. Whitespace & format check (`git diff --check`): Clean working copy, 0 issues
+  15. 120-scenario reconciliation benchmark: 120/120 passing (100.00% match rate)
+- **Confirmations & Stopping Conditions**:
+  - No live provider writes enabled or executed.
+  - Autonomous worker never dispatches refunds or mutates financial records.
+  - Refund limits remain fail-closed.
+  - Case 22 remains unconditionally in safe hold.
+  - Stopped after Phase 10. No further phases started.

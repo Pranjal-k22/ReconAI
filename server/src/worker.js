@@ -3,11 +3,14 @@ import { validateEnv } from "./config/env.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import { logger } from "./config/logger.js";
 import { startMonitoringWorker, stopMonitoringWorker } from "./services/monitoring/monitoringWorker.js";
+import { startOrchestrationWorker, stopOrchestrationWorker } from "./services/orchestration/orchestrationWorker.js";
 
 let workerInstance = null;
+let orchestrationWorkerInstance = null;
 let isShuttingDown = false;
 
 export const getWorkerInstance = () => workerInstance;
+export const getOrchestrationWorkerInstance = () => orchestrationWorkerInstance;
 
 export const startStandaloneWorker = async ({ customFetch = null } = {}) => {
   try {
@@ -28,8 +31,18 @@ export const startStandaloneWorker = async ({ customFetch = null } = {}) => {
       customFetch
     });
 
+    if (env.ORCHESTRATOR_WORKER_ENABLED === true) {
+      orchestrationWorkerInstance = startOrchestrationWorker({
+        intervalMs: env.ORCHESTRATOR_INTERVAL_MS || 30000,
+        maxTasks: env.ORCHESTRATOR_MAX_CONCURRENT_TASKS || 5,
+        leaseDurationMs: env.ORCHESTRATOR_LEASE_DURATION_MS || 30000,
+        workerId: `orch_worker_proc_${process.pid}`,
+        customFetch
+      });
+    }
+
     logger.info(`🚀 ReconAI Payment Monitoring Worker process running [PID: ${process.pid}]`);
-    return workerInstance;
+    return { workerInstance, orchestrationWorkerInstance };
   } catch (err) {
     logger.error(`❌ Monitoring Worker process startup failed: ${err.message}`);
     process.exit(1);
@@ -45,6 +58,11 @@ export const handleWorkerShutdown = async (signal, { exitProcess = true } = {}) 
   if (workerInstance) {
     stopMonitoringWorker(workerInstance);
     workerInstance = null;
+  }
+
+  if (orchestrationWorkerInstance) {
+    stopOrchestrationWorker(orchestrationWorkerInstance);
+    orchestrationWorkerInstance = null;
   }
 
   await disconnectDatabase();
