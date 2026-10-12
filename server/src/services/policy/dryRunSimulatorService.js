@@ -5,6 +5,7 @@ import { GatewayPayment } from "../../models/GatewayPayment.js";
 import { MerchantOrder } from "../../models/MerchantOrder.js";
 import { EvidenceRecord } from "../../models/EvidenceRecord.js";
 import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
+import { PaymentAction } from "../../models/PaymentAction.js";
 import { recordProposedAction } from "../ledger/paymentActionService.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { evaluateResolutionPolicy, DEFAULT_POLICY_VERSION } from "./resolutionPolicyEvaluator.js";
@@ -226,15 +227,29 @@ export async function evaluateAndSimulateResolution({
   const effectiveCaseDoc = caseDoc || providedEvidence.paymentCase;
 
   if (!providedEvidence) {
-    const [gatewayPayment, merchantOrder, evidenceRecord] = await Promise.all([
+    const [gatewayPayment, merchantOrder, evidenceRecord, inFlightActions, duplicatePayments] = await Promise.all([
       effectiveCaseDoc.gatewayPaymentId
         ? GatewayPayment.findOne({ gatewayPaymentId: effectiveCaseDoc.gatewayPaymentId, tenantId: tenantId.trim() }).lean()
         : null,
       effectiveCaseDoc.merchantOrderId
         ? MerchantOrder.findOne({ merchantOrderId: effectiveCaseDoc.merchantOrderId, tenantId: tenantId.trim() }).lean()
         : null,
-      EvidenceRecord.findOne({ tenantId: tenantId.trim(), caseId: caseId.trim() }).sort({ evaluatedAt: -1 }).lean()
+      EvidenceRecord.findOne({ tenantId: tenantId.trim(), caseId: caseId.trim() }).sort({ evaluatedAt: -1 }).lean(),
+      PaymentAction.find({
+        tenantId: tenantId.trim(),
+        caseId: caseId.trim(),
+        actionType: { $in: ["REQUEST_REFUND", "SIMULATE_REFUND_CUSTOMER"] },
+        actionStatus: { $in: ["SIMULATED", "PROPOSED"] }
+      }).lean(),
+      effectiveCaseDoc.merchantOrderId
+        ? GatewayPayment.find({
+            tenantId: tenantId.trim(),
+            merchantOrderId: effectiveCaseDoc.merchantOrderId
+          }).lean()
+        : []
     ]);
+
+    const inFlightCommitmentsPaise = (inFlightActions || []).reduce((sum, a) => sum + (a.amountPaise || 0), 0);
 
     authoritativeEvidence = {
       paymentCase: effectiveCaseDoc,
@@ -243,7 +258,9 @@ export async function evaluateAndSimulateResolution({
       evidenceRecord,
       refundRecords: [],
       settlementRecord: null,
-      disputeRecord: null
+      disputeRecord: null,
+      duplicatePayments: duplicatePayments || [],
+      inFlightCommitmentsPaise
     };
   }
 

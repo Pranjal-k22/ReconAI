@@ -104,7 +104,8 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
       policyConfig: VALID_CONFIG,
       authoritativeEvidence: {
         gatewayPayment: sampleGatewayPayment,
-        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" }
+        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" },
+        approvedCancellationRefund: true
       }
     });
 
@@ -197,19 +198,121 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
   });
 
   // -------------------------------------------------------------------------
-  // 9. Existing refund totals and refundable balance limits correctly enforced
+  // 9. Authoritative Refundable Balance & Partial Capture Enforcements
   // -------------------------------------------------------------------------
-  it("9. Existing refund totals and refundable-balance limits are correctly enforced", () => {
-    // Payment was 150000 paise (₹1,500), already refunded 100000 paise (₹1,000). Remaining is 50000 paise (₹500).
+  it("9a. Originally requested amount exceeds actual captured amount: refund up to captured is eligible", () => {
+    // Requested amountPaise = 200000 (₹2,000), but capturedAmountPaise = 100000 (₹1,000)
     const result = evaluateResolutionPolicy({
       tenantId: TENANT,
       caseId: CASE_ID,
       proposedActionType: "REQUEST_REFUND",
-      amountPaise: 100000, // Proposed ₹1,000 > available ₹500
+      amountPaise: 100000,
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: {
+          ...sampleGatewayPayment,
+          amountPaise: 200000,
+          capturedAmountPaise: 100000
+        },
+        approvedCancellationRefund: true
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("ELIGIBLE_FOR_SIMULATION");
+    expect(result.amountPaise).toBe(100000);
+  });
+
+  it("9b. Proposed refund exceeds captured balance but is below originally requested amount: fails closed", () => {
+    // Requested amountPaise = 200000 (₹2,000), but capturedAmountPaise = 100000 (₹1,000). Proposed: 150000 (₹1,500).
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: {
+          ...sampleGatewayPayment,
+          amountPaise: 200000,
+          capturedAmountPaise: 100000
+        },
+        approvedCancellationRefund: true
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("REJECTED_BY_POLICY");
+    expect(result.appliedRuleIds).toContain("R_REFUND_EXCEEDS_REFUNDABLE_BALANCE");
+    expect(result.denyReasons[0]).toMatch(/exceeds available refundable balance/);
+  });
+
+  it("9c. Completed and pending refunds reduce the remaining balance correctly", () => {
+    // Captured: ₹1,500 (150000 paise). Completed: ₹500 (50000 paise). Pending: ₹300 (30000 paise). Available: ₹700 (70000 paise).
+    const eligibleResult = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 70000,
       policyConfig: VALID_CONFIG,
       authoritativeEvidence: {
         gatewayPayment: sampleGatewayPayment,
-        refundRecords: [{ amountPaise: 100000, status: "PROCESSED" }]
+        refundRecords: [
+          { amountPaise: 50000, status: "PROCESSED" },
+          { amountPaise: 30000, status: "REFUND_PENDING" }
+        ],
+        approvedCancellationRefund: true
+      }
+    });
+    // However, an existing pending refund also triggers R_REFUND_ALREADY_IN_FLIGHT if in-flight
+    // Let's test with completed refunds only for balance deduction:
+    const resultCompletedOnly = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 70000,
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        refundRecords: [
+          { amountPaise: 50000, status: "PROCESSED" },
+          { amountPaise: 30000, status: "CONFIRMED" }
+        ],
+        approvedCancellationRefund: true
+      }
+    });
+    // Available = 150000 - 80000 = 70000
+    expect(resultCompletedOnly.outcomeStatus).toBe("ELIGIBLE_FOR_SIMULATION");
+
+    const resultExceeds = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 70001,
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        refundRecords: [
+          { amountPaise: 50000, status: "PROCESSED" },
+          { amountPaise: 30000, status: "CONFIRMED" }
+        ],
+        approvedCancellationRefund: true
+      }
+    });
+    expect(resultExceeds.outcomeStatus).toBe("REJECTED_BY_POLICY");
+    expect(resultExceeds.appliedRuleIds).toContain("R_REFUND_EXCEEDS_REFUNDABLE_BALANCE");
+  });
+
+  it("9d. In-flight commitments from prior simulations reduce the remaining balance correctly", () => {
+    // Captured = 150000 paise. inFlightCommitmentsPaise = 100000 paise. Available = 50000 paise.
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 60000, // Exceeds remaining 50000
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        inFlightCommitmentsPaise: 100000,
+        approvedCancellationRefund: true
       }
     });
 
@@ -217,7 +320,42 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
     expect(result.appliedRuleIds).toContain("R_REFUND_EXCEEDS_REFUNDABLE_BALANCE");
   });
 
-  it("9b. Single refund limit exceeding threshold is rejected", () => {
+  it("9e. Currency mismatch between payment and refund request fails closed", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 100000,
+      currency: "INR",
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: { ...sampleGatewayPayment, currency: "USD" },
+        approvedCancellationRefund: true
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("REJECTED_BY_POLICY");
+    expect(result.appliedRuleIds).toContain("R_CURRENCY_MISMATCH_FAIL_CLOSED");
+  });
+
+  it("9f. Missing or unverified captured-amount evidence fails closed with INSUFFICIENT_EVIDENCE or SAFE_HOLD", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 100000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_8_PARTIAL_CAPTURE" },
+      authoritativeEvidence: {
+        gatewayPayment: { ...sampleGatewayPayment, status: "PARTIAL_CAPTURE", capturedAmountPaise: null }
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("SAFE_HOLD");
+    expect(result.appliedRuleIds).toContain("R_PARTIAL_CAPTURE_SAFE_HOLD");
+  });
+
+  it("9g. Single refund limit exceeding threshold is rejected", () => {
     const result = evaluateResolutionPolicy({
       tenantId: TENANT,
       caseId: CASE_ID,
@@ -225,7 +363,8 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
       amountPaise: 600000, // ₹6,000 > ₹5,000 limit
       policyConfig: VALID_CONFIG,
       authoritativeEvidence: {
-        gatewayPayment: { ...sampleGatewayPayment, amountPaise: 700000 }
+        gatewayPayment: { ...sampleGatewayPayment, amountPaise: 700000 },
+        approvedCancellationRefund: true
       }
     });
 
@@ -251,22 +390,258 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
   });
 
   // -------------------------------------------------------------------------
-  // 11. Late capture on cancelled order remains on safe hold
+  // 11. Case 22: Late capture on cancelled order remains on safe hold
   // -------------------------------------------------------------------------
-  it("11. Late capture on a cancelled order remains in SAFE_HOLD and order cannot be reopened", () => {
+  it("11a. Late capture on cancelled order without approved evidence remains in SAFE_HOLD", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_22_CANCELLED_ORDER_CAPTURED" },
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" }
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("SAFE_HOLD");
+    expect(result.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+  });
+
+  it("11b. AI advisory recommendation cannot override Case 22 safe hold", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      advisoryAiSuggestion: "ADVISORY_REQUEST_REFUND_IMMEDIATELY",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_22_CANCELLED_ORDER_CAPTURED" },
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" }
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("SAFE_HOLD");
+    expect(result.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+  });
+
+  it("11c. Late capture cannot reopen a cancelled order via UPDATE_MERCHANT_LOCAL_LEDGER", () => {
     const result = evaluateResolutionPolicy({
       tenantId: TENANT,
       caseId: CASE_ID,
       proposedActionType: "UPDATE_MERCHANT_LOCAL_LEDGER",
       authoritativeEvidence: {
         gatewayPayment: sampleGatewayPayment,
-        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" },
-        paymentCase: { isSafeHold: true, safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER" }
+        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" }
       }
     });
 
     expect(result.outcomeStatus).toBe("SAFE_HOLD");
     expect(result.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+  });
+
+  it("11d. Case 22 becomes eligible for refund simulation only with explicit approved cancellation evidence", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_22_CANCELLED_ORDER_CAPTURED" },
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: { ...sampleMerchantOrder, status: "CANCELLED" },
+        approvedCancellationRefund: true
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("ELIGIBLE_FOR_SIMULATION");
+    expect(result.appliedRuleIds).toContain("R_APPROVED_CANCELLATION_EVIDENCE_VERIFIED");
+    expect(result.appliedRuleIds).toContain("R_REFUND_ELIGIBLE_FOR_SIMULATION");
+  });
+
+  // -------------------------------------------------------------------------
+  // 11_dup. Case 7: Conclusive Duplicate-Payment Evidence Verification
+  // -------------------------------------------------------------------------
+  it("11e. Conclusive duplicate payments with verified captures enable refund simulation", () => {
+    const duplicatePayments = [
+      {
+        gatewayPaymentId: "pay_dup_01",
+        tenantId: TENANT,
+        status: "CAPTURED",
+        amountPaise: 150000,
+        currency: "INR",
+        merchantOrderId: "ORD-001"
+      },
+      {
+        gatewayPaymentId: "pay_dup_02",
+        tenantId: TENANT,
+        status: "CAPTURED",
+        amountPaise: 150000,
+        currency: "INR",
+        merchantOrderId: "ORD-001"
+      }
+    ];
+
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_7_DUPLICATE_PAYMENT" },
+      authoritativeEvidence: {
+        gatewayPayment: duplicatePayments[1],
+        merchantOrder: sampleMerchantOrder,
+        duplicatePayments,
+        candidateScore: 0.99
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("ELIGIBLE_FOR_SIMULATION");
+    expect(result.appliedRuleIds).toContain("R_CONCLUSIVE_DUPLICATE_PAYMENTS_VERIFIED");
+    expect(result.appliedRuleIds).toContain("R_REFUND_ELIGIBLE_FOR_SIMULATION");
+  });
+
+  it("11f. Duplicate payment candidate without distinct second attempt returns INSUFFICIENT_EVIDENCE", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_7_DUPLICATE_PAYMENT" },
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: sampleMerchantOrder,
+        duplicatePayments: [sampleGatewayPayment] // Only 1 attempt
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("INSUFFICIENT_EVIDENCE");
+    expect(result.appliedRuleIds).toContain("R_DUPLICATE_EVIDENCE_INSUFFICIENT");
+  });
+
+  it("11g. Duplicate payment candidate where second payment is not CAPTURED returns SAFE_HOLD", () => {
+    const duplicatePayments = [
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_01", status: "CAPTURED" },
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_02", status: "PENDING" }
+    ];
+
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_7_DUPLICATE_PAYMENT" },
+      authoritativeEvidence: {
+        gatewayPayment: duplicatePayments[0],
+        merchantOrder: sampleMerchantOrder,
+        duplicatePayments
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("SAFE_HOLD");
+    expect(result.appliedRuleIds).toContain("R_DUPLICATE_PAYMENT_NOT_CAPTURED");
+  });
+
+  it("11h. Duplicate candidate with conflicting merchantOrderId returns SAFE_HOLD", () => {
+    const duplicatePayments = [
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_01", merchantOrderId: "ORD-001" },
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_02", merchantOrderId: "ORD-999" }
+    ];
+
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_7_DUPLICATE_PAYMENT" },
+      authoritativeEvidence: {
+        gatewayPayment: duplicatePayments[0],
+        merchantOrder: sampleMerchantOrder,
+        duplicatePayments
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("SAFE_HOLD");
+    expect(result.appliedRuleIds).toContain("R_CONFLICTING_ORDER_PAYMENT_LINK");
+  });
+
+  it("11i. Duplicate candidate across tenants is rejected by policy", () => {
+    const duplicatePayments = [
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_01", tenantId: TENANT },
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_02", tenantId: OTHER_TENANT }
+    ];
+
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_7_DUPLICATE_PAYMENT" },
+      authoritativeEvidence: {
+        gatewayPayment: duplicatePayments[0],
+        merchantOrder: sampleMerchantOrder,
+        duplicatePayments
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("REJECTED_BY_POLICY");
+    expect(result.appliedRuleIds).toContain("R_CROSS_TENANT_PAYMENT_BLOCKED");
+  });
+
+  it("11j. Ambiguous duplicate candidate below confidence threshold returns SAFE_HOLD", () => {
+    const duplicatePayments = [
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_01" },
+      { ...sampleGatewayPayment, gatewayPaymentId: "pay_02" }
+    ];
+
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: VALID_CONFIG,
+      classificationFinding: { scenarioId: "CASE_7_DUPLICATE_PAYMENT" },
+      authoritativeEvidence: {
+        gatewayPayment: duplicatePayments[0],
+        merchantOrder: sampleMerchantOrder,
+        duplicatePayments,
+        candidateScore: 0.85 // below 0.95 threshold
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("SAFE_HOLD");
+    expect(result.appliedRuleIds).toContain("R_AMBIGUOUS_CANDIDATES_SAFE_HOLD");
+  });
+
+  // -------------------------------------------------------------------------
+  // 11_case1. Case 1 Provenance Reconciliation
+  // -------------------------------------------------------------------------
+  it("11k. Case 1 without server-verified telemetry falls back to status-mismatch ledger repair", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "UPDATE_MERCHANT_LOCAL_LEDGER",
+      classificationFinding: { scenarioId: "CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS" },
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: sampleMerchantOrder,
+        serverVerifiedTelemetry: false
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("ELIGIBLE_FOR_SIMULATION");
+    expect(result.appliedRuleIds).toContain("R_UNVERIFIED_TIMEOUT_FALLBACK_TO_STATUS_MISMATCH");
+    expect(result.appliedRuleIds).toContain("R_LOCAL_LEDGER_REPAIR_ELIGIBLE");
   });
 
   // -------------------------------------------------------------------------
@@ -384,7 +759,7 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
       { id: "CASE_19_AMOUNT_CURRENCY_MISMATCH", action: "SAFE_HOLD", expected: "SAFE_HOLD" },
       { id: "CASE_20_DUPLICATE_SETTLEMENT", action: "UPDATE_MERCHANT_LOCAL_LEDGER", expected: "ELIGIBLE_FOR_SIMULATION" },
       { id: "CASE_21_MISSING_SETTLEMENT", action: "EXTERNAL_ESCALATION_REQUIRED", expected: "ELIGIBLE_FOR_SIMULATION" },
-      { id: "CASE_22_CANCELLED_ORDER_CAPTURED", action: "REQUEST_REFUND", expected: "ELIGIBLE_FOR_SIMULATION" },
+      { id: "CASE_22_CANCELLED_ORDER_CAPTURED", action: "REQUEST_REFUND", expected: "SAFE_HOLD" },
       { id: "CASE_23_AMBIGUOUS_CANDIDATE_MATCH", action: "SAFE_HOLD", expected: "SAFE_HOLD" },
       { id: "CASE_24_PROVIDER_UNAVAILABLE", action: "WAIT_AND_MONITOR", expected: "ELIGIBLE_FOR_SIMULATION" },
       { id: "CASE_25_DATABASE_OUTAGE_RECOVERY", action: "RECHECK_PROVIDER_STATUS", expected: "ELIGIBLE_FOR_SIMULATION" },

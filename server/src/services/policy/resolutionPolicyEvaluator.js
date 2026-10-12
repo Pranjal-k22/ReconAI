@@ -41,7 +41,8 @@ export function evaluateResolutionPolicy({
     amountCheck: false,
     refundLimitsCheck: false,
     safeHoldCheck: false,
-    aiAdvisoryCheck: false
+    aiAdvisoryCheck: false,
+    duplicateEvidenceCheck: false
   };
 
   // -------------------------------------------------------------------------
@@ -112,7 +113,11 @@ export function evaluateResolutionPolicy({
     refundRecords = [],
     settlementRecord = null,
     disputeRecord = null,
-    paymentCase = null
+    paymentCase = null,
+    duplicatePayments = [],
+    inFlightCommitmentsPaise = 0,
+    approvedCancellationRefund = false,
+    adminApproval = null
   } = authoritativeEvidence;
 
   if (gatewayPayment) {
@@ -177,20 +182,31 @@ export function evaluateResolutionPolicy({
   appliedRuleIds.push("R_PROVIDER_CAPABILITY_READ_ONLY");
 
   // -------------------------------------------------------------------------
-  // 5. Mandatory Risk, Dispute, Fraud & Safe-Hold Triggers
+  // 5. Scenario Mapping & Provenance Rules
+  // -------------------------------------------------------------------------
+  const scenarioId = classificationFinding?.scenarioId || paymentCase?.discrepancyCategory || null;
+
+  // Case 1 vs Case 6: Provenance Reconciliation
+  if (scenarioId === "CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS") {
+    const hasServerVerifiedTelemetry = authoritativeEvidence.serverVerifiedTelemetry === true;
+    if (!hasServerVerifiedTelemetry) {
+      appliedRuleIds.push("R_UNVERIFIED_TIMEOUT_FALLBACK_TO_STATUS_MISMATCH");
+      allowReasons.push(
+        "Client timeout telemetry unverified from server source. Evaluated under status-mismatch local ledger repair policy without causal inference."
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 6. Mandatory Risk, Dispute, Fraud & Safe-Hold Triggers
   // -------------------------------------------------------------------------
   checksPerformed.safeHoldCheck = true;
-
-  const scenarioId = classificationFinding?.scenarioId || paymentCase?.discrepancyCategory || null;
-  const isSafeHoldCase =
-    paymentCase?.isSafeHold ||
-    classificationFinding?.safeHold ||
-    classificationFinding?.primaryReasonCode?.startsWith("SAFE_HOLD");
 
   // Dispute / Formal Chargeback (Case 30)
   const isDispute =
     disputeRecord ||
     scenarioId === "CASE_30_FORMAL_DISPUTE" ||
+    scenarioId === "CASE_30_CHARGEBACK_OR_FORMAL_DISPUTE" ||
     classificationFinding?.primaryReasonCode === "DISPUTE_FORMAL_CHARGEBACK" ||
     paymentCase?.disputeStatus === "DISPUTE_FORMAL_CHARGEBACK" ||
     paymentCase?.disputeStatus === "DISPUTE_UNDER_REVIEW";
@@ -240,6 +256,7 @@ export function evaluateResolutionPolicy({
   // Fraud Allegation (Case 29)
   const isFraud =
     scenarioId === "CASE_29_FRAUD_CLAIM" ||
+    scenarioId === "CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT" ||
     classificationFinding?.primaryReasonCode === "FRAUD_CLAIM" ||
     paymentCase?.safeHoldCode === "FRAUD_SUSPICION";
 
@@ -286,7 +303,12 @@ export function evaluateResolutionPolicy({
   }
 
   // Multiple Plausible Payment Candidates (Case 23)
-  if (scenarioId === "CASE_23_AMBIGUOUS_CANDIDATE_MATCH" || paymentCase?.safeHoldCode === "AMBIGUOUS_PAYMENTS") {
+  if (
+    scenarioId === "CASE_23_AMBIGUOUS_CANDIDATE_MATCH" ||
+    scenarioId === "CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES" ||
+    paymentCase?.safeHoldCode === "AMBIGUOUS_PAYMENTS" ||
+    authoritativeEvidence.isAmbiguous === true
+  ) {
     appliedRuleIds.push("R_AMBIGUOUS_CANDIDATES_SAFE_HOLD");
     if (proposedActionType !== "SAFE_HOLD" && proposedActionType !== "WAIT_AND_MONITOR") {
       denyReasons.push("Multiple ambiguous payment candidates detected. Manual operator pairing required.");
@@ -304,6 +326,7 @@ export function evaluateResolutionPolicy({
   // Amount or Currency Mismatch (Case 19)
   if (
     scenarioId === "CASE_19_AMOUNT_CURRENCY_MISMATCH" ||
+    scenarioId === "CASE_19_AMOUNT_OR_CURRENCY_MISMATCH" ||
     (gatewayPayment && merchantOrder && gatewayPayment.amountPaise !== merchantOrder.amountPaise)
   ) {
     appliedRuleIds.push("R_AMOUNT_MISMATCH_SAFE_HOLD");
@@ -336,34 +359,159 @@ export function evaluateResolutionPolicy({
     }
   }
 
-  // Late Capture on Cancelled Order (Case 22 Late Capture)
+  // Late Capture on Cancelled Order (Case 22)
   const isCancelledOrder = merchantOrder && (merchantOrder.status === "CANCELLED" || merchantOrder.status === "ORDER_CANCELLED");
   const isCapturedPayment = gatewayPayment && gatewayPayment.status === "CAPTURED";
-  const isLateCaptureCancelled =
+  const isCase22 =
+    scenarioId === "CASE_22_CANCELLED_ORDER_CAPTURED" ||
+    scenarioId === "CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED" ||
     paymentCase?.safeHoldCode === "LATE_CAPTURE_CANCELLED_ORDER" ||
-    (isCancelledOrder && isCapturedPayment && paymentCase?.isSafeHold);
+    (isCancelledOrder && isCapturedPayment);
 
-  if (isLateCaptureCancelled) {
-    appliedRuleIds.push("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+  if (isCase22) {
+    const hasApprovedCancellationEvidence = approvedCancellationRefund === true || adminApproval?.approved === true;
+
     if (proposedActionType === "UPDATE_MERCHANT_LOCAL_LEDGER") {
       denyReasons.push("Binding guardrail: Late capture on cancelled order cannot reopen cancelled order.");
       return buildPolicyResult({
         outcomeStatus: "SAFE_HOLD",
-        appliedRuleIds,
+        appliedRuleIds: [...appliedRuleIds, "R_LATE_CAPTURE_CANCELLED_ORDER_HOLD"],
         denyReasons,
         conflicts: ["LATE_CAPTURE_ON_CANCELLED_ORDER"],
         approvedEvidenceReferences,
         checksPerformed
       });
     }
+
+    if (!hasApprovedCancellationEvidence) {
+      denyReasons.push(
+        "Binding guardrail: Late capture associated with cancelled order must remain on safe hold. Automated refund is prohibited without approved cancellation resolution evidence."
+      );
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_LATE_CAPTURE_CANCELLED_ORDER_HOLD"],
+        denyReasons,
+        conflicts: ["LATE_CAPTURE_ON_CANCELLED_ORDER"],
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    appliedRuleIds.push("R_APPROVED_CANCELLATION_EVIDENCE_VERIFIED");
   }
 
   // -------------------------------------------------------------------------
-  // 6. Action-Specific Evaluation Rules
+  // 7. Case 7 Conclusive Duplicate Payment Verification
+  // -------------------------------------------------------------------------
+  const isDuplicateScenario =
+    scenarioId === "CASE_7_DUPLICATE_PAYMENT" ||
+    scenarioId === "CASE_7_DUPLICATE_PAYMENT_ATTEMPTS" ||
+    classificationFinding?.primaryReasonCode === "DUPLICATE_PAYMENT";
+
+  if (isDuplicateScenario && (proposedActionType === "REQUEST_REFUND" || proposedActionType === "SIMULATE_REFUND_CUSTOMER")) {
+    checksPerformed.duplicateEvidenceCheck = true;
+
+    // Conclusive check 1: Must have at least two distinct payment records
+    if (!Array.isArray(duplicatePayments) || duplicatePayments.length < 2) {
+      denyReasons.push("Duplicate payment evidence inconclusive: at least two distinct payment attempts are required.");
+      missingEvidence.push("DISTINCT_DUPLICATE_PAYMENTS");
+      return buildPolicyResult({
+        outcomeStatus: "INSUFFICIENT_EVIDENCE",
+        appliedRuleIds: [...appliedRuleIds, "R_DUPLICATE_EVIDENCE_INSUFFICIENT"],
+        denyReasons,
+        missingEvidence,
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    // Conclusive check 2: Distinct identifiers
+    const paymentIds = duplicatePayments.map((p) => p.gatewayPaymentId).filter(Boolean);
+    const uniquePaymentIds = new Set(paymentIds);
+    if (uniquePaymentIds.size < 2) {
+      denyReasons.push("Duplicate payment evidence inconclusive: gatewayPaymentIds are identical or missing.");
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_DUPLICATE_IDENTIFIERS_NOT_DISTINCT"],
+        denyReasons,
+        conflicts: ["NON_DISTINCT_PAYMENT_IDS"],
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    // Conclusive check 3: Cross-tenant isolation
+    const hasCrossTenantPayment = duplicatePayments.some((p) => p.tenantId && p.tenantId !== tenantId);
+    if (hasCrossTenantPayment) {
+      return buildPolicyResult({
+        outcomeStatus: "REJECTED_BY_POLICY",
+        appliedRuleIds: [...appliedRuleIds, "R_CROSS_TENANT_PAYMENT_BLOCKED"],
+        denyReasons: ["Cross-tenant duplicate payment candidate rejected."],
+        conflicts: ["CROSS_TENANT_DUPLICATE_ATTEMPT"],
+        checksPerformed
+      });
+    }
+
+    // Conclusive check 4: Correlated order ID match
+    const orderIds = duplicatePayments.map((p) => p.merchantOrderId).filter(Boolean);
+    const orderMismatch = orderIds.some((oid) => merchantOrder && oid !== merchantOrder.merchantOrderId);
+    if (orderMismatch) {
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_CONFLICTING_ORDER_PAYMENT_LINK"],
+        denyReasons: ["Duplicate payment attempts reference conflicting merchantOrderId."],
+        conflicts: ["MISMATCHED_ORDER_IDS"],
+        checksPerformed
+      });
+    }
+
+    // Conclusive check 5: Authoritative captured status on both payments
+    const hasUncapturedPayment = duplicatePayments.some((p) => p.status !== "CAPTURED");
+    if (hasUncapturedPayment) {
+      denyReasons.push("Both duplicate payments must be conclusively verified CAPTURED by provider.");
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_DUPLICATE_PAYMENT_NOT_CAPTURED"],
+        denyReasons,
+        conflicts: ["UNVERIFIED_DUPLICATE_CAPTURE"],
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    // Conclusive check 6: Amount and currency consistency
+    const currencies = new Set(duplicatePayments.map((p) => p.currency));
+    if (currencies.size > 1 || (merchantOrder && !currencies.has(merchantOrder.currency))) {
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_AMOUNT_MISMATCH_SAFE_HOLD"],
+        denyReasons: ["Duplicate payment currencies are inconsistent."],
+        conflicts: ["CURRENCY_MISMATCH"],
+        checksPerformed
+      });
+    }
+
+    // Conclusive check 7: Ambiguity / confidence threshold check
+    if (authoritativeEvidence.isAmbiguous || (authoritativeEvidence.candidateScore && authoritativeEvidence.candidateScore < 0.95)) {
+      return buildPolicyResult({
+        outcomeStatus: "SAFE_HOLD",
+        appliedRuleIds: [...appliedRuleIds, "R_AMBIGUOUS_CANDIDATES_SAFE_HOLD"],
+        denyReasons: ["Duplicate candidate is ambiguous or below 0.95 confidence threshold."],
+        conflicts: ["AMBIGUOUS_DUPLICATE_CANDIDATE"],
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    appliedRuleIds.push("R_CONCLUSIVE_DUPLICATE_PAYMENTS_VERIFIED");
+  }
+
+  // -------------------------------------------------------------------------
+  // 8. Action-Specific Evaluation Rules
   // -------------------------------------------------------------------------
 
   // -----------------------------------------
-  // 6.1 ACTION: REQUEST_REFUND
+  // 8.1 ACTION: REQUEST_REFUND
   // -----------------------------------------
   if (proposedActionType === "REQUEST_REFUND" || proposedActionType === "SIMULATE_REFUND_CUSTOMER") {
     checksPerformed.refundLimitsCheck = true;
@@ -387,7 +535,9 @@ export function evaluateResolutionPolicy({
     const maxCumulativeRefundPaise = policyConfig.maxCumulativeRefundPaise;
 
     if (!isNonNegativeSafeInteger(maxSingleRefundPaise) || !isNonNegativeSafeInteger(maxCumulativeRefundPaise)) {
-      denyReasons.push("Binding guardrail: Explicit monetary limits (maxSingleRefundPaise & maxCumulativeRefundPaise) missing or invalid. Fail-closed.");
+      denyReasons.push(
+        "Binding guardrail: Explicit monetary limits (maxSingleRefundPaise & maxCumulativeRefundPaise) missing or invalid. Fail-closed."
+      );
       missingEvidence.push("EXPLICIT_REFUND_LIMITS");
       return buildPolicyResult({
         outcomeStatus: "INSUFFICIENT_EVIDENCE",
@@ -401,7 +551,9 @@ export function evaluateResolutionPolicy({
 
     // Guard 2: Customer debit claims alone are not proof
     if (!gatewayPayment) {
-      denyReasons.push("Binding guardrail: Authoritative gateway payment record is missing. Customer claim alone cannot establish refund eligibility.");
+      denyReasons.push(
+        "Binding guardrail: Authoritative gateway payment record is missing. Customer claim alone cannot establish refund eligibility."
+      );
       missingEvidence.push("AUTHORITATIVE_GATEWAY_PAYMENT");
       return buildPolicyResult({
         outcomeStatus: "INSUFFICIENT_EVIDENCE",
@@ -413,7 +565,20 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 3: Gateway failure alone is insufficient
+    // Guard 3: Currency matching check
+    if (gatewayPayment.currency && gatewayPayment.currency !== currency) {
+      denyReasons.push(`Currency mismatch: payment currency '${gatewayPayment.currency}' does not match refund currency '${currency}'. Fail closed.`);
+      return buildPolicyResult({
+        outcomeStatus: "REJECTED_BY_POLICY",
+        appliedRuleIds: [...appliedRuleIds, "R_CURRENCY_MISMATCH_FAIL_CLOSED"],
+        denyReasons,
+        conflicts: ["CURRENCY_MISMATCH"],
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    // Guard 4: Gateway status check (failed or pending cannot authorize refund)
     if (gatewayPayment.status === "FAILED") {
       denyReasons.push("Binding guardrail: Gateway payment is FAILED. Failed gateway status cannot authorize a refund without captured funds.");
       return buildPolicyResult({
@@ -436,7 +601,7 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    if (gatewayPayment.status !== "CAPTURED") {
+    if (gatewayPayment.status !== "CAPTURED" && gatewayPayment.status !== "PARTIALLY_REFUNDED") {
       denyReasons.push(`Gateway payment status '${gatewayPayment.status}' is not CAPTURED.`);
       return buildPolicyResult({
         outcomeStatus: "REJECTED_BY_POLICY",
@@ -447,17 +612,73 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 4: Refundable balance calculation
-    const capturedPaise = gatewayPayment.amountPaise || 0;
-    const existingRefundsPaise = (refundRecords || []).reduce((acc, r) => {
-      if (r.status === "PROCESSED" || r.status === "CONFIRMED" || r.status === "PENDING") {
+    // Guard 5: Authoritative captured amount identification
+    let authoritativeCapturedPaise = null;
+    if (typeof gatewayPayment.capturedAmountPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.capturedAmountPaise)) {
+      authoritativeCapturedPaise = gatewayPayment.capturedAmountPaise;
+    } else if (typeof gatewayPayment.amountCapturedPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.amountCapturedPaise)) {
+      authoritativeCapturedPaise = gatewayPayment.amountCapturedPaise;
+    } else if (
+      gatewayPayment.rawData &&
+      typeof gatewayPayment.rawData.amount_captured === "number" &&
+      isNonNegativeSafeInteger(gatewayPayment.rawData.amount_captured)
+    ) {
+      authoritativeCapturedPaise = gatewayPayment.rawData.amount_captured;
+    } else if (gatewayPayment.status === "CAPTURED" && typeof gatewayPayment.amountPaise === "number" && isNonNegativeSafeInteger(gatewayPayment.amountPaise)) {
+      authoritativeCapturedPaise = gatewayPayment.amountPaise;
+    }
+
+    // Partial capture verification
+    if (
+      scenarioId === "CASE_8_PARTIAL_CAPTURE" ||
+      gatewayPayment.status === "PARTIAL_CAPTURE" ||
+      gatewayPayment.status === "PARTIALLY_CAPTURED"
+    ) {
+      if (authoritativeCapturedPaise === null || authoritativeCapturedPaise === gatewayPayment.amountPaise) {
+        denyReasons.push("Partial capture evidence missing verified captured amount. Locked into safe hold.");
+        return buildPolicyResult({
+          outcomeStatus: "SAFE_HOLD",
+          appliedRuleIds: [...appliedRuleIds, "R_PARTIAL_CAPTURE_SAFE_HOLD"],
+          denyReasons,
+          conflicts: ["PARTIAL_CAPTURE_AMOUNT_UNVERIFIED"],
+          approvedEvidenceReferences,
+          checksPerformed
+        });
+      }
+    }
+
+    if (authoritativeCapturedPaise === null) {
+      denyReasons.push("Authoritative captured amount cannot be established from provider evidence. Fail closed.");
+      missingEvidence.push("AUTHORITATIVE_CAPTURED_AMOUNT");
+      return buildPolicyResult({
+        outcomeStatus: "INSUFFICIENT_EVIDENCE",
+        appliedRuleIds: [...appliedRuleIds, "R_MISSING_CAPTURED_AMOUNT_EVIDENCE"],
+        denyReasons,
+        missingEvidence,
+        approvedEvidenceReferences,
+        checksPerformed
+      });
+    }
+
+    // Guard 6: Deduct completed refunds, pending refunds, and in-flight commitments
+    const completedRefundsPaise = (refundRecords || []).reduce((acc, r) => {
+      if (r.status === "PROCESSED" || r.status === "CONFIRMED" || r.status === "REFUNDED") {
+        return acc + (r.amountPaise || 0);
+      }
+      return acc;
+    }, gatewayPayment.refundAmountPaise || 0);
+
+    const pendingRefundsPaise = (refundRecords || []).reduce((acc, r) => {
+      if (r.status === "REFUND_PENDING" || r.status === "PENDING" || r.status === "INITIATED") {
         return acc + (r.amountPaise || 0);
       }
       return acc;
     }, 0);
 
-    const targetRefundPaise = amountPaise !== null ? amountPaise : capturedPaise;
-    const availableRefundablePaise = capturedPaise - existingRefundsPaise;
+    const totalDeductionsPaise = completedRefundsPaise + pendingRefundsPaise + inFlightCommitmentsPaise;
+    const availableRefundablePaise = Math.max(0, authoritativeCapturedPaise - totalDeductionsPaise);
+
+    const targetRefundPaise = amountPaise !== null ? amountPaise : availableRefundablePaise;
 
     if (targetRefundPaise <= 0) {
       denyReasons.push("Target refund amount must be greater than zero paise.");
@@ -471,7 +692,11 @@ export function evaluateResolutionPolicy({
     }
 
     if (targetRefundPaise > availableRefundablePaise) {
-      denyReasons.push(`Proposed refund of ₹${(targetRefundPaise / 100).toFixed(2)} exceeds available refundable balance of ₹${(availableRefundablePaise / 100).toFixed(2)}.`);
+      denyReasons.push(
+        `Proposed refund of ₹${(targetRefundPaise / 100).toFixed(2)} exceeds available refundable balance of ₹${(
+          availableRefundablePaise / 100
+        ).toFixed(2)}.`
+      );
       return buildPolicyResult({
         outcomeStatus: "REJECTED_BY_POLICY",
         appliedRuleIds: [...appliedRuleIds, "R_REFUND_EXCEEDS_REFUNDABLE_BALANCE"],
@@ -481,9 +706,13 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 5: Single refund limit
+    // Guard 7: Single refund limit
     if (targetRefundPaise > maxSingleRefundPaise) {
-      denyReasons.push(`Proposed refund ₹${(targetRefundPaise / 100).toFixed(2)} exceeds configured single refund limit ₹${(maxSingleRefundPaise / 100).toFixed(2)}.`);
+      denyReasons.push(
+        `Proposed refund ₹${(targetRefundPaise / 100).toFixed(2)} exceeds configured single refund limit ₹${(
+          maxSingleRefundPaise / 100
+        ).toFixed(2)}.`
+      );
       return buildPolicyResult({
         outcomeStatus: "REJECTED_BY_POLICY",
         appliedRuleIds: [...appliedRuleIds, "R_REFUND_EXCEEDS_SINGLE_LIMIT"],
@@ -493,10 +722,14 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 6: Cumulative refund velocity limit
+    // Guard 8: Cumulative refund velocity limit
     const cumulativeDailyRefundsPaise = policyConfig.currentCumulativeDailyPaise || 0;
     if (cumulativeDailyRefundsPaise + targetRefundPaise > maxCumulativeRefundPaise) {
-      denyReasons.push(`Proposed refund would cause cumulative refunds ₹${((cumulativeDailyRefundsPaise + targetRefundPaise) / 100).toFixed(2)} to exceed limit ₹${(maxCumulativeRefundPaise / 100).toFixed(2)}.`);
+      denyReasons.push(
+        `Proposed refund would cause cumulative refunds ₹${((cumulativeDailyRefundsPaise + targetRefundPaise) / 100).toFixed(
+          2
+        )} to exceed limit ₹${(maxCumulativeRefundPaise / 100).toFixed(2)}.`
+      );
       return buildPolicyResult({
         outcomeStatus: "REJECTED_BY_POLICY",
         appliedRuleIds: [...appliedRuleIds, "R_REFUND_EXCEEDS_CUMULATIVE_LIMIT"],
@@ -506,7 +739,7 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 7: Existing refund in-flight check
+    // Guard 9: Existing refund in-flight check
     const hasInFlightRefund = (refundRecords || []).some(
       (r) => r.status === "REFUND_PENDING" || r.status === "PENDING" || r.status === "INITIATED"
     );
@@ -537,14 +770,15 @@ export function evaluateResolutionPolicy({
   }
 
   // -----------------------------------------
-  // 6.2 ACTION: UPDATE_MERCHANT_LOCAL_LEDGER
+  // 8.2 ACTION: UPDATE_MERCHANT_LOCAL_LEDGER
   // -----------------------------------------
   if (proposedActionType === "UPDATE_MERCHANT_LOCAL_LEDGER") {
     appliedRuleIds.push("R_LOCAL_LEDGER_REPAIR_EVALUATION");
 
-    // Scenario check: Case 1, Case 6, Case 10, Case 20
     const isPaymentCaptured = gatewayPayment && gatewayPayment.status === "CAPTURED";
-    const isOrderUnpaid = merchantOrder && (merchantOrder.status === "PENDING" || merchantOrder.status === "ORDER_PENDING" || merchantOrder.status === "CREATED");
+    const isOrderUnpaid =
+      merchantOrder &&
+      (merchantOrder.status === "PENDING" || merchantOrder.status === "ORDER_PENDING" || merchantOrder.status === "CREATED");
 
     if (isPaymentCaptured && isOrderUnpaid) {
       allowReasons.push("Verified captured gateway payment with pending merchant order. Local ledger confirmation repair eligible for simulation.");
@@ -560,7 +794,11 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    if (scenarioId === "CASE_10_PARTIAL_REFUND" || scenarioId === "CASE_20_DUPLICATE_SETTLEMENT") {
+    if (
+      scenarioId === "CASE_10_PARTIAL_REFUND" ||
+      scenarioId === "CASE_20_DUPLICATE_SETTLEMENT" ||
+      scenarioId === "CASE_20_DUPLICATE_SETTLEMENT_RECORD"
+    ) {
       allowReasons.push("Ledger adjustment/deduplication verified eligible for local simulation.");
       appliedRuleIds.push("R_LOCAL_LEDGER_REPAIR_ELIGIBLE");
       return buildPolicyResult({
@@ -588,7 +826,7 @@ export function evaluateResolutionPolicy({
   }
 
   // -----------------------------------------
-  // 6.3 ACTION: WAIT_AND_MONITOR
+  // 8.3 ACTION: WAIT_AND_MONITOR
   // -----------------------------------------
   if (proposedActionType === "WAIT_AND_MONITOR") {
     allowReasons.push("Observation plan eligible for monitoring sweep simulation.");
@@ -603,7 +841,7 @@ export function evaluateResolutionPolicy({
   }
 
   // -----------------------------------------
-  // 6.4 ACTION: RECHECK_PROVIDER_STATUS
+  // 8.4 ACTION: RECHECK_PROVIDER_STATUS
   // -----------------------------------------
   if (proposedActionType === "RECHECK_PROVIDER_STATUS" || proposedActionType === "POLL_PROVIDER_STATUS") {
     allowReasons.push("Provider status recheck plan eligible for simulation.");
@@ -618,7 +856,7 @@ export function evaluateResolutionPolicy({
   }
 
   // -----------------------------------------
-  // 6.5 ACTION: SAFE_HOLD
+  // 8.5 ACTION: SAFE_HOLD
   // -----------------------------------------
   if (proposedActionType === "SAFE_HOLD" || proposedActionType === "LOCK_SAFE_HOLD") {
     allowReasons.push("Safe hold quarantine explicitly applied.");
@@ -633,7 +871,7 @@ export function evaluateResolutionPolicy({
   }
 
   // -----------------------------------------
-  // 6.6 ACTION: NOTIFY_PARTIES
+  // 8.6 ACTION: NOTIFY_PARTIES
   // -----------------------------------------
   if (proposedActionType === "NOTIFY_PARTIES") {
     allowReasons.push("Simulated notification plan approved. No live messages sent.");
@@ -648,7 +886,7 @@ export function evaluateResolutionPolicy({
   }
 
   // -----------------------------------------
-  // 6.7 ACTION: EXTERNAL_ESCALATION_REQUIRED
+  // 8.7 ACTION: EXTERNAL_ESCALATION_REQUIRED
   // -----------------------------------------
   if (proposedActionType === "EXTERNAL_ESCALATION_REQUIRED" || proposedActionType === "ESCALATE_EXTERNAL_DISPUTE") {
     allowReasons.push("External escalation recorded as non-executing simulation plan.");

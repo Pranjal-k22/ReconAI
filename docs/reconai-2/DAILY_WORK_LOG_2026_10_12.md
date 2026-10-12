@@ -503,6 +503,28 @@ ReconAI/
   - Zero financial write APIs or provider mutations called or enabled.
   - Local simulation and persistence only (`executionState: "NON_EXECUTABLE_SIMULATION"`).
   - Phase 8 is COMPLETE and PASSING.
-  - Phase 9 has NOT started.
+  - Phase 9 (Sandbox Provider Adapter) and Phase 10 (Autonomous Resolution Worker) have NOT started.
 
+### Entry 7: Phase 8 Corrective Review — Refund Balance, Late Capture, Duplicate Evidence & Provenance
 
+- **Authoritative Refundable Balance**:
+  - Proven that `gatewayPayment.amountPaise` is nominal/requested; the engine now derives refundable balance from `authoritativeCapturedPaise` (`capturedAmountPaise`, `amountCapturedPaise`, `rawData.amount_captured`, or confirmed `CAPTURED` status).
+  - Formula: `availableRefundablePaise = authoritativeCapturedPaise - (completedRefundsPaise + pendingRefundsPaise + inFlightCommitmentsPaise)`.
+  - In-flight simulation commitments from prior active `PaymentAction` records (`actionStatus: ["SIMULATED", "PROPOSED"]`) are loaded and deducted.
+  - Fail-closed on currency mismatch (INR only), unverified partial capture, and missing capture evidence.
+- **Case 22 (Late Capture on Cancelled Order)**:
+  - Deterministically evaluates to `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with action status `HELD_IN_SAFE_HOLD`.
+  - AI advisory suggestions cannot override this rule.
+  - Order cannot be reopened via `UPDATE_MERCHANT_LOCAL_LEDGER`.
+  - Only explicit approved cancellation evidence (`approvedCancellationRefund: true` or `adminApproval.approved: true`) permits simulation.
+  - Canonical `MerchantOrder` remains `CANCELLED` and unmutated.
+- **Case 7 (Conclusive Duplicate Payment Verification)**:
+  - Conclusive evidence requires >= 2 distinct payment attempts for the same correlated order, both verified `CAPTURED`, bound to the same tenant, with matching currencies/amounts, and candidate score >= 0.95.
+  - Ambiguous candidates, single attempts, cross-tenant attempts, or uncaptured second payments fail closed to `SAFE_HOLD`, `INSUFFICIENT_EVIDENCE`, or `REJECTED_BY_POLICY`.
+- **Case 1 (Provenance Reconciliation)**:
+  - ReconAI has no genuine frontend telemetry verification source.
+  - Ordinary `CAPTURED` payment with `PENDING` order routes through status mismatch local ledger repair policy (`R_UNVERIFIED_TIMEOUT_FALLBACK_TO_STATUS_MISMATCH`) without causal inference of frontend timeout.
+- **Roadmap Scope Correction**:
+  - Phase 9 is designated for sandbox provider adapter and outcome verification with test-mode safeguards.
+  - Phase 10 is designated for autonomous worker and orchestration.
+  - Neither downstream phase has started.

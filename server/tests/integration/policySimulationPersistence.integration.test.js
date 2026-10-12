@@ -267,4 +267,76 @@ describe("Deterministic Resolution Policy & Dry-Run Simulator - MongoDB Integrat
     const totalDecisions = await PolicyDecision.countDocuments({ tenantId: TENANT_A, idempotencyKey });
     expect(totalDecisions).toBe(1);
   });
+
+  it("7. Case 22 (Late capture on cancelled order) persists SAFE_HOLD and HELD_IN_SAFE_HOLD action status with unmutated order", async () => {
+    // Update order in Tenant A to CANCELLED
+    await MerchantOrder.updateOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }, { status: "CANCELLED" });
+    await PaymentCase.updateOne({ caseId: CASE_ID_A, tenantId: TENANT_A }, { discrepancyCategory: "CASE_22_CANCELLED_ORDER_CAPTURED" });
+
+    const res = await evaluateAndSimulateResolution({
+      tenantId: TENANT_A,
+      caseId: CASE_ID_A,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 120000,
+      idempotencyKey: "idem-case22-hold-001",
+      policyConfig: validPolicyConfig
+    });
+
+    expect(res.decision.outcomeStatus).toBe("SAFE_HOLD");
+    expect(res.decision.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+
+    // Verify persisted PaymentAction has actionStatus === "HELD_IN_SAFE_HOLD"
+    const fetchedAction = await PaymentAction.findOne({ actionId: res.decision.actionId }).lean();
+    expect(fetchedAction).not.toBeNull();
+    expect(fetchedAction.actionStatus).toBe("HELD_IN_SAFE_HOLD");
+
+    // Verify order remains CANCELLED and unmutated
+    const orderAfter = await MerchantOrder.findOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }).lean();
+    expect(orderAfter.status).toBe("CANCELLED");
+  });
+
+  it("8. In-flight simulated refund commitments prevent subsequent simulations from exceeding available balance", async () => {
+    // Payment is 120000 paise (₹1,200). Order CANCELLED with approvedCancellationRefund
+    await MerchantOrder.updateOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }, { status: "CANCELLED" });
+
+    // First simulation: simulate ₹1,000 (100000 paise) refund
+    const res1 = await evaluateAndSimulateResolution({
+      tenantId: TENANT_A,
+      caseId: CASE_ID_A,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 100000,
+      idempotencyKey: "idem-inflight-001",
+      policyConfig: validPolicyConfig,
+      providedEvidence: {
+        paymentCase: { caseId: CASE_ID_A, tenantId: TENANT_A, gatewayPaymentId: "pay_pol_int_01", merchantOrderId: "ORD-POL-INT-01" },
+        gatewayPayment: { gatewayPaymentId: "pay_pol_int_01", tenantId: TENANT_A, status: "CAPTURED", amountPaise: 120000, currency: "INR" },
+        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "CANCELLED", amountPaise: 120000, currency: "INR" },
+        approvedCancellationRefund: true,
+        inFlightCommitmentsPaise: 0
+      }
+    });
+
+    expect(res1.decision.outcomeStatus).toBe("ELIGIBLE_FOR_SIMULATION");
+
+    // Second simulation: attempts ₹500 (50000 paise), but remaining available is ₹200 (120000 - 100000 = 20000)
+    // The service queries existing simulated actions (100000 in-flight)
+    const res2 = await evaluateAndSimulateResolution({
+      tenantId: TENANT_A,
+      caseId: CASE_ID_A,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 50000,
+      idempotencyKey: "idem-inflight-002",
+      policyConfig: validPolicyConfig,
+      providedEvidence: {
+        paymentCase: { caseId: CASE_ID_A, tenantId: TENANT_A, gatewayPaymentId: "pay_pol_int_01", merchantOrderId: "ORD-POL-INT-01" },
+        gatewayPayment: { gatewayPaymentId: "pay_pol_int_01", tenantId: TENANT_A, status: "CAPTURED", amountPaise: 120000, currency: "INR" },
+        merchantOrder: { merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A, status: "CANCELLED", amountPaise: 120000, currency: "INR" },
+        approvedCancellationRefund: true,
+        inFlightCommitmentsPaise: 100000 // In-flight commitment from previous simulation
+      }
+    });
+
+    expect(res2.decision.outcomeStatus).toBe("REJECTED_BY_POLICY");
+    expect(res2.decision.appliedRuleIds).toContain("R_REFUND_EXCEEDS_REFUNDABLE_BALANCE");
+  });
 });
