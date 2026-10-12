@@ -681,7 +681,9 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     // Inspect actual MongoDB index definition
     const indexes = await PaymentLifecycleEvent.collection.indexes();
-    const hashIndex = indexes.find((idx) => idx.name === "accountBodyHash_1");
+    const hashIndex = indexes.find(
+      (idx) => idx.name === "accountBodyHash_partial_unique_v2" || idx.name === "accountBodyHash_1"
+    );
     expect(hashIndex).toBeDefined();
     expect(hashIndex.unique).toBe(true);
     expect(hashIndex.partialFilterExpression).toEqual({
@@ -1017,7 +1019,7 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     expect(res.body.data.status).toBe("ACCEPTED");
   });
 
-  it("12. verify existing-index migration upgrades legacy sparse index to non-empty partial unique index without data loss", async () => {
+  it("12. verify gapless index migration activates replacement partial unique index before retiring legacy index with zero uniqueness gap", async () => {
     if (!isMongoAvailable) return;
 
     // Use a disposable collection in the test database to safely demonstrate migration
@@ -1049,24 +1051,30 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       const countBefore = await testCol.countDocuments();
       expect(countBefore).toBe(3);
 
-      // 3. Run migration function
+      // 3. Run gapless migration function
       const migrationResult = await migratePaymentLifecycleIndexes({
         collection: () => testCol
       });
       expect(migrationResult.status).toBe("MIGRATED");
+      expect(migrationResult.replacementIndex).toBe("accountBodyHash_partial_unique_v2");
+      expect(migrationResult.retiredIndices).toContain("accountBodyHash_1");
 
-      // 4. Verify all documents preserved
+      // 4. Verify all documents preserved without data loss
       const countAfter = await testCol.countDocuments();
       expect(countAfter).toBe(3);
 
-      // 5. Verify index upgraded to partial unique with $gt: ''
+      // 5. Verify index upgraded to replacement partial unique with $gt: '' and legacy retired
       const updatedIndexes = await testCol.indexes();
-      const upgradedIdx = updatedIndexes.find((idx) => idx.name === "accountBodyHash_1");
+      const upgradedIdx = updatedIndexes.find((idx) => idx.name === "accountBodyHash_partial_unique_v2");
+      expect(upgradedIdx).toBeDefined();
       expect(upgradedIdx.unique).toBe(true);
       expect(upgradedIdx.sparse).toBeUndefined();
       expect(upgradedIdx.partialFilterExpression).toEqual({
         accountBodyHash: { $type: "string", $gt: "" }
       });
+
+      const retiredIdx = updatedIndexes.find((idx) => idx.name === "accountBodyHash_1");
+      expect(retiredIdx).toBeUndefined();
 
       // 6. Verify post-migration coexistence of omitted, null, and empty strings
       await testCol.insertOne({ eventId: "new_omitted", deduplicationKey: "NEW:1", payloadFingerprint: "fp4" });
@@ -1086,11 +1094,61 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       }
       expect(duplicateBlocked).toBe(true);
 
-      // 8. Verify idempotency
+      // 8. Verify idempotency on second run
       const secondRun = await migratePaymentLifecycleIndexes({
         collection: () => testCol
       });
       expect(secondRun.status).toBe("NO_CHANGE_NEEDED");
+      expect(secondRun.replacementIndex).toBe("accountBodyHash_partial_unique_v2");
+    } finally {
+      await testCol.drop().catch(() => {});
+    }
+  });
+
+  it("13. verify migration precondition fails closed when duplicate valid hashes exist and preserves previous index", async () => {
+    if (!isMongoAvailable) return;
+
+    const db = mongoose.connection.db;
+    const testColName = `disposable_precondition_fail_${Date.now()}`;
+    const testCol = db.collection(testColName);
+    await testCol.drop().catch(() => {});
+
+    try {
+      // 1. Establish legacy state with old index
+      await testCol.createIndex(
+        { accountBodyHash: 1 },
+        { name: "accountBodyHash_1", unique: false } // unindexed/corrupt duplicate state
+      );
+
+      // 2. Insert duplicate non-empty hashes
+      await testCol.insertOne({ eventId: "d1", deduplicationKey: "KD1", accountBodyHash: "RAZORPAY_BODY:acc:colliding_hash" });
+      await testCol.insertOne({ eventId: "d2", deduplicationKey: "KD2", accountBodyHash: "RAZORPAY_BODY:acc:colliding_hash" });
+
+      // 3. Attempt migration - must fail closed without dropping old index or modifying records
+      let caughtError = null;
+      try {
+        await migratePaymentLifecycleIndexes({
+          collection: () => testCol
+        });
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeDefined();
+      expect(caughtError.code).toBe("DUPLICATE_HASHES_FOUND");
+      expect(caughtError.duplicates).toHaveLength(1);
+      expect(caughtError.duplicates[0]._id).toBe("RAZORPAY_BODY:acc:colliding_hash");
+
+      // 4. Invariant: records preserved intact
+      const docCount = await testCol.countDocuments();
+      expect(docCount).toBe(2);
+
+      // 5. Invariant: legacy index retained, replacement not created
+      const currentIndexes = await testCol.indexes();
+      const legacyIdx = currentIndexes.find((i) => i.name === "accountBodyHash_1");
+      const replacementIdx = currentIndexes.find((i) => i.name === "accountBodyHash_partial_unique_v2");
+      expect(legacyIdx).toBeDefined();
+      expect(replacementIdx).toBeUndefined();
     } finally {
       await testCol.drop().catch(() => {});
     }

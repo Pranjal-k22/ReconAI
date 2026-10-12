@@ -74,19 +74,24 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
    paymentLifecycleEventSchema.index(
      { accountBodyHash: 1 },
      {
+       name: "accountBodyHash_partial_unique_v2",
        unique: true,
        partialFilterExpression: { accountBodyHash: { $type: "string", $gt: "" } }
      }
    );
    ```
    **Why Non-Empty Partial Unique Index is Required:** In MongoDB, sparse indexes still index documents where the field has an explicit `null` value. Furthermore, a `{ $type: "string" }` filter still indexes empty strings (`""`), causing potential collision if multiple documents omit hashes with empty strings. By normalizing blank/empty hashes to `undefined` (omitted) and enforcing `partialFilterExpression: { accountBodyHash: { $type: "string", $gt: "" } }`, MongoDB only indexes non-empty string hashes. Multiple documents with omitted, `null`, or empty string hashes coexist with zero collisions, while valid non-empty string hashes are strictly unique and reject duplicate replays with `E11000`.
-   **Existing-Index Migration Procedure:**
-   When upgrading an existing MongoDB database from legacy sparse or basic string indexes, MongoDB does not automatically alter existing indexes with conflicting options upon `autoIndex` (emitting error code 86). ReconAI provides a safe, non-destructive migration utility:
+   **Gapless Additive Migration Procedure (`npm run migrate:indexes`):**
+   When upgrading an existing MongoDB database from legacy indexes (e.g. `accountBodyHash_1`), dropping the old index first would leave a temporary window where webhook replays could slip through without unique hash constraint enforcement. ReconAI enforces a **gapless additive migration sequence**:
+   1. **Duplicate Precheck:** Scans the collection for duplicate valid non-empty hashes. If any duplicate exists, the migration aborts immediately, reports the duplicate details, and fails closed without modifying history.
+   2. **Additive Creation:** Creates the replacement partial unique index under explicit name `accountBodyHash_partial_unique_v2` *while the legacy index remains fully active*.
+   3. **Verification:** Confirms that MongoDB has activated the replacement index in metadata.
+   4. **Safe Retirement:** Only after the replacement index is confirmed active, drops obsolete legacy indexes (`accountBodyHash_1`).
+   5. **Idempotency:** Safe to run repeatedly; detects when replacement is active and returns `NO_CHANGE_NEEDED`.
    ```bash
    npm run migrate:indexes
    # or node scripts/migrateIndexes.js
    ```
-   This drops only the conflicting `accountBodyHash_1` index and recreates the non-empty partial unique index while preserving 100% of existing documents and deduplication records.
 3. **Modified-Header Replay Defense:**
    If a replay arrives with the exact same signed body and signature but with a *changed or spoofed `X-Razorpay-Event-Id` header*, the `accountBodyHash` index intercepts it. The request is idempotently acknowledged as `DUPLICATE_ACKNOWLEDGED` (`isDuplicate: true`), creating zero duplicate records and executing zero state changes.
 4. **Event-ID Payload Tampering / Collision Defense:**

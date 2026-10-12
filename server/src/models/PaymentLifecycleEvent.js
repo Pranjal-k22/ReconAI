@@ -182,6 +182,7 @@ paymentLifecycleEventSchema.index({ tenantId: 1, sourceSystem: 1, sourceEventId:
 paymentLifecycleEventSchema.index(
   { accountBodyHash: 1 },
   {
+    name: "accountBodyHash_partial_unique_v2",
     unique: true,
     partialFilterExpression: {
       accountBodyHash: {

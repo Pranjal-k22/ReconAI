@@ -3,64 +3,137 @@ import { logger } from "../src/config/logger.js";
 import { validateEnv } from "../src/config/env.js";
 
 /**
- * ReconAI 2.0 - PaymentLifecycleEvent Index Migration Utility
+ * ReconAI 2.0 - Gapless Replay-Index Migration Utility
  *
- * Safely inspects and migrates MongoDB collection indexes without data loss.
- * Specifically updates `accountBodyHash_1` from legacy sparse unique or basic string
- * filter definitions to the non-empty string partial unique index:
- *   partialFilterExpression: { accountBodyHash: { $type: "string", $gt: "" } }
- *
- * Preconditions:
- * 1. MongoDB connection established.
- * 2. Does not delete, modify, or drop any document in paymentlifecycleevents.
- * 3. Does not drop any other index.
- * 4. Idempotent: safe to run multiple times without side effects.
+ * Implements an additive, zero-downtime index migration sequence:
+ * 1. Precondition: Validates database target and scans for duplicate non-empty hashes.
+ *    If duplicates exist, aborts and fails closed without modifying history.
+ * 2. Additive Creation: Creates the replacement index `accountBodyHash_partial_unique_v2`
+ *    with `{ partialFilterExpression: { accountBodyHash: { $type: "string", $gt: "" } } }`
+ *    while any legacy index (`accountBodyHash_1`) remains active.
+ * 3. Verification: Confirms that MongoDB has successfully activated the new index.
+ * 4. Safe Retirement: Only after the replacement index is verified active, drops obsolete
+ *    legacy index(es).
+ * 5. Idempotent: Repeated execution detects that `accountBodyHash_partial_unique_v2` is active
+ *    and no legacy index remains, returning NO_CHANGE_NEEDED.
  */
+
+export const REPLACEMENT_INDEX_NAME = "accountBodyHash_partial_unique_v2";
+export const LEGACY_INDEX_NAMES = ["accountBodyHash_1"];
+
 export async function migratePaymentLifecycleIndexes(db) {
   const collection = db.collection("paymentlifecycleevents");
   const indexes = await collection.indexes();
-  const existingHashIndex = indexes.find((i) => i.name === "accountBodyHash_1");
+  const replacementIdx = indexes.find((i) => i.name === REPLACEMENT_INDEX_NAME);
+  const legacyIndices = indexes.filter((i) => LEGACY_INDEX_NAMES.includes(i.name));
 
   const desiredPartialFilter = { accountBodyHash: { $type: "string", $gt: "" } };
 
-  if (existingHashIndex) {
-    const isAlreadyDesired =
-      existingHashIndex.unique === true &&
-      existingHashIndex.partialFilterExpression &&
-      existingHashIndex.partialFilterExpression.accountBodyHash &&
-      existingHashIndex.partialFilterExpression.accountBodyHash.$type === "string" &&
-      existingHashIndex.partialFilterExpression.accountBodyHash.$gt === "";
+  // Step 1: Idempotency check - already migrated if replacement exists with correct specs and no legacy index remains
+  const isReplacementValid =
+    replacementIdx &&
+    replacementIdx.unique === true &&
+    replacementIdx.partialFilterExpression &&
+    replacementIdx.partialFilterExpression.accountBodyHash &&
+    replacementIdx.partialFilterExpression.accountBodyHash.$type === "string" &&
+    replacementIdx.partialFilterExpression.accountBodyHash.$gt === "";
 
-    if (isAlreadyDesired) {
-      return {
-        status: "NO_CHANGE_NEEDED",
-        message: "Index accountBodyHash_1 is already up-to-date with non-empty partial unique filter."
-      };
-    }
-
-    logger.info("Found legacy/conflicting accountBodyHash_1 index. Dropping old index definition...");
-    await collection.dropIndex("accountBodyHash_1");
+  if (isReplacementValid && legacyIndices.length === 0) {
+    return {
+      status: "NO_CHANGE_NEEDED",
+      replacementIndex: REPLACEMENT_INDEX_NAME,
+      message: `Index ${REPLACEMENT_INDEX_NAME} is active and no obsolete legacy index found.`
+    };
   }
 
-  logger.info("Creating partial unique index accountBodyHash_1 with non-empty string filter...");
-  await collection.createIndex(
-    { accountBodyHash: 1 },
-    {
-      name: "accountBodyHash_1",
-      unique: true,
-      partialFilterExpression: desiredPartialFilter,
-      background: true
+  // Step 2: Precondition check - verify no duplicate valid non-empty hashes exist before creating unique index
+  if (!isReplacementValid) {
+    const duplicates = await collection
+      .aggregate([
+        {
+          $match: {
+            accountBodyHash: { $type: "string", $gt: "" }
+          }
+        },
+        {
+          $group: {
+            _id: "$accountBodyHash",
+            count: { $sum: 1 },
+            eventIds: { $push: "$eventId" }
+          }
+        },
+        {
+          $match: {
+            count: { $gt: 1 }
+          }
+        }
+      ])
+      .toArray();
+
+    if (duplicates.length > 0) {
+      const err = new Error(
+        `Precondition failed: Found ${duplicates.length} duplicate non-empty accountBodyHash value(s) in collection. ` +
+          `Migration aborted to prevent unique index build failure. Duplicates: ${JSON.stringify(duplicates)}`
+      );
+      err.code = "DUPLICATE_HASHES_FOUND";
+      err.duplicates = duplicates;
+      throw err;
     }
-  );
+
+    // Step 3: Additive creation - create replacement index under new explicit name while legacy index remains active
+    logger.info(
+      `[GAPLESS MIGRATION] Creating replacement partial unique index '${REPLACEMENT_INDEX_NAME}' (legacy indexes remain active)...`
+    );
+    await collection.createIndex(
+      { accountBodyHash: 1 },
+      {
+        name: REPLACEMENT_INDEX_NAME,
+        unique: true,
+        partialFilterExpression: desiredPartialFilter,
+        background: true
+      }
+    );
+
+    // Step 4: Verification - verify the replacement index definition in MongoDB metadata
+    const postCreateIndexes = await collection.indexes();
+    const verifiedNewIdx = postCreateIndexes.find((i) => i.name === REPLACEMENT_INDEX_NAME);
+    if (!verifiedNewIdx || verifiedNewIdx.unique !== true) {
+      throw new Error(
+        `Verification failed: '${REPLACEMENT_INDEX_NAME}' was not verified as an active unique index in MongoDB.`
+      );
+    }
+    logger.info(
+      `[GAPLESS MIGRATION] Replacement index '${REPLACEMENT_INDEX_NAME}' verified active in MongoDB.`
+    );
+  }
+
+  // Step 5: Safe retirement - drop obsolete legacy indexes only now that replacement index is active
+  const retired = [];
+  for (const legacy of legacyIndices) {
+    logger.info(`[GAPLESS MIGRATION] Retiring obsolete legacy index '${legacy.name}'...`);
+    await collection.dropIndex(legacy.name);
+    retired.push(legacy.name);
+  }
 
   return {
     status: "MIGRATED",
-    message: "Successfully upgraded accountBodyHash_1 to partial unique index with non-empty string filter."
+    replacementIndex: REPLACEMENT_INDEX_NAME,
+    retiredIndices: retired,
+    message: `Successfully established gapless replacement index ${REPLACEMENT_INDEX_NAME} and retired legacy index(es).`
   };
 }
 
 // Standalone execution entrypoint
 if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
+  const sanitizeUri = (uri) => {
+    if (!uri) return "";
+    try {
+      return uri.replace(/\/\/(.*):(.*)@/, "//***:***@");
+    } catch {
+      return "[REDACTED_URI]";
+    }
+  };
+
   const runMigration = async () => {
     try {
       const env = validateEnv();
@@ -71,8 +144,8 @@ if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
         process.exit(1);
       }
 
+      logger.info(`Connecting to MongoDB for index migration at ${sanitizeUri(mongoUri)}...`);
       await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
-      logger.info("Connected to MongoDB for index migration.");
 
       const result = await migratePaymentLifecycleIndexes(mongoose.connection.db);
       logger.info(`✅ Index migration finished: ${result.status} - ${result.message}`);
