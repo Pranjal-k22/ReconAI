@@ -12,7 +12,8 @@
     "test:integration": "vitest run tests/integration",
     "demo:generate": "node scripts/generateDemoData.js",
     "demo:seed": "node scripts/seedDemoData.js",
-    "demo:reset": "node scripts/resetDemo.js"
+    "demo:reset": "node scripts/resetDemo.js",
+    "migrate:indexes": "node scripts/migrateIndexes.js"
   },
   "dependencies": {
     "@google/genai": "^2.20.0",

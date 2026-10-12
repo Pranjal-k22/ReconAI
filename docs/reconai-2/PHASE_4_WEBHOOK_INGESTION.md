@@ -60,17 +60,33 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
    `deduplicationKey: { type: String, required: true, unique: true, index: true }`
 2. **Account-Scoped Raw Body SHA-256 Fingerprint (`accountBodyHash`):**
    `accountBodyHash = "RAZORPAY_BODY:" + accountId + ":" + sha256(rawBytes)`
-   Enforced via MongoDB **partial unique index** (without `default: null`):
+   Normalized with Mongoose setter:
+   ```javascript
+   accountBodyHash: {
+     type: String,
+     trim: true,
+     default: undefined,
+     set: (v) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined)
+   }
+   ```
+   Enforced via MongoDB **partial unique index** targeting only valid non-empty string hashes:
    ```javascript
    paymentLifecycleEventSchema.index(
      { accountBodyHash: 1 },
      {
        unique: true,
-       partialFilterExpression: { accountBodyHash: { $type: "string" } }
+       partialFilterExpression: { accountBodyHash: { $type: "string", $gt: "" } }
      }
    );
    ```
-   **Why Partial Unique Index is Required:** In MongoDB, sparse indexes still index documents where the field has an explicit `null` value. If Mongoose applied `default: null`, multiple non-webhook lifecycle events (e.g. claims, orders, reconciliations) would collide on `{ accountBodyHash: null }`. By omitting `default: null` and applying `partialFilterExpression: { accountBodyHash: { $type: "string" } }`, MongoDB only indexes documents where `accountBodyHash` is an actual string. Multiple documents with omitted or null hashes coexist with zero collisions, while duplicate string hashes are strictly rejected with `E11000`.
+   **Why Non-Empty Partial Unique Index is Required:** In MongoDB, sparse indexes still index documents where the field has an explicit `null` value. Furthermore, a `{ $type: "string" }` filter still indexes empty strings (`""`), causing potential collision if multiple documents omit hashes with empty strings. By normalizing blank/empty hashes to `undefined` (omitted) and enforcing `partialFilterExpression: { accountBodyHash: { $type: "string", $gt: "" } }`, MongoDB only indexes non-empty string hashes. Multiple documents with omitted, `null`, or empty string hashes coexist with zero collisions, while valid non-empty string hashes are strictly unique and reject duplicate replays with `E11000`.
+   **Existing-Index Migration Procedure:**
+   When upgrading an existing MongoDB database from legacy sparse or basic string indexes, MongoDB does not automatically alter existing indexes with conflicting options upon `autoIndex` (emitting error code 86). ReconAI provides a safe, non-destructive migration utility:
+   ```bash
+   npm run migrate:indexes
+   # or node scripts/migrateIndexes.js
+   ```
+   This drops only the conflicting `accountBodyHash_1` index and recreates the non-empty partial unique index while preserving 100% of existing documents and deduplication records.
 3. **Modified-Header Replay Defense:**
    If a replay arrives with the exact same signed body and signature but with a *changed or spoofed `X-Razorpay-Event-Id` header*, the `accountBodyHash` index intercepts it. The request is idempotently acknowledged as `DUPLICATE_ACKNOWLEDGED` (`isDuplicate: true`), creating zero duplicate records and executing zero state changes.
 4. **Event-ID Payload Tampering / Collision Defense:**

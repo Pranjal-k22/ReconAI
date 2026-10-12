@@ -8,7 +8,8 @@ import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { AuditLog } from "../../src/models/AuditLog.js";
-import { ingestRazorpayWebhook } from "../../src/services/webhook/webhookService.js";
+import { ingestRazorpayWebhook, isValidReplayHash } from "../../src/services/webhook/webhookService.js";
+import { migratePaymentLifecycleIndexes } from "../../scripts/migrateIndexes.js";
 
 /**
  * Sanitizes MongoDB connection URIs to prevent credential leakage in test logs.
@@ -675,7 +676,7 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     expect(caseInDb.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
   });
 
-  it("9. verify accountBodyHash partial unique index: multiple documents with omitted/null accountBodyHash coexist without collision, while duplicate string hashes are rejected", async () => {
+  it("9. verify accountBodyHash partial unique index: multiple documents with omitted, null, and empty-string accountBodyHash coexist without collision, while duplicate string hashes are rejected", async () => {
     if (!isMongoAvailable) return;
 
     // Inspect actual MongoDB index definition
@@ -684,40 +685,139 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     expect(hashIndex).toBeDefined();
     expect(hashIndex.unique).toBe(true);
     expect(hashIndex.partialFilterExpression).toEqual({
-      accountBodyHash: { $type: "string" }
+      accountBodyHash: { $type: "string", $gt: "" }
     });
 
-    // 1. Create and persist 2 distinct lifecycle events through the normal model path omitting accountBodyHash
-    const evtId1 = `evt_probe_nohash_${Date.now()}_1`;
-    const evtId2 = `evt_probe_nohash_${Date.now()}_2`;
-    trackedEventIds.add(evtId1);
-    trackedEventIds.add(evtId2);
+    // 1. Create and persist distinct lifecycle events through the normal model path
+    // with omitted, null, and empty-string accountBodyHash
+    const evtOmitted1 = `evt_probe_omitted_${Date.now()}_1`;
+    const evtOmitted2 = `evt_probe_omitted_${Date.now()}_2`;
+    const evtNull1 = `evt_probe_null_${Date.now()}_1`;
+    const evtNull2 = `evt_probe_null_${Date.now()}_2`;
+    const evtEmpty1 = `evt_probe_empty_${Date.now()}_1`;
+    const evtEmpty2 = `evt_probe_empty_${Date.now()}_2`;
 
-    const doc1 = await PaymentLifecycleEvent.create({
-      eventId: evtId1,
+    trackedEventIds.add(evtOmitted1);
+    trackedEventIds.add(evtOmitted2);
+    trackedEventIds.add(evtNull1);
+    trackedEventIds.add(evtNull2);
+    trackedEventIds.add(evtEmpty1);
+    trackedEventIds.add(evtEmpty2);
+
+    const docOmitted1 = await PaymentLifecycleEvent.create({
+      eventId: evtOmitted1,
       tenantId: "sh_probe_tenant",
       sourceSystem: "GATEWAY_WEBHOOK",
-      deduplicationKey: `KEY_PROBE_${Date.now()}_1`,
+      deduplicationKey: `KEY_OMITTED_${Date.now()}_1`,
       normalizedEventType: "ORDER_CREATED",
-      payloadFingerprint: "fingerprint_probe_1"
+      payloadFingerprint: "fp_omitted_1"
     });
-    expect(doc1.accountBodyHash).toBeUndefined();
+    expect(docOmitted1.accountBodyHash).toBeUndefined();
 
-    const doc2 = await PaymentLifecycleEvent.create({
-      eventId: evtId2,
+    const docOmitted2 = await PaymentLifecycleEvent.create({
+      eventId: evtOmitted2,
       tenantId: "sh_probe_tenant",
       sourceSystem: "GATEWAY_WEBHOOK",
-      deduplicationKey: `KEY_PROBE_${Date.now()}_2`,
+      deduplicationKey: `KEY_OMITTED_${Date.now()}_2`,
       normalizedEventType: "ORDER_CREATED",
-      payloadFingerprint: "fingerprint_probe_2"
+      payloadFingerprint: "fp_omitted_2"
     });
-    expect(doc2.accountBodyHash).toBeUndefined();
+    expect(docOmitted2.accountBodyHash).toBeUndefined();
 
-    // 2. Both writes succeed when other keys are distinct
-    const countNoHash = await PaymentLifecycleEvent.countDocuments({
-      eventId: { $in: [evtId1, evtId2] }
+    // Explicit null
+    const docNull1 = await PaymentLifecycleEvent.create({
+      eventId: evtNull1,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_NULL_${Date.now()}_1`,
+      accountBodyHash: null,
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fp_null_1"
     });
-    expect(countNoHash).toBe(2);
+    expect(docNull1.accountBodyHash).toBeUndefined();
+
+    const docNull2 = await PaymentLifecycleEvent.create({
+      eventId: evtNull2,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_NULL_${Date.now()}_2`,
+      accountBodyHash: null,
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fp_null_2"
+    });
+    expect(docNull2.accountBodyHash).toBeUndefined();
+
+    // Explicit empty string ""
+    const docEmpty1 = await PaymentLifecycleEvent.create({
+      eventId: evtEmpty1,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_EMPTY_${Date.now()}_1`,
+      accountBodyHash: "",
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fp_empty_1"
+    });
+    expect(docEmpty1.accountBodyHash).toBeUndefined();
+
+    const docEmpty2 = await PaymentLifecycleEvent.create({
+      eventId: evtEmpty2,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_EMPTY_${Date.now()}_2`,
+      accountBodyHash: "   ",
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fp_empty_2"
+    });
+    expect(docEmpty2.accountBodyHash).toBeUndefined();
+
+    // Direct driver insert with raw BSON empty string to verify index level partial filter ($gt: '')
+    const rawEvtEmpty1 = `evt_probe_raw_empty1_${Date.now()}`;
+    const rawEvtEmpty2 = `evt_probe_raw_empty2_${Date.now()}`;
+    trackedEventIds.add(rawEvtEmpty1);
+    trackedEventIds.add(rawEvtEmpty2);
+
+    await PaymentLifecycleEvent.collection.insertOne({
+      eventId: rawEvtEmpty1,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_RAW_EMPTY1_${Date.now()}`,
+      accountBodyHash: "",
+      normalizedEventType: "ORDER_CREATED",
+      currency: "INR",
+      payloadFingerprint: "fp_raw_empty1",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    await PaymentLifecycleEvent.collection.insertOne({
+      eventId: rawEvtEmpty2,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_RAW_EMPTY2_${Date.now()}`,
+      accountBodyHash: "",
+      normalizedEventType: "ORDER_CREATED",
+      currency: "INR",
+      payloadFingerprint: "fp_raw_empty2",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    // 2. Both Mongoose and raw driver writes succeed: multiple non-hash docs coexist
+    const countTotal = await PaymentLifecycleEvent.countDocuments({
+      eventId: {
+        $in: [
+          evtOmitted1,
+          evtOmitted2,
+          evtNull1,
+          evtNull2,
+          evtEmpty1,
+          evtEmpty2,
+          rawEvtEmpty1,
+          rawEvtEmpty2
+        ]
+      }
+    });
+    expect(countTotal).toBe(8);
 
     // 3. Verify that duplicate non-empty string hashes for the same account are STILL rejected
     const testHash = `RAZORPAY_BODY:acc_unique_probe:${Date.now()}`;
@@ -855,5 +955,144 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     expect(caseInDb.discrepancyCategory).toBe("STATUS_MISMATCH");
     expect(caseInDb.safeHoldCode).toBe("ADMIN_HOLD");
     expect(caseInDb.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+  });
+
+  it("11. confirm the application never treats an empty string as a valid replay-protection hash", async () => {
+    if (!isMongoAvailable) return;
+
+    // Direct unit helper verification
+    expect(isValidReplayHash("")).toBe(false);
+    expect(isValidReplayHash("   ")).toBe(false);
+    expect(isValidReplayHash(null)).toBe(false);
+    expect(isValidReplayHash(undefined)).toBe(false);
+    expect(isValidReplayHash("RAZORPAY_BODY:acc:hash123")).toBe(true);
+
+    // Ingestion test: verify that having documents with empty/null hashes in the database
+    // never causes a webhook to falsely match as a duplicate
+    const orderId = `order_empty_hash_guard_${Date.now()}`;
+    const paymentId = `pay_empty_hash_guard_${Date.now()}`;
+    const eventId = `evt_empty_hash_guard_${Date.now()}`;
+    const tenantId = "sh_empty_hash_merchant";
+
+    trackedOrderIds.add(orderId);
+    trackedPaymentIds.add(paymentId);
+    trackedEventIds.add(eventId);
+
+    await MerchantOrder.create({
+      merchantOrderId: orderId,
+      tenantId,
+      amountPaise: 5000,
+      currency: "INR",
+      status: "CREATED"
+    });
+
+    const rawBody = JSON.stringify({
+      entity: "event",
+      account_id: "acc_empty_guard",
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 5000,
+            currency: "INR",
+            status: "captured",
+            notes: { tenantId }
+          }
+        }
+      }
+    });
+
+    const res = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signBody(rawBody))
+      .set("X-Razorpay-Event-Id", eventId)
+      .send(rawBody);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.isDuplicate).toBe(false);
+    expect(res.body.data.status).toBe("ACCEPTED");
+  });
+
+  it("12. verify existing-index migration upgrades legacy sparse index to non-empty partial unique index without data loss", async () => {
+    if (!isMongoAvailable) return;
+
+    // Use a disposable collection in the test database to safely demonstrate migration
+    const db = mongoose.connection.db;
+    const testColName = `disposable_lifecycle_migration_${Date.now()}`;
+    const testCol = db.collection(testColName);
+    await testCol.drop().catch(() => {});
+
+    try {
+      // 1. Establish legacy state: index with old sparse: true
+      await testCol.createIndex(
+        { accountBodyHash: 1 },
+        { name: "accountBodyHash_1", unique: true, sparse: true }
+      );
+
+      const legacyIndexes = await testCol.indexes();
+      const initialIdx = legacyIndexes.find((idx) => idx.name === "accountBodyHash_1");
+      expect(initialIdx.sparse).toBe(true);
+      expect(initialIdx.partialFilterExpression).toBeUndefined();
+
+      // 2. Insert representative legacy documents
+      const legacyDocs = [
+        { eventId: "legacy_1", deduplicationKey: "LEGACY:1", payloadFingerprint: "fp1" },
+        { eventId: "legacy_2", deduplicationKey: "LEGACY:2", accountBodyHash: "RAZORPAY_BODY:acc:hash1", payloadFingerprint: "fp2" },
+        { eventId: "legacy_3", deduplicationKey: "LEGACY:3", accountBodyHash: "RAZORPAY_BODY:acc:hash2", payloadFingerprint: "fp3" }
+      ];
+      await testCol.insertMany(legacyDocs);
+
+      const countBefore = await testCol.countDocuments();
+      expect(countBefore).toBe(3);
+
+      // 3. Run migration function
+      const migrationResult = await migratePaymentLifecycleIndexes({
+        collection: () => testCol
+      });
+      expect(migrationResult.status).toBe("MIGRATED");
+
+      // 4. Verify all documents preserved
+      const countAfter = await testCol.countDocuments();
+      expect(countAfter).toBe(3);
+
+      // 5. Verify index upgraded to partial unique with $gt: ''
+      const updatedIndexes = await testCol.indexes();
+      const upgradedIdx = updatedIndexes.find((idx) => idx.name === "accountBodyHash_1");
+      expect(upgradedIdx.unique).toBe(true);
+      expect(upgradedIdx.sparse).toBeUndefined();
+      expect(upgradedIdx.partialFilterExpression).toEqual({
+        accountBodyHash: { $type: "string", $gt: "" }
+      });
+
+      // 6. Verify post-migration coexistence of omitted, null, and empty strings
+      await testCol.insertOne({ eventId: "new_omitted", deduplicationKey: "NEW:1", payloadFingerprint: "fp4" });
+      await testCol.insertOne({ eventId: "new_null", deduplicationKey: "NEW:2", accountBodyHash: null, payloadFingerprint: "fp5" });
+      await testCol.insertOne({ eventId: "new_empty_1", deduplicationKey: "NEW:3", accountBodyHash: "", payloadFingerprint: "fp6" });
+      await testCol.insertOne({ eventId: "new_empty_2", deduplicationKey: "NEW:4", accountBodyHash: "", payloadFingerprint: "fp7" });
+
+      const countWithBlanks = await testCol.countDocuments();
+      expect(countWithBlanks).toBe(7);
+
+      // 7. Verify duplicate valid hash is rejected
+      let duplicateBlocked = false;
+      try {
+        await testCol.insertOne({ eventId: "new_dup", deduplicationKey: "NEW:5", accountBodyHash: "RAZORPAY_BODY:acc:hash1", payloadFingerprint: "fp8" });
+      } catch (err) {
+        if (err.code === 11000) duplicateBlocked = true;
+      }
+      expect(duplicateBlocked).toBe(true);
+
+      // 8. Verify idempotency
+      const secondRun = await migratePaymentLifecycleIndexes({
+        collection: () => testCol
+      });
+      expect(secondRun.status).toBe("NO_CHANGE_NEEDED");
+    } finally {
+      await testCol.drop().catch(() => {});
+    }
   });
 });

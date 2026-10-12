@@ -84,7 +84,9 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
     },
     accountBodyHash: {
       type: String,
-      trim: true
+      trim: true,
+      default: undefined,
+      set: (v) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined)
     },
     normalizedEventType: {
       type: String,
@@ -181,7 +183,12 @@ paymentLifecycleEventSchema.index(
   { accountBodyHash: 1 },
   {
     unique: true,
-    partialFilterExpression: { accountBodyHash: { $type: "string" } }
+    partialFilterExpression: {
+      accountBodyHash: {
+        $type: "string",
+        $gt: ""
+      }
+    }
   }
 );
 

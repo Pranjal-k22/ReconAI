@@ -49,6 +49,14 @@ const inMemoryPayments = new Map(); // gatewayPaymentId -> paymentDoc
 const inMemoryOrders = new Map(); // merchantOrderId -> orderDoc
 const inMemoryCases = new Map(); // caseId -> caseDoc
 
+/**
+ * Validates whether a hash string is a non-empty string suitable for replay protection.
+ * Prevents treating empty strings, nulls, or blanks as replay keys.
+ */
+export function isValidReplayHash(hash) {
+  return typeof hash === "string" && hash.trim().length > 0;
+}
+
 export function resetInMemoryWebhookStore() {
   inMemoryEvents.clear();
   inMemoryBodyHashes.clear();
@@ -253,7 +261,10 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
   const accountId = (eventEnvelope.account_id || "").trim() || "default";
 
   // Raw body SHA-256 fingerprint scoped to the provider account
-  const accountBodyHash = `RAZORPAY_BODY:${accountId}:${payloadFingerprint}`;
+  const accountBodyHash =
+    payloadFingerprint && typeof payloadFingerprint === "string" && payloadFingerprint.trim().length > 0
+      ? `RAZORPAY_BODY:${accountId}:${payloadFingerprint.trim()}`
+      : undefined;
 
   let deduplicationKey = "";
   let sourceEventId = "";
@@ -340,7 +351,9 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       await PaymentLifecycleEvent.create(quarantinedEventDoc).catch(() => {});
     } else {
       inMemoryEvents.set(deduplicationKey, quarantinedEventDoc);
-      inMemoryBodyHashes.set(accountBodyHash, deduplicationKey);
+      if (isValidReplayHash(accountBodyHash)) {
+        inMemoryBodyHashes.set(accountBodyHash.trim(), deduplicationKey);
+      }
     }
 
     return {
@@ -421,28 +434,32 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
 
     // Check B: Has this exact raw body hash already been processed for this provider account?
     // (Protects against replays with modified/different event-ID headers)
-    const existingByBody = await PaymentLifecycleEvent.findOne({ accountBodyHash }).lean();
-    if (existingByBody) {
-      await createAuditEvent({
-        actorType: "RAZORPAY_ADAPTER",
-        actorId: "webhook-ingress",
-        action: "WEBHOOK_DUPLICATE_SKIPPED",
-        entityType: "PaymentLifecycleEvent",
-        entityId: existingByBody.eventId,
-        metadata: {
-          reason: "RAW_BODY_REPLAY_DIFFERENT_EVENT_ID",
-          originalEventId: existingByBody.sourceEventId,
-          replayEventId: sourceEventId,
-          accountBodyHash
-        }
-      }).catch(() => {});
+    if (isValidReplayHash(accountBodyHash)) {
+      const existingByBody = await PaymentLifecycleEvent.findOne({
+        accountBodyHash: accountBodyHash.trim()
+      }).lean();
+      if (existingByBody) {
+        await createAuditEvent({
+          actorType: "RAZORPAY_ADAPTER",
+          actorId: "webhook-ingress",
+          action: "WEBHOOK_DUPLICATE_SKIPPED",
+          entityType: "PaymentLifecycleEvent",
+          entityId: existingByBody.eventId,
+          metadata: {
+            reason: "RAW_BODY_REPLAY_DIFFERENT_EVENT_ID",
+            originalEventId: existingByBody.sourceEventId,
+            replayEventId: sourceEventId,
+            accountBodyHash
+          }
+        }).catch(() => {});
 
-      return {
-        success: true,
-        status: "DUPLICATE_ACKNOWLEDGED",
-        isDuplicate: true,
-        eventId: existingByBody.eventId
-      };
+        return {
+          success: true,
+          status: "DUPLICATE_ACKNOWLEDGED",
+          isDuplicate: true,
+          eventId: existingByBody.eventId
+        };
+      }
     }
   } else {
     // In-memory offline checks
@@ -488,8 +505,8 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       };
     }
 
-    if (inMemoryBodyHashes.has(accountBodyHash)) {
-      const existingKey = inMemoryBodyHashes.get(accountBodyHash);
+    if (isValidReplayHash(accountBodyHash) && inMemoryBodyHashes.has(accountBodyHash.trim())) {
+      const existingKey = inMemoryBodyHashes.get(accountBodyHash.trim());
       const existing = inMemoryEvents.get(existingKey);
       await createAuditEvent({
         actorType: "RAZORPAY_ADAPTER",
@@ -562,8 +579,12 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       lifecycleEvent = await PaymentLifecycleEvent.create(eventDoc);
     } catch (err) {
       if (err.code === 11000 || (err.message && err.message.includes("E11000"))) {
+        const queryOr = [{ deduplicationKey }];
+        if (isValidReplayHash(accountBodyHash)) {
+          queryOr.push({ accountBodyHash: accountBodyHash.trim() });
+        }
         const existing = await PaymentLifecycleEvent.findOne({
-          $or: [{ deduplicationKey }, { accountBodyHash }]
+          $or: queryOr
         }).lean();
 
         if (existing && existing.payloadFingerprint !== payloadFingerprint) {
@@ -609,7 +630,9 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     }
   } else {
     inMemoryEvents.set(deduplicationKey, eventDoc);
-    inMemoryBodyHashes.set(accountBodyHash, deduplicationKey);
+    if (isValidReplayHash(accountBodyHash)) {
+      inMemoryBodyHashes.set(accountBodyHash.trim(), deduplicationKey);
+    }
     lifecycleEvent = eventDoc;
   }
 
