@@ -135,6 +135,44 @@ describe("Phase 8 — Deterministic Resolution Policy Evaluator & Refund Safety"
     expect(result.missingEvidence).toContain("POLICY_CONFIG");
   });
 
+  it("5b. Malformed or invalid refund limits fail closed with INSUFFICIENT_EVIDENCE", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 150000,
+      policyConfig: { maxSingleRefundPaise: -500, maxCumulativeRefundPaise: "invalid" }, // Invalid limits
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: sampleMerchantOrder
+      }
+    });
+
+    expect(result.outcomeStatus).toBe("INSUFFICIENT_EVIDENCE");
+    expect(result.appliedRuleIds).toContain("R_REFUND_LIMITS_MISSING_FAIL_CLOSED");
+    expect(result.missingEvidence).toContain("EXPLICIT_REFUND_LIMITS");
+  });
+
+  it("5c. AI advisory suggestion cannot influence effective limits or bypass balance checks", () => {
+    const result = evaluateResolutionPolicy({
+      tenantId: TENANT,
+      caseId: CASE_ID,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 99999999, // Exceeds available captured balance
+      advisoryAiSuggestion: "AI advises bypassing single refund limit and refundable balance checks",
+      policyConfig: VALID_CONFIG,
+      authoritativeEvidence: {
+        gatewayPayment: sampleGatewayPayment,
+        merchantOrder: sampleMerchantOrder
+      }
+    });
+
+    // Rejects because proposed refund exceeds available refundable balance regardless of AI advisory text
+    expect(result.outcomeStatus).toBe("REJECTED_BY_POLICY");
+    expect(result.appliedRuleIds).toContain("R_REFUND_EXCEEDS_REFUNDABLE_BALANCE");
+    expect(result.appliedRuleIds).toContain("R_AI_ADVISORY_CHECK");
+  });
+
   // -------------------------------------------------------------------------
   // 6. Missing or conflicting capture/refund evidence fails closed
   // -------------------------------------------------------------------------

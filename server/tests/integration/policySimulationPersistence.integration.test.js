@@ -369,4 +369,40 @@ describe("Deterministic Resolution Policy & Dry-Run Simulator - MongoDB Integrat
     const orderAfter = await MerchantOrder.findOne({ merchantOrderId: "ORD-POL-INT-01", tenantId: TENANT_A }).lean();
     expect(orderAfter.status).toBe("CANCELLED");
   });
+
+  it("10. Missing policyConfig fails closed in MongoDB integration with INSUFFICIENT_EVIDENCE", async () => {
+    // When no policy configuration is supplied, refund evaluation fails closed
+    const res = await evaluateAndSimulateResolution({
+      tenantId: TENANT_A,
+      caseId: CASE_ID_A,
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 120000,
+      idempotencyKey: "idem-missing-config-001",
+      policyConfig: null // No approved limits supplied
+    });
+
+    expect(res.decision.outcomeStatus).toBe("INSUFFICIENT_EVIDENCE");
+    expect(res.decision.appliedRuleIds).toContain("R_REFUND_LIMITS_MISSING_FAIL_CLOSED");
+    expect(res.decision.missingEvidence).toContain("POLICY_CONFIG");
+
+    // Action status is recorded as REJECTED_BY_POLICY
+    const fetchedAction = await PaymentAction.findOne({ actionId: res.decision.actionId }).lean();
+    expect(fetchedAction.actionStatus).toBe("REJECTED_BY_POLICY");
+  });
+
+  it("11. Unsupported or stale policyVersion is rejected before decision persistence", async () => {
+    await expect(
+      evaluateAndSimulateResolution({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        proposedActionType: "WAIT_AND_MONITOR",
+        idempotencyKey: "idem-unsupported-ver-001",
+        policyVersion: "stale-v0"
+      })
+    ).rejects.toThrow(/Policy version 'stale-v0' is unsupported/i);
+
+    // Verify zero decisions persisted for this idempotency key
+    const count = await PolicyDecision.countDocuments({ idempotencyKey: "idem-unsupported-ver-001" });
+    expect(count).toBe(0);
+  });
 });

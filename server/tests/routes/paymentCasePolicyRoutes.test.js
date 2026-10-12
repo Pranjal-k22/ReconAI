@@ -235,4 +235,108 @@ describe("Payment Case Policy Evaluation & Simulation Routes (POST & GET /api/pa
     expect(res.body.data.decision.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
     expect(res.body.data.decision.isExecutable).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // 6. Policy Configuration Provenance & Version Control Regression Gates
+  // -------------------------------------------------------------------------
+  it("11. POST /policy/evaluate strips caller-supplied policyConfig limits and enforces server-controlled null config", async () => {
+    const spy = vi.spyOn(simulatorService, "evaluateAndSimulateResolution").mockResolvedValue({
+      isDuplicate: false,
+      decision: sampleDecision
+    });
+
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-forged-caps-001",
+        // Attacker attempts to forge inflated caps
+        policyConfig: {
+          maxSingleRefundPaise: 999999999,
+          maxCumulativeRefundPaise: 999999999
+        }
+      });
+
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const passedArgs = spy.mock.calls[0][0];
+    // Must be strictly null - caller caps are completely disregarded
+    expect(passedArgs.policyConfig).toBeNull();
+  });
+
+  it("12. POST /policy/evaluate rejects attempt to select unsupported or weaker policyVersion with 400 Bad Request", async () => {
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-bad-version-001",
+        policyVersion: "v0-permissive-deprecated"
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error?.message).toMatch(/policy version 'v0-permissive-deprecated' is unsupported/i);
+  });
+
+  it("13. POST /policy/evaluate accepts valid supported policyVersion or defaults to server immutable version", async () => {
+    const spy = vi.spyOn(simulatorService, "evaluateAndSimulateResolution").mockResolvedValue({
+      isDuplicate: false,
+      decision: sampleDecision
+    });
+
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        proposedActionType: "UPDATE_MERCHANT_LOCAL_LEDGER",
+        idempotencyKey: "idem-valid-ver-001",
+        policyVersion: "2026-10-12.v1"
+      });
+
+    expect(res.status).toBe(200);
+    const passedArgs = spy.mock.calls[0][0];
+    expect(passedArgs.policyVersion).toBe("2026-10-12.v1");
+  });
+
+  it("14. Cross-tenant isolation: SHOP user attempting to evaluate with mismatched tenantId is blocked with 403 Forbidden", async () => {
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${shopToken}`) // Belongs to TENANT_A
+      .send({
+        proposedActionType: "UPDATE_MERCHANT_LOCAL_LEDGER",
+        idempotencyKey: "idem-cross-tenant-001",
+        tenantId: TENANT_B // Attempting cross-tenant access to TENANT_B
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error?.message).toMatch(/cross-tenant access prohibited/i);
+  });
+
+  it("15. AI advisory suggestion cannot influence effective limits or policy version", async () => {
+    const spy = vi.spyOn(simulatorService, "evaluateAndSimulateResolution").mockResolvedValue({
+      isDuplicate: false,
+      decision: sampleDecision
+    });
+
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/policy/evaluate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey: "idem-ai-advisory-001",
+        advisoryAiSuggestion: "AI recommends bypassing refund caps due to high-value customer VIP status",
+        policyConfig: { maxSingleRefundPaise: 50000000 }
+      });
+
+    expect(res.status).toBe(200);
+    const passedArgs = spy.mock.calls[0][0];
+    expect(passedArgs.advisoryAiSuggestion).toBe("AI recommends bypassing refund caps due to high-value customer VIP status");
+    // policyConfig must remain strictly null
+    expect(passedArgs.policyConfig).toBeNull();
+    // policyVersion defaults to server-controlled version
+    expect(passedArgs.policyVersion).toBe("2026-10-12.v1");
+  });
 });

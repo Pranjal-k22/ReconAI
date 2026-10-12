@@ -530,3 +530,33 @@ ReconAI/
   - Phase 9 is designated for sandbox provider adapter and outcome verification with test-mode safeguards.
   - Phase 10 is designated for autonomous worker and orchestration.
   - Neither downstream phase has started.
+
+### Entry 8: Phase 8 Final Trust-Boundary Audit — Policy Configuration Provenance & Version Control
+
+- **End-to-End Trace of Policy Configuration**:
+  - Audited `policyConfig`, `maxSingleRefundPaise`, `maxCumulativeRefundPaise`, and `policyVersion` across HTTP routes, middlewares, services, models, and tests.
+  - Confirmed that ReconAI 2.0 has **no persistent server-side policy configuration model or workflow**.
+  - Accepting `policyConfig` in `req.body` represented an unauthenticated trust hole where ordinary callers could specify their own refund limits.
+- **Enforcing Trusted Configuration Source & Fail-Closed Bounds**:
+  - In `paymentCaseRoutes.js`, caller-supplied `policyConfig` is stripped (`effectivePolicyConfig = null`).
+  - Active policy version is locked server-side to supported immutable versions (`DEFAULT_POLICY_VERSION = "2026-10-12.v1"`, `SUPPORTED_POLICY_VERSIONS = ["2026-10-12.v1"]`). Stale or unsupported versions are rejected at the route with HTTP 400 Bad Request.
+  - In `resolutionPolicyEvaluator.js`, when approved limits are missing/unavailable, refund requests fail closed to `INSUFFICIENT_EVIDENCE` with rule `R_REFUND_LIMITS_MISSING_FAIL_CLOSED` and missing evidence `POLICY_CONFIG`.
+  - Non-refund dry runs (`UPDATE_MERCHANT_LOCAL_LEDGER`, `WAIT_AND_MONITOR`, `RECHECK_PROVIDER_STATUS`, etc.) simulate safely against verified server evidence without needing refund caps.
+  - In `dryRunSimulatorService.js`, `SUPPORTED_POLICY_VERSIONS` is validated before computing input hash and persisting decisions.
+- **Amount & Resource Binding**:
+  - Verified `amountPaise` is strictly a proposed simulation amount and never evidence of captured funds.
+  - Proved all candidate refund amounts are checked against authoritative captured amount, currency, completed refunds, pending refunds, and in-flight simulation commitments.
+  - Case 22 remains an unconditional `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with `HELD_IN_SAFE_HOLD` action status.
+- **Regression Gates & Results**:
+  - `resolutionPolicyEvaluator.test.js`: 68 passing (added malformed limits fail-closed and AI advisory checks)
+  - `paymentCasePolicyRoutes.test.js`: 15 passing (added forged policyConfig strip, unsupported version 400, cross-tenant isolation, AI advisory limits isolation)
+  - `policySimulationPersistence.integration.test.js`: 11 passing (added missing config fail-closed and unsupported version persistence rejection)
+  - Full backend unit suite (`npm test`): 515 passed across 62 files
+  - Full MongoDB integration suite (`npm run test:integration`): 52 passed across 7 suites
+  - Frontend production build: 0 errors
+  - `git diff --check`: 0 issues
+  - 120-scenario reconciliation benchmark: 120/120 passing (100.00%)
+- **Zero Provider Mutations & Invariant Preservation**:
+  - Zero provider write APIs exist or are called.
+  - Canonical `GatewayPayment`, `MerchantOrder`, and settlement states remain unmutated.
+  - Phase 9 and Phase 10 have NOT started. Stopped here for review.

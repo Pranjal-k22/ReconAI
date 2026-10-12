@@ -30,34 +30,40 @@ It evaluates proposed payment resolutions against:
    - `SAFE_HOLD`: Applies quarantine and records safe-hold reason codes.
    - `NOTIFY_PARTIES`: Simulates notification intent without dispatching live SMS or emails.
    - `EXTERNAL_ESCALATION_REQUIRED`: Records escalation requirements without external contact.
-4. **Mandatory Refund Safety Policy**:
-   - **Fail-Closed Limits**: `policyConfig` must explicitly configure `maxSingleRefundPaise` and `maxCumulativeRefundPaise`. If limits are missing or invalid, evaluation fails closed to `INSUFFICIENT_EVIDENCE`.
-   - **Customer Claims Are Not Proof**: Unverified customer debit claims without gateway capture cannot authorize refunds (`REJECTED_BY_POLICY`).
-   - **Gateway Failure Alone Is Insufficient**: Failed gateway payments have zero captured funds; refunds are rejected (`REJECTED_BY_POLICY`).
-   - **Authoritative Refundable Balance Invariant**:
-     - Formula: `availableRefundablePaise = authoritativeCapturedPaise - (completedRefundsPaise + pendingRefundsPaise + inFlightCommitmentsPaise)`.
-     - Authoritative captured amount is established from verified provider capture evidence (`capturedAmountPaise`, `amountCapturedPaise`, `rawData.amount_captured`, or verified `CAPTURED` payment status).
-     - The requested payment amount, authorized amount, or merchant order amount is **never** substituted for a smaller or unverified captured amount.
-     - Completed refunds (`completedRefundsPaise`), pending refunds (`pendingRefundsPaise`), and in-flight simulation commitments (`inFlightCommitmentsPaise`) are deducted from the available balance.
-     - Currency must match explicitly (INR). Mismatches fail closed to `REJECTED_BY_POLICY`.
-   - **Double-Refund In-Flight Prevention**: Active in-flight refunds (`REFUND_PENDING`) or existing simulated/proposed actions block additional refund proposals.
-   - **Captured-Amount Evidence Conflict Detection**:
-     - If candidate captured-amount evidence fields (`capturedAmountPaise`, `amountCapturedPaise`, `rawData.amount_captured`) disagree, the engine fails closed to `SAFE_HOLD` (`R_CAPTURED_AMOUNT_CONFLICT_FAIL_CLOSED`), preventing silent fallback to a more favorable balance.
-   - **Late Capture on Cancelled Order (Case 22)**:
-     - Verified capture on a cancelled order deterministically evaluates to `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with action status `HELD_IN_SAFE_HOLD`.
-     - AI advisory suggestions and caller-supplied approval flags (`approvedCancellationRefund`, `adminApproval`, etc.) cannot bypass safe hold and are rejected as non-authoritative.
-     - Order cannot be automatically reopened or refunded.
-     - No trusted server-side approval mechanism exists; therefore Case 22 unconditionally remains on `SAFE_HOLD`.
-     - Canonical `MerchantOrder` remains `CANCELLED` and canonical financial records are 100% unmutated.
-   - **Conclusive Duplicate Payment Evidence (Case 7)**:
-     - Requires at least two distinct payment attempts for the same correlated order.
-     - Both payments must be independently verified as `CAPTURED` by the provider.
-     - Both attempts must be bound to the same tenant, with matching currencies and amounts.
-     - Duplicate candidate score must be >= 0.95. Ambiguous candidates, mismatched orders, cross-tenant attempts, or uncaptured payments fail closed to `SAFE_HOLD` or `INSUFFICIENT_EVIDENCE`.
-   - **Case 1 Provenance Reconciliation**:
-     - ReconAI currently has no trusted frontend telemetry verification source.
-     - Ordinary `CAPTURED` payment with `PENDING` order routes through the evidence-faithful status mismatch ledger repair policy (`R_UNVERIFIED_TIMEOUT_FALLBACK_TO_STATUS_MISMATCH`) without causal inference of frontend timeout.
-   - **Formal Dispute / Fraud Allegations**: Chargebacks (Case 30) and fraud allegations (Case 29) freeze automated refunds into `SAFE_HOLD`.
+33: 4. **Mandatory Refund Safety Policy & Configuration Provenance**:
+34:    - **Trusted Policy Configuration Provenance**:
+35:      - ReconAI 2.0 currently has no persistent, authorized server-side policy configuration model or workflow.
+36:      - To prevent caller-supplied caps from inflating limits, ordinary evaluation requests are strictly stripped of `policyConfig` at the route boundary (`effectivePolicyConfig = null`).
+37:      - Active policy version is locked server-side to immutable supported versions (`DEFAULT_POLICY_VERSION = "2026-10-12.v1"`, `SUPPORTED_POLICY_VERSIONS = ["2026-10-12.v1"]`). Stale, unsupported, or weaker versions are rejected with HTTP 400 Bad Request.
+38:      - When approved limits are unavailable or missing, refund requests fail closed to `INSUFFICIENT_EVIDENCE` (`R_REFUND_LIMITS_MISSING_FAIL_CLOSED`).
+39:      - Non-refund dry runs (`UPDATE_MERCHANT_LOCAL_LEDGER`, `WAIT_AND_MONITOR`, `RECHECK_PROVIDER_STATUS`, etc.) evaluate and simulate safely against verified server evidence without requiring refund limits.
+40:    - **Fail-Closed Limits**: Refund evaluation requires explicit approved limits (`maxSingleRefundPaise` and `maxCumulativeRefundPaise`). If limits are missing or invalid, evaluation fails closed to `INSUFFICIENT_EVIDENCE`.
+41:    - **Customer Claims Are Not Proof**: Unverified customer debit claims without gateway capture cannot authorize refunds (`REJECTED_BY_POLICY`).
+42:    - **Gateway Failure Alone Is Insufficient**: Failed gateway payments have zero captured funds; refunds are rejected (`REJECTED_BY_POLICY`).
+43:    - **Authoritative Refundable Balance Invariant**:
+44:      - Formula: `availableRefundablePaise = authoritativeCapturedPaise - (completedRefundsPaise + pendingRefundsPaise + inFlightCommitmentsPaise)`.
+45:      - Authoritative captured amount is established from verified provider capture evidence (`capturedAmountPaise`, `amountCapturedPaise`, `rawData.amount_captured`, or verified `CAPTURED` payment status).
+46:      - The requested payment amount, authorized amount, or merchant order amount is **never** substituted for a smaller or unverified captured amount.
+47:      - Completed refunds (`completedRefundsPaise`), pending refunds (`pendingRefundsPaise`), and in-flight simulation commitments (`inFlightCommitmentsPaise`) are deducted from the available balance.
+48:      - Currency must match explicitly (INR). Mismatches fail closed to `REJECTED_BY_POLICY`.
+49:    - **Double-Refund In-Flight Prevention**: Active in-flight refunds (`REFUND_PENDING`) or existing simulated/proposed actions block additional refund proposals.
+50:    - **Captured-Amount Evidence Conflict Detection**:
+51:      - If candidate captured-amount evidence fields (`capturedAmountPaise`, `amountCapturedPaise`, `rawData.amount_captured`) disagree, the engine fails closed to `SAFE_HOLD` (`R_CAPTURED_AMOUNT_CONFLICT_FAIL_CLOSED`), preventing silent fallback to a more favorable balance.
+52:    - **Late Capture on Cancelled Order (Case 22)**:
+53:      - Verified capture on a cancelled order deterministically evaluates to `SAFE_HOLD` (`R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`) with action status `HELD_IN_SAFE_HOLD`.
+54:      - AI advisory suggestions and caller-supplied approval flags (`approvedCancellationRefund`, `adminApproval`, etc.) cannot bypass safe hold and are rejected as non-authoritative.
+55:      - Order cannot be automatically reopened or refunded.
+56:      - No trusted server-side approval mechanism exists; therefore Case 22 unconditionally remains on `SAFE_HOLD`.
+57:      - Canonical `MerchantOrder` remains `CANCELLED` and canonical financial records are 100% unmutated.
+58:    - **Conclusive Duplicate Payment Evidence (Case 7)**:
+59:      - Requires at least two distinct payment attempts for the same correlated order.
+60:      - Both payments must be independently verified as `CAPTURED` by the provider.
+61:      - Both attempts must be bound to the same tenant, with matching currencies and amounts.
+62:      - Duplicate candidate score must be >= 0.95. Ambiguous candidates, mismatched orders, cross-tenant attempts, or uncaptured payments fail closed to `SAFE_HOLD` or `INSUFFICIENT_EVIDENCE`.
+63:    - **Case 1 Provenance Reconciliation**:
+64:      - ReconAI currently has no trusted frontend telemetry verification source.
+65:      - Ordinary `CAPTURED` payment with `PENDING` order routes through the evidence-faithful status mismatch ledger repair policy (`R_UNVERIFIED_TIMEOUT_FALLBACK_TO_STATUS_MISMATCH`) without causal inference of frontend timeout.
+66:    - **Formal Dispute / Fraud Allegations**: Chargebacks (Case 30) and fraud allegations (Case 29) freeze automated refunds into `SAFE_HOLD`.
 5. **Durable Idempotency & Concurrency**:
    - Persisted in MongoDB via `PolicyDecision` model with unique compound index `{ tenantId: 1, idempotencyKey: 1 }`.
    - Identical inputs replay existing decisions without duplicate action creation.
@@ -127,11 +133,7 @@ All 30 scenarios from `EDGE_CASE_POLICY_MATRIX.md` are evaluated deterministical
     "amountPaise": 150000,
     "currency": "INR",
     "idempotencyKey": "idem-case-001",
-    "policyConfig": {
-      "maxSingleRefundPaise": 500000,
-      "maxCumulativeRefundPaise": 2000000,
-      "currentCumulativeDailyPaise": 0
-    }
+    "policyVersion": "2026-10-12.v1"
   }
   ```
 - **Response**:
@@ -170,13 +172,13 @@ All 30 scenarios from `EDGE_CASE_POLICY_MATRIX.md` are evaluated deterministical
 
 | Gate | Scope | Command | Result |
 | :--- | :--- | :--- | :--- |
-| **1, 2, 3, 4** | Policy Evaluator & Matrix Coverage | `npx vitest run tests/policy/resolutionPolicyEvaluator.test.js` | **PASS** (66/66 tests) |
-| **5 & 6** | Real-MongoDB Persistence & Concurrency | `npx vitest run tests/integration/policySimulationPersistence.integration.test.js` | **PASS** (9/9 tests) |
-| **7** | Route Endpoints & Access Control | `npx vitest run tests/routes/paymentCasePolicyRoutes.test.js` | **PASS** (10/10 tests) |
+| **1, 2, 3, 4** | Policy Evaluator & Matrix Coverage | `npx vitest run tests/policy/resolutionPolicyEvaluator.test.js` | **PASS** (68/68 tests) |
+| **5 & 6** | Real-MongoDB Persistence & Concurrency | `npx vitest run tests/integration/policySimulationPersistence.integration.test.js` | **PASS** (11/11 tests) |
+| **7** | Route Endpoints & Access Control | `npx vitest run tests/routes/paymentCasePolicyRoutes.test.js` | **PASS** (15/15 tests) |
 | **8** | Monitoring & State Machine | `npx vitest run tests/monitoring` | **PASS** (34/34 tests across 3 files) |
 | **9** | Webhook Signatures & Ingestion | `npx vitest run tests/webhook` | **PASS** (25/25 tests across 2 files) |
-| **10** | Full Real-MongoDB Integration Suite | `npm run test:integration` | **PASS** (50/50 tests across 7 suites) |
-| **11** | Full Backend Unit Test Suite | `npm test` | **PASS** (508/508 tests across 62 files) |
+| **10** | Full Real-MongoDB Integration Suite | `npm run test:integration` | **PASS** (52/52 tests across 7 suites) |
+| **11** | Full Backend Unit Test Suite | `npm test` | **PASS** (515/515 tests across 62 files) |
 | **12** | Frontend Production Build | `npm run build` (in `client/`) | **PASS** (Built in 8.27s, 0 errors) |
 | **13** | Git Diff & Whitespace Hygiene | `git diff --check` | **PASS** (Clean, 0 errors) |
 | **14** | 120-Scenario Reconciliation Benchmark | `npx vitest run tests/reconciliation/benchmarkCompatibility.test.js` | **PASS** (120/120 scenarios, 100.00% match) |

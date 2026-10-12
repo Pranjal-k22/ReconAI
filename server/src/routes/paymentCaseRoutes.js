@@ -13,6 +13,10 @@ import {
   evaluateAndSimulateResolution,
   getDecisionsByCaseId
 } from "../services/policy/dryRunSimulatorService.js";
+import {
+  DEFAULT_POLICY_VERSION,
+  SUPPORTED_POLICY_VERSIONS
+} from "../services/policy/resolutionPolicyEvaluator.js";
 import { authenticate, requireRoles, requireTenantScope } from "../middleware/authMiddleware.js";
 import { ROLES } from "../services/auth/tokenService.js";
 import { AppError } from "../utils/AppError.js";
@@ -218,7 +222,6 @@ router.post(
         amountPaise,
         currency = "INR",
         idempotencyKey,
-        policyConfig,
         policyVersion,
         advisoryAiSuggestion
       } = req.body || {};
@@ -229,6 +232,19 @@ router.post(
       if (!idempotencyKey) {
         throw AppError.badRequest("idempotencyKey is required");
       }
+
+      // Security: Select active policy version server-side; reject unsupported, stale, or weaker versions
+      const effectivePolicyVersion = policyVersion || DEFAULT_POLICY_VERSION;
+      if (!SUPPORTED_POLICY_VERSIONS.includes(effectivePolicyVersion)) {
+        throw AppError.badRequest(
+          `Policy version '${effectivePolicyVersion}' is unsupported. Supported immutable versions: ${SUPPORTED_POLICY_VERSIONS.join(", ")}`
+        );
+      }
+
+      // Security: Ordinary API evaluation requests cannot supply or override effective refund limits.
+      // Caller-supplied policyConfig is strictly ignored; evaluation uses server-side approved configuration only.
+      // In the absence of an authorized server-side limits record, effectivePolicyConfig resolves to null (fail-closed).
+      const effectivePolicyConfig = null;
 
       const isGlobal =
         req.user.role === ROLES.ADMIN ||
@@ -248,8 +264,8 @@ router.post(
         amountPaise,
         currency,
         idempotencyKey,
-        policyConfig,
-        policyVersion,
+        policyConfig: effectivePolicyConfig,
+        policyVersion: effectivePolicyVersion,
         advisoryAiSuggestion
       });
 

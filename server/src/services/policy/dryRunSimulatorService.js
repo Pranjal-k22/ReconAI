@@ -8,7 +8,11 @@ import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
 import { PaymentAction } from "../../models/PaymentAction.js";
 import { recordProposedAction } from "../ledger/paymentActionService.js";
 import { createAuditEvent } from "../audit/auditService.js";
-import { evaluateResolutionPolicy, DEFAULT_POLICY_VERSION } from "./resolutionPolicyEvaluator.js";
+import {
+  evaluateResolutionPolicy,
+  DEFAULT_POLICY_VERSION,
+  SUPPORTED_POLICY_VERSIONS
+} from "./resolutionPolicyEvaluator.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
 
@@ -184,13 +188,20 @@ export async function evaluateAndSimulateResolution({
     throw AppError.badRequest("idempotencyKey is required");
   }
 
+  const effectivePolicyVersion = policyVersion || DEFAULT_POLICY_VERSION;
+  if (!SUPPORTED_POLICY_VERSIONS.includes(effectivePolicyVersion)) {
+    throw AppError.badRequest(
+      `Policy version '${effectivePolicyVersion}' is unsupported. Supported: ${SUPPORTED_POLICY_VERSIONS.join(", ")}`
+    );
+  }
+
   const inputHash = computeInputHash({
     tenantId,
     caseId,
     proposedActionType,
     amountPaise,
     currency,
-    policyVersion
+    policyVersion: effectivePolicyVersion
   });
 
   // 1. Durable Idempotency Verification
@@ -277,7 +288,7 @@ export async function evaluateAndSimulateResolution({
     authoritativeEvidence,
     advisoryAiSuggestion,
     policyConfig,
-    policyVersion
+    policyVersion: effectivePolicyVersion
   });
 
   // 4. Generate Local Dry-Run Simulation Semantics
@@ -334,7 +345,7 @@ export async function evaluateAndSimulateResolution({
       merchantOrderId: effectiveCaseDoc?.merchantOrderId || null,
       idempotencyKey: idempotencyKey.trim(),
       inputHash,
-      policyVersion,
+      policyVersion: effectivePolicyVersion,
       proposedActionType,
       outcomeStatus: policyResult.outcomeStatus,
       appliedRuleIds: policyResult.appliedRuleIds,
