@@ -1,12 +1,17 @@
+import { pathToFileURL } from "url";
 import { validateEnv } from "./config/env.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import { logger } from "./config/logger.js";
+import { startMonitoringWorker, stopMonitoringWorker } from "./services/monitoring/monitoringWorker.js";
 import app from "./app.js";
 
 let server = null;
+let monitoringWorker = null;
 let isShuttingDown = false;
 
-const startServer = async () => {
+export const getMonitoringWorker = () => monitoringWorker;
+
+export const startServer = async () => {
   try {
     // Step 1: Validate environment variables early
     const env = validateEnv();
@@ -20,22 +25,39 @@ const startServer = async () => {
       await connectDatabase(env.MONGODB_URI);
     }
 
-    // Step 3: Start HTTP Server only after database connection succeeds
+    // Step 3: Start In-Process Payment Monitoring Worker if enabled
+    if (env.MONITORING_WORKER_ENABLED !== false) {
+      monitoringWorker = startMonitoringWorker({
+        intervalMs: env.MONITORING_INTERVAL_MS || 30000,
+        maxTasks: env.MONITORING_MAX_CONCURRENT_READS || 5,
+        leaseDurationMs: env.MONITORING_LEASE_DURATION_MS || 30000
+      });
+    }
+
+    // Step 4: Start HTTP Server only after database connection succeeds
     const PORT = env.PORT || 5000;
     server = app.listen(PORT, () => {
       logger.info(`🚀 ReconAI API Server running on port ${PORT} [${env.NODE_ENV}]`);
     });
+
+    return { server, monitoringWorker };
   } catch (error) {
     logger.error(`❌ Server startup failed: ${error.message}`);
     process.exit(1);
   }
 };
 
-const handleGracefulShutdown = async (signal) => {
+export const handleGracefulShutdown = async (signal) => {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
   logger.info(`Received ${signal}. Initiating graceful shutdown...`);
+
+  // Stop monitoring sweeps immediately
+  if (monitoringWorker) {
+    stopMonitoringWorker(monitoringWorker);
+    monitoringWorker = null;
+  }
 
   if (server) {
     server.close(async () => {
@@ -67,4 +89,8 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-startServer();
+// Detect if server.js is executed directly as main CLI script
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  startServer();
+}

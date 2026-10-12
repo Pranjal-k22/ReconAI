@@ -90,13 +90,38 @@ Monitoring jobs are persisted in the `PaymentMonitoringTask` collection:
 - API keys, secrets, tokens, passwords, and PII are redacted from all audit logs via `sanitizeAuditData`.
 - Provider HTTP Basic Auth credentials are never logged or exposed in HTTP responses.
 
+### 4.4 Runtime Deployment Topologies
+
+Phase 5 supports both deployment models with identical atomic claiming and concurrency safety:
+
+- **Option A — Unified In-Process Worker (Default):**
+  - Activated by API server startup in [server.js](file:///c:/WEB%20DEVELOPMENT/ReconAI/server/src/server.js).
+  - Starts after database connection is ready (`connectDatabase(env.MONGODB_URI)`).
+  - Controlled by `MONITORING_WORKER_ENABLED` (default: `true`).
+  - Unit tests importing [app.js](file:///c:/WEB%20DEVELOPMENT/ReconAI/server/src/app.js) never start background workers.
+  - Automatically stops sweeps on `SIGINT` and `SIGTERM` before database teardown.
+- **Option B — Dedicated Standalone Worker Fleet:**
+  - Dedicated entrypoint in [worker.js](file:///c:/WEB%20DEVELOPMENT/ReconAI/server/src/worker.js) runnable via `npm run start:worker`.
+  - Independent process lifecycle for high-volume deployments.
+  - Safely coexists with multiple instances via MongoDB atomic lease claiming (`findOneAndUpdate`).
+
+### 4.5 Real Task Enqueueing Pathways
+
+1. **Provider Webhook Ingress ([webhookService.js](file:///c:/WEB%20DEVELOPMENT/ReconAI/server/src/services/webhook/webhookService.js)):**
+   - Non-terminal authorized/created events (`payment.authorized`, `payment.created`) auto-schedule durable monitoring with 60s initial delay.
+   - Authoritative terminal events (`payment.captured`, `payment.failed`, `payment.refunded`) automatically complete and settle active monitoring tasks (`outcomeReason: "WEBHOOK_EVENT_ARRIVED"`).
+2. **Provider Sync Pipeline ([paymentSyncService.js](file:///c:/WEB%20DEVELOPMENT/ReconAI/server/src/services/razorpay/paymentSyncService.js)):**
+   - Synced pending or authorized payment attempts are idempotently enqueued for monitoring.
+3. **Bounded Reconciliation Discovery (`enqueueUnmonitoredPendingPayments`):**
+   - Bounded scanner (default limit: 50 records) discovers existing pending payments in the database that lack active monitoring tasks, ensuring no attempt is orphaned.
+
 ---
 
 ## 5. Environment Configuration
 
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `MONITORING_WORKER_ENABLED` | `true` | Enables or disables background monitoring runner |
+| `MONITORING_WORKER_ENABLED` | `true` | Enables or disables background monitoring runner in `server.js` |
 | `MONITORING_INTERVAL_MS` | `30000` | Background runner polling interval in milliseconds |
 | `MONITORING_LEASE_DURATION_MS` | `30000` | Distributed lease duration before expired lock recovery |
 | `MONITORING_MAX_CONCURRENT_READS` | `5` | Maximum concurrent provider read operations per sweep |
@@ -123,13 +148,15 @@ Phase 5 registers the following append-only audit actions in `AuditLog`:
 | :--- | :--- | :--- |
 | **1. Lifecycle State Machine Unit Tests** | `tests/monitoring/paymentStateMachine.test.js` | **PASS** (15/15 tests) |
 | **2. Monitoring Scheduler & Retry Unit Tests** | `tests/monitoring/monitoringScheduler.test.js` | **PASS** (10/10 tests) |
-| **3. Real-MongoDB Persistence & Concurrency** | `tests/integration/monitoringPersistence.integration.test.js` | **PASS** (7/7 tests) |
-| **4. Webhook Ingestion & Signature Suite** | `tests/webhook/` | **PASS** (25/25 tests) |
-| **5. Full Integration Suite (Real MongoDB)** | `npm run test:integration` | **PASS** (30/30 tests across 3 suites) |
-| **6. Full Backend Unit & Domain Suite** | `npm test` | **PASS** (354/354 tests across 55 suites) |
-| **7. 120-Scenario Reconciliation Benchmark** | `tests/reconciliation/benchmarkCompatibility.test.js` | **PASS** (120/120 classifications, 100.00% match rate) |
-| **8. Frontend Production Build** | `npm run build` (in `/client`) | **PASS** (Zero build errors) |
-| **9. Git Diff Check** | `git diff --check` | **PASS** (Clean whitespace, no conflicts) |
+| **3. Runtime Wiring & Task Lifecycle Tests** | `tests/monitoring/monitoringRuntimeWiring.test.js` | **PASS** (9/9 tests) |
+| **4. Real-MongoDB Persistence & Concurrency** | `tests/integration/monitoringPersistence.integration.test.js` | **PASS** (7/7 tests) |
+| **5. Webhook Ingestion & Signature Suite** | `tests/webhook/` | **PASS** (25/25 tests) |
+| **6. Full Integration Suite (Real MongoDB)** | `npm run test:integration` | **PASS** (30/30 tests across 3 suites) |
+| **7. Full Backend Unit & Domain Suite** | `npm test` | **PASS** (363/363 tests across 56 suites) |
+| **8. Real Runtime Smoke Test** | `node scripts/monitoringSmokeTest.js` | **PASS** (Real DB, live worker activation & shutdown) |
+| **9. 120-Scenario Reconciliation Benchmark** | `tests/reconciliation/benchmarkCompatibility.test.js` | **PASS** (120/120 classifications, 100.00% match rate) |
+| **10. Frontend Production Build** | `npm run build` (in `/client`) | **PASS** (Zero build errors) |
+| **11. Git Diff Check** | `git diff --check` | **PASS** (Clean whitespace, no conflicts) |
 
 ---
 

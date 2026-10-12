@@ -153,29 +153,40 @@ export async function sweepDueMonitoringTasks({
 export function startMonitoringWorker({
   intervalMs = 30000,
   maxTasks = 5,
+  leaseDurationMs = 30000,
   workerId = `worker_${crypto.randomUUID().slice(0, 8)}`,
-  customFetch = null
+  customFetch = null,
+  runImmediate = true
 } = {}) {
   let isRunning = false;
+  let isStopped = false;
 
-  const intervalId = setInterval(async () => {
-    if (isRunning) return; // Prevent overlapping runs on slow sweeps
+  const runSweep = async () => {
+    if (isRunning || isStopped) return;
     isRunning = true;
     try {
-      await sweepDueMonitoringTasks({ maxTasks, workerId, customFetch });
+      await sweepDueMonitoringTasks({ maxTasks, workerId, customFetch, leaseDurationMs });
     } catch (err) {
       logger.error({ err: err.message }, "Background monitoring worker sweep failed");
     } finally {
       isRunning = false;
     }
-  }, intervalMs);
+  };
 
-  logger.info({ workerId, intervalMs, maxTasks }, "Payment monitoring background worker started");
+  if (runImmediate) {
+    runSweep().catch(() => {});
+  }
+
+  const intervalId = setInterval(runSweep, intervalMs);
+
+  logger.info({ workerId, intervalMs, maxTasks, leaseDurationMs }, "Payment monitoring background worker started");
 
   return {
     intervalId,
     workerId,
+    isRunning: () => !isStopped,
     stop: () => {
+      isStopped = true;
       clearInterval(intervalId);
       logger.info({ workerId }, "Payment monitoring background worker stopped");
     }

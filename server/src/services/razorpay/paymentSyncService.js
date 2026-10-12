@@ -2,6 +2,7 @@ import { GatewayPayment } from "../../models/GatewayPayment.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { isRazorpayConfigured, validateTestModeSafety, fetchRazorpayApi } from "./razorpayClient.js";
 import { normalizeRazorpayPayment } from "./razorpayNormalizer.js";
+import { schedulePaymentMonitoring } from "../monitoring/paymentMonitoringService.js";
 import { AppError } from "../../utils/AppError.js";
 import logger from "../../config/logger.js";
 
@@ -105,6 +106,18 @@ export async function syncRazorpayPayments({ from, to, actorId = "system-sync", 
       const bulkResult = await GatewayPayment.bulkWrite(bulkOps);
       insertedCount = bulkResult.upsertedCount || 0;
       updatedCount = bulkResult.modifiedCount || (bulkResult.matchedCount - insertedCount) || 0;
+
+      // Enqueue eligible pending or authorized payments for lifecycle monitoring
+      for (const rec of normalizedRecords) {
+        if (rec.status === "CREATED" || rec.status === "AUTHORIZED" || rec.status === "PENDING") {
+          await schedulePaymentMonitoring({
+            tenantId: rec.tenantId || "default_tenant",
+            gatewayPaymentId: rec.gatewayPaymentId,
+            merchantOrderId: rec.merchantOrderId,
+            initialDelaySeconds: 60
+          }).catch(() => {});
+        }
+      }
     }
 
     const durationMs = Date.now() - startTime;

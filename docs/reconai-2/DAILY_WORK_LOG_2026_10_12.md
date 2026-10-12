@@ -356,8 +356,11 @@ ReconAI/
    - Bounded provider-read rechecks via Razorpay GET `/v1/payments/:id` with exponential backoff `[60s, 300s, 900s, 1800s]` and jitter.
    - Critical timeout policy: timeouts and retry exhaustion leave outcomes `UNKNOWN` or `PENDING` rather than marking payments failed. Exhausted tasks trigger safe-hold containment (`ADMIN_HOLD`, `MONITORING_RETRY_EXHAUSTED`).
    - Durable job persistence via `PaymentMonitoringTask` with atomic distributed lease locks (`findOneAndUpdate`) and automatic dead-letter recovery of expired leases from crashed workers.
-   - Added 25 unit tests (`paymentStateMachine.test.js` [15], `monitoringScheduler.test.js` [10]) and 7 real-MongoDB integration tests (`monitoringPersistence.integration.test.js`).
-   - All 354 backend unit tests pass, all 30 real-MongoDB integration tests pass, frontend build passes, and reconciliation benchmark achieves 120/120 (100.00%).
+   - Connected real runtime worker activation in `server.js` (Option A in-process) and created standalone worker entrypoint in `worker.js` (Option B with `npm run start:worker`), both with graceful shutdown handlers (`SIGINT`/`SIGTERM`).
+   - Connected real task enqueueing: webhook ingestion auto-schedules monitoring for `payment.authorized`/`payment.created` and completes tasks on terminal events; payment sync auto-enqueues pending records; added bounded `enqueueUnmonitoredPendingPayments`.
+   - Verified with real runtime smoke test (`server/scripts/monitoringSmokeTest.js`) against isolated MongoDB.
+   - Added 34 unit tests (`paymentStateMachine.test.js` [15], `monitoringScheduler.test.js` [10], `monitoringRuntimeWiring.test.js` [9]) and 7 real-MongoDB integration tests (`monitoringPersistence.integration.test.js`).
+   - All 363 backend unit tests pass across 56 test files, all 30 real-MongoDB integration tests pass, frontend build passes, and reconciliation benchmark achieves 120/120 (100.00%).
 
 ---
 

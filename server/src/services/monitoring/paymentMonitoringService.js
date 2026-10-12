@@ -98,13 +98,12 @@ export async function schedulePaymentMonitoring({
           gatewayPaymentId: cleanPaymentId,
           merchantOrderId,
           caseId,
+          status: "PENDING",
+          attemptCount: 0,
           maxAttempts,
           backoffIntervalsSeconds: [60, 300, 900, 1800],
-          deadlineAt
-        },
-        $set: {
-          status: "PENDING",
           nextRunAt,
+          deadlineAt,
           lockedUntil: null,
           lockedBy: null,
           metadata
@@ -113,29 +112,29 @@ export async function schedulePaymentMonitoring({
       { upsert: true, new: true }
     );
   } else {
-    // In-memory offline fallback
+    // In-memory offline fallback: only initialize if not already registered
     const key = `${cleanTenantId}:${cleanPaymentId}`;
-    taskDoc = inMemoryTasks.get(key) || {
-      taskId,
-      tenantId: cleanTenantId,
-      gatewayPaymentId: cleanPaymentId,
-      merchantOrderId,
-      caseId,
-      status: "PENDING",
-      attemptCount: 0,
-      maxAttempts,
-      backoffIntervalsSeconds: [60, 300, 900, 1800],
-      nextRunAt,
-      deadlineAt,
-      lockedUntil: null,
-      lockedBy: null,
-      metadata
-    };
-    taskDoc.status = "PENDING";
-    taskDoc.nextRunAt = nextRunAt;
-    taskDoc.lockedUntil = null;
-    taskDoc.lockedBy = null;
-    inMemoryTasks.set(key, taskDoc);
+    if (!inMemoryTasks.has(key)) {
+      taskDoc = {
+        taskId,
+        tenantId: cleanTenantId,
+        gatewayPaymentId: cleanPaymentId,
+        merchantOrderId,
+        caseId,
+        status: "PENDING",
+        attemptCount: 0,
+        maxAttempts,
+        backoffIntervalsSeconds: [60, 300, 900, 1800],
+        nextRunAt,
+        deadlineAt,
+        lockedUntil: null,
+        lockedBy: null,
+        metadata
+      };
+      inMemoryTasks.set(key, taskDoc);
+    } else {
+      taskDoc = inMemoryTasks.get(key);
+    }
   }
 
   await createAuditEvent({
@@ -586,4 +585,64 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
     paymentStatus: mappedStatus,
     reason: "RETRY_CEILING_REACHED_UNKNOWN_OUTCOME"
   };
+}
+
+/**
+ * Bounded discovery and scheduling for unmonitored pending/authorized payment attempts.
+ * Prevents orphan pending records from being missed if initial events were lost.
+ *
+ * @param {Object} [options]
+ * @param {string|null} [options.tenantId=null] - Optional tenant scope filter
+ * @param {number} [options.limit=50] - Maximum records to inspect
+ * @param {number} [options.initialDelaySeconds=60] - Initial delay
+ * @param {Date} [options.asOfTime=new Date()] - Injectable clock reference
+ * @returns {Promise<Object>} Summary of enqueued records
+ */
+export async function enqueueUnmonitoredPendingPayments({
+  tenantId = null,
+  limit = 50,
+  initialDelaySeconds = 60,
+  asOfTime = new Date()
+} = {}) {
+  const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
+  if (!isMongoConnected) return { enqueuedCount: 0, skippedCount: 0 };
+
+  const query = {
+    status: { $in: ["CREATED", "AUTHORIZED", "PENDING"] }
+  };
+  if (tenantId) {
+    query.tenantId = tenantId;
+  }
+
+  const pendingPayments = await GatewayPayment.find(query)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+
+  let enqueuedCount = 0;
+  let skippedCount = 0;
+
+  for (const pay of pendingPayments) {
+    if (!pay.tenantId || !pay.gatewayPaymentId) continue;
+
+    const existingTask = await PaymentMonitoringTask.findOne({
+      tenantId: pay.tenantId,
+      gatewayPaymentId: pay.gatewayPaymentId
+    }).lean();
+
+    if (!existingTask) {
+      await schedulePaymentMonitoring({
+        tenantId: pay.tenantId,
+        gatewayPaymentId: pay.gatewayPaymentId,
+        merchantOrderId: pay.merchantOrderId,
+        initialDelaySeconds,
+        asOfTime
+      });
+      enqueuedCount++;
+    } else {
+      skippedCount++;
+    }
+  }
+
+  return { enqueuedCount, skippedCount };
 }

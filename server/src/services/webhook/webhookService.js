@@ -13,6 +13,7 @@ import {
   canTransitionGatewayStatus,
   evaluateCanonicalTransition
 } from "../stateMachine/paymentStateMachine.js";
+import { schedulePaymentMonitoring } from "../monitoring/paymentMonitoringService.js";
 import {
   isValidSignatureFormat,
   razorpayWebhookEnvelopeSchema,
@@ -670,12 +671,24 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
         }
       }
 
-      // Settle any active monitoring tasks upon receiving authoritative provider webhook
-      if (isMongoConnected && gatewayPaymentId && (newPaymentStatus === "CAPTURED" || newPaymentStatus === "FAILED" || newPaymentStatus === "REFUNDED")) {
-        await PaymentMonitoringTask.updateMany(
-          { gatewayPaymentId, status: { $in: ["PENDING", "IN_PROGRESS"] } },
-          { $set: { status: "COMPLETED", lockedUntil: null, lastObservedStatus: newPaymentStatus, outcomeReason: "WEBHOOK_EVENT_ARRIVED" } }
-        ).catch(() => {});
+      // Settle active monitoring tasks upon receiving authoritative provider webhook
+      if (gatewayPaymentId && (newPaymentStatus === "CAPTURED" || newPaymentStatus === "FAILED" || newPaymentStatus === "REFUNDED")) {
+        if (isMongoConnected) {
+          await PaymentMonitoringTask.updateMany(
+            { gatewayPaymentId, status: { $in: ["PENDING", "IN_PROGRESS"] } },
+            { $set: { status: "COMPLETED", lockedUntil: null, lastObservedStatus: newPaymentStatus, outcomeReason: "WEBHOOK_EVENT_ARRIVED" } }
+          ).catch(() => {});
+        }
+      } else if (gatewayPaymentId && !isUnmatchedTenant && (newPaymentStatus === "CREATED" || newPaymentStatus === "AUTHORIZED" || newPaymentStatus === "PENDING")) {
+        // Enqueue/update monitoring task for eligible pending/authorized payments
+        await schedulePaymentMonitoring({
+          tenantId: resolvedTenantId,
+          gatewayPaymentId,
+          merchantOrderId,
+          initialDelaySeconds: 60
+        }).catch((err) => {
+          logger.warn({ err: err.message, gatewayPaymentId }, "Failed to auto-schedule payment monitoring from webhook");
+        });
       }
     }
 
