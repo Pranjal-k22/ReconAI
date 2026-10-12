@@ -166,3 +166,110 @@ export async function fetchRazorpayApi(endpointPath, queryParams = {}, customFet
     );
   }
 }
+
+/**
+ * Centralized POST request execution wrapper for Razorpay REST API with timeout and error normalization.
+ * Must only be invoked when sandbox write gates are verified.
+ */
+export async function postRazorpayApi(endpointPath, body = {}, customFetch = null) {
+  if (!isRazorpayConfigured() && !customFetch) {
+    throw new RazorpayProviderError(
+      RAZORPAY_ERROR_CODES.NOT_CONFIGURED,
+      "Razorpay API credentials (RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET) are not configured."
+    );
+  }
+
+  validateTestModeSafety();
+
+  const env = getEnv();
+  const timeoutMs = env.RAZORPAY_REQUEST_TIMEOUT_MS || 10000;
+  const fetchImpl = customFetch || globalThis.fetch;
+
+  if (typeof fetchImpl !== "function") {
+    throw new RazorpayProviderError(
+      RAZORPAY_ERROR_CODES.PROVIDER_ERROR,
+      "Global fetch is not available in Node environment."
+    );
+  }
+
+  const url = new URL(endpointPath, RAZORPAY_BASE_URL);
+  const authHeader = getBasicAuthHeader();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetchImpl(url.toString(), {
+      method: "POST",
+      headers: {
+        Authorization: authHeader,
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response && typeof response.status === "number") {
+      if (response.status === 401 || response.status === 403) {
+        throw new RazorpayProviderError(
+          RAZORPAY_ERROR_CODES.AUTH_ERROR,
+          "Razorpay API authentication failed. Please verify Key ID and Key Secret."
+        );
+      }
+      if (response.status === 429) {
+        throw new RazorpayProviderError(
+          RAZORPAY_ERROR_CODES.RATE_LIMIT,
+          "Razorpay API rate limit exceeded."
+        );
+      }
+      if (response.ok === false || response.status >= 400) {
+        let errDesc = "";
+        try {
+          if (typeof response.json === "function") {
+            const errJson = await response.json().catch(() => null);
+            if (errJson && errJson.error && errJson.error.description) {
+              errDesc = String(errJson.error.description);
+            }
+          }
+        } catch (_) {}
+        if (!errDesc && typeof response.text === "function") {
+          errDesc = await response.text().catch(() => "");
+        }
+        throw new RazorpayProviderError(
+          RAZORPAY_ERROR_CODES.PROVIDER_ERROR,
+          `Razorpay API returned status ${response.status}${errDesc ? `: ${errDesc}` : ""}`
+        );
+      }
+      if (typeof response.json === "function") {
+        return await response.json().catch((err) => {
+          throw new RazorpayProviderError(
+            RAZORPAY_ERROR_CODES.INVALID_RESPONSE,
+            "Failed to parse JSON response from Razorpay API.",
+            err
+          );
+        });
+      }
+    }
+
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+
+    if (err instanceof RazorpayProviderError) {
+      throw err;
+    }
+    if (err.name === "AbortError") {
+      throw new RazorpayProviderError(
+        RAZORPAY_ERROR_CODES.TIMEOUT,
+        `Razorpay API POST request timed out after ${timeoutMs}ms.`
+      );
+    }
+    throw new RazorpayProviderError(
+      RAZORPAY_ERROR_CODES.NETWORK_ERROR,
+      `Network error connecting to Razorpay: ${err.message}`,
+      err
+    );
+  }
+}

@@ -560,3 +560,50 @@ ReconAI/
   - Zero provider write APIs exist or are called.
   - Canonical `GatewayPayment`, `MerchantOrder`, and settlement states remain unmutated.
   - Phase 9 and Phase 10 have NOT started. Stopped here for review.
+
+### Entry 9: Phase 9 — Sandbox Provider Adapter & Verified Outcome Handling
+
+- **Architecture Decisions & Boundaries**:
+  - Implemented `ProviderOperation` model (`server/src/models/ProviderOperation.js`) with 5 conservative lifecycle states: `REQUESTED`, `OUTCOME_UNKNOWN`, `VERIFIED_SUCCEEDED`, `VERIFIED_FAILED`, `SAFE_HOLD`.
+  - Added centralized multi-tier sandbox write gate in `server/src/services/razorpay/razorpaySandboxAdapter.js`:
+    - Fails closed unless `RAZORPAY_MODE === "test"`, `RAZORPAY_SANDBOX_WRITES_ENABLED === true`, and `RAZORPAY_KEY_ID` starts with `"rzp_test_"`.
+    - No live credentials, production base URLs, or production write mode are permitted.
+  - Implemented `postRazorpayApi` in `server/src/services/razorpay/razorpayClient.js` with Basic Auth, AbortController timeouts, and normalized provider errors.
+  - Implemented `executeSandboxRefund` and authoritative read verification (`verifySandboxRefundStatus`, `verifyPaymentStatus`) in `razorpaySandboxAdapter.js`.
+  - Enforced deep PII and credential stripping in `sanitizeProviderPayload` (removes keys, secrets, authorization headers, email, contact, phone, vpa, card, address).
+  - Implemented 9-step resolution ordering in `server/src/services/policy/providerDispatchService.js`:
+    1. Authenticate & authorize actor.
+    2. Validate tenant, case, order, payment ownership and bindings.
+    3. Obtain authoritative evidence and policy decision.
+    4. Confirm eligibility under trusted server-side policy config (fails closed on missing limits with `R_REFUND_LIMITS_MISSING_FAIL_CLOSED` or Case 22 with `R_LATE_CAPTURE_CANCELLED_ORDER_HOLD`).
+    5. Evaluate sandbox write gate (`checkSandboxWriteGate`).
+    6. Persist initial `ProviderOperation` (`REQUESTED`) with unique `idempotencyKey`.
+    7. Dispatch permitted sandbox operation (`POST /v1/payments/:id/refund`).
+    8. Independently verify outcome via authoritative read (`GET /v1/payments/:id/refunds/:refundId`).
+    9. Persist verified outcome (`VERIFIED_SUCCEEDED`, `VERIFIED_FAILED`, `OUTCOME_UNKNOWN`, `SAFE_HOLD`).
+  - Added HTTP endpoints in `server/src/routes/paymentCaseRoutes.js`:
+    - `POST /api/payment-cases/:caseId/provider/dispatch` (protected by RBAC: `ADMIN`, `PAYMENT_CONTROLLER`).
+    - `GET /api/payment-cases/:caseId/provider/operations` (scoped to tenant).
+    - `POST /api/payment-cases/:caseId/provider/operations/:operationId/recheck` (read-only verification).
+  - Added additive index migration in `server/scripts/migrateIndexes.js` (`migrateProviderOperationIndexes`).
+- **Regression Gates & Results**:
+  1. Provider adapter unit tests (`razorpaySandboxAdapter.test.js`): 15 passed (15)
+  2. Outcome and normalization tests (`providerOutcomeVerification.test.js`, `razorpayNormalizer.test.js`): 11 passed (11)
+  3. Policy evaluator and refund-limit tests: 68 passed (68)
+  4. Case 22 security tests: Verified unconditionally locked in `SAFE_HOLD`
+  5. Phase 6 evidence-classification tests: 41 passed (41)
+  6. Route authorization and tenant isolation tests (`paymentCaseProviderRoutes.test.js` etc.): 57 passed (57)
+  7. MongoDB persistence, idempotency, and concurrency tests (`providerSandboxDispatchPersistence.integration.test.js` etc.): 20 passed (20)
+  8. Monitoring and worker regression tests: 34 passed (34)
+  9. Webhook signatures and ingestion tests: 25 passed (25)
+  10. Full real-MongoDB integration suite (`npm run test:integration`): 61 passed across 8 suites (61)
+  11. Full backend test suite (`npx vitest run`): 544 passed across 65 test files (544)
+  12. Frontend production build (`npm run build`): 2,400 modules transformed, 0 errors
+  13. Whitespace check (`git diff --check`): Clean working copy, 0 issues
+  14. 120-scenario reconciliation benchmark: 120/120 passing (100.00% match rate)
+- **Confirmations**:
+  - No live provider writes enabled or executed.
+  - Refund requests remain blocked when approved refund limits are unavailable.
+  - Case 22 remains unconditionally in safe hold.
+  - Unverified provider outcomes are never marked complete.
+  - Phase 10 has not started. Stopped for review.

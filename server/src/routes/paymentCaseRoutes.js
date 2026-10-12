@@ -14,6 +14,11 @@ import {
   getDecisionsByCaseId
 } from "../services/policy/dryRunSimulatorService.js";
 import {
+  dispatchSandboxAction,
+  getProviderOperationsByCaseId,
+  recheckProviderOperationStatus
+} from "../services/policy/providerDispatchService.js";
+import {
   DEFAULT_POLICY_VERSION,
   SUPPORTED_POLICY_VERSIONS
 } from "../services/policy/resolutionPolicyEvaluator.js";
@@ -293,6 +298,137 @@ router.get(
 
       const decisions = await getDecisionsByCaseId(caseId, scopedTenantId);
       res.status(200).json({ success: true, data: decisions });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/payment-cases/:caseId/provider/dispatch
+ * Dispatches an approved sandbox provider action (e.g. Test Mode refund).
+ * Strictly gated by Test Mode, RAZORPAY_SANDBOX_WRITES_ENABLED, and deterministic policy eligibility.
+ */
+router.post(
+  "/:caseId/provider/dispatch",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const {
+        proposedActionType = "REQUEST_REFUND",
+        amountPaise,
+        currency = "INR",
+        idempotencyKey,
+        policyVersion
+      } = req.body || {};
+
+      if (!idempotencyKey) {
+        throw AppError.badRequest("idempotencyKey is required");
+      }
+
+      // Security: Select active policy version server-side; reject unsupported versions
+      const effectivePolicyVersion = policyVersion || DEFAULT_POLICY_VERSION;
+      if (!SUPPORTED_POLICY_VERSIONS.includes(effectivePolicyVersion)) {
+        throw AppError.badRequest(
+          `Policy version '${effectivePolicyVersion}' is unsupported. Supported: ${SUPPORTED_POLICY_VERSIONS.join(", ")}`
+        );
+      }
+
+      // Security: Provider dispatch cannot accept caller-supplied refund limits.
+      // Must fail closed if server-side approved refund limits are absent.
+      const effectivePolicyConfig = null;
+
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER;
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
+
+      if (!scopedTenantId) {
+        throw AppError.badRequest("tenantId could not be determined for provider dispatch");
+      }
+
+      const result = await dispatchSandboxAction({
+        tenantId: scopedTenantId,
+        caseId,
+        actorId: req.user.sub || req.user.userId,
+        actorRole: req.user.role,
+        proposedActionType,
+        amountPaise,
+        currency,
+        idempotencyKey,
+        policyConfig: effectivePolicyConfig,
+        policyVersion: effectivePolicyVersion
+      });
+
+      if (result.dispatchBlocked) {
+        return res.status(422).json({
+          success: false,
+          error: result.reason,
+          data: result
+        });
+      }
+
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      if (err.name === "SandboxGateClosedError") {
+        return res.status(403).json({
+          success: false,
+          error: err.message,
+          code: err.code,
+          details: err.details
+        });
+      }
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/payment-cases/:caseId/provider/operations
+ * Retrieves historical provider operations for this case.
+ */
+router.get(
+  "/:caseId/provider/operations",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER, ROLES.SHOP, ROLES.AUDITOR),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER ||
+        (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.query?.tenantId : req.user.tenantId;
+
+      const operations = await getProviderOperationsByCaseId(caseId, scopedTenantId);
+      res.status(200).json({ success: true, data: operations });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/payment-cases/:caseId/provider/operations/:operationId/recheck
+ * Re-checks provider outcome via read-only authoritative verification.
+ */
+router.post(
+  "/:caseId/provider/operations/:operationId/recheck",
+  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER),
+  async (req, res, next) => {
+    try {
+      const { caseId, operationId } = req.params;
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER;
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
+
+      const result = await recheckProviderOperationStatus({
+        tenantId: scopedTenantId,
+        operationId
+      });
+
+      res.status(200).json({ success: true, data: result });
     } catch (err) {
       next(err);
     }

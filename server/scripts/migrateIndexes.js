@@ -123,6 +123,22 @@ export async function migratePaymentLifecycleIndexes(db) {
   };
 }
 
+/**
+ * Ensures indexes for ProviderOperation model are created idempotently.
+ */
+export async function migrateProviderOperationIndexes(db) {
+  const collection = db.collection("provideroperations");
+  await collection.createIndex({ tenantId: 1, idempotencyKey: 1 }, { unique: true, background: true });
+  await collection.createIndex({ tenantId: 1, caseId: 1 }, { background: true });
+  await collection.createIndex({ tenantId: 1, operationStatus: 1 }, { background: true });
+  await collection.createIndex({ providerOperationId: 1 }, { background: true });
+
+  return {
+    status: "SYNCHRONIZED",
+    message: "ProviderOperation indexes successfully synchronized."
+  };
+}
+
 // Standalone execution entrypoint
 if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
   const sanitizeUri = (uri) => {
@@ -149,6 +165,9 @@ if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
 
       const result = await migratePaymentLifecycleIndexes(mongoose.connection.db);
       logger.info(`✅ Index migration finished: ${result.status} - ${result.message}`);
+
+      const providerResult = await migrateProviderOperationIndexes(mongoose.connection.db);
+      logger.info(`✅ Provider index migration finished: ${providerResult.status} - ${providerResult.message}`);
 
       await mongoose.disconnect();
       process.exit(0);

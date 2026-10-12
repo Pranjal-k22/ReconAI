@@ -23,6 +23,16 @@ const envSchema = z
     RAZORPAY_MODE: z.enum(["test", "live"]).default("test"),
     RAZORPAY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
     RAZORPAY_WEBHOOK_SECRET: z.string().optional().default(""),
+    RAZORPAY_SANDBOX_WRITES_ENABLED: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => {
+        if (typeof val === "boolean") return val;
+        if (typeof val === "string") {
+          return val.toLowerCase() === "true" || val === "1";
+        }
+        return false;
+      })
+      .default(false),
     DEMO_MODE: z
       .union([z.boolean(), z.string()])
       .transform((val) => {
@@ -97,6 +107,24 @@ const envSchema = z
           code: z.ZodIssueCode.custom,
           path: ["SERVICE_TOKEN_SECRET"],
           message: "JWT_SECRET and SERVICE_TOKEN_SECRET must be distinct keys"
+        });
+      }
+    }
+
+    if (data.RAZORPAY_SANDBOX_WRITES_ENABLED === true) {
+      if (data.RAZORPAY_MODE !== "test") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["RAZORPAY_SANDBOX_WRITES_ENABLED"],
+          message: "RAZORPAY_SANDBOX_WRITES_ENABLED can only be enabled when RAZORPAY_MODE is 'test'"
+        });
+      }
+      const keyId = (data.RAZORPAY_KEY_ID || "").trim();
+      if (!keyId.startsWith("rzp_test_")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["RAZORPAY_KEY_ID"],
+          message: "RAZORPAY_SANDBOX_WRITES_ENABLED requires test credentials starting with 'rzp_test_'"
         });
       }
     }
