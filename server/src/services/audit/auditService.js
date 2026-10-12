@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { AuditLog } from "../../models/AuditLog.js";
 import { AppError } from "../../utils/AppError.js";
 
@@ -76,6 +77,23 @@ export async function createAuditEvent({
   const sanitizedAfter = sanitizeAuditData(after);
   const sanitizedMetadata = sanitizeAuditData(metadata);
 
+  if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+    return {
+      eventId,
+      timestamp: new Date(),
+      actorType,
+      actorId,
+      action,
+      entityType,
+      entityId,
+      runId,
+      before: sanitizedBefore,
+      after: sanitizedAfter,
+      metadata: sanitizedMetadata,
+      reason
+    };
+  }
+
   const auditDoc = await AuditLog.create({
     eventId,
     timestamp: new Date(),
@@ -114,6 +132,10 @@ export async function createAuditEventsBulk(events = []) {
     metadata: sanitizeAuditData(e.metadata || {}),
     reason: e.reason || null
   }));
+
+  if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+    return auditDocs;
+  }
 
   return await AuditLog.insertMany(auditDocs);
 }

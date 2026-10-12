@@ -19,6 +19,7 @@ import auditRoutes from "./routes/auditRoutes.js";
 import razorpayRoutes from "./routes/razorpayRoutes.js";
 import integrationRoutes from "./routes/integrationRoutes.js";
 import financeRoutes from "./routes/financeRoutes.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
 
 const env = getEnv();
 const app = express();
@@ -33,8 +34,15 @@ app.use(
   })
 );
 
-// Body parser
-app.use(express.json());
+// Body parser with raw body preservation for cryptographic webhook signature verification
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    }
+  })
+);
 
 // Request logging (active in non-test mode)
 if (env.NODE_ENV !== "test") {
@@ -49,6 +57,8 @@ app.use("/api", apiLimiter);
 app.use("/api", healthRoutes);
 // 2. /api/auth: Public login and service-token issuance endpoints (authenticated inside for /me and /logout)
 app.use("/api/auth", authRoutes);
+// 3. /api/webhooks: Provider ingress routes guarded by cryptographic HMAC signature verification
+app.use("/api/webhooks", webhookRoutes);
 
 // Protected ReconAI 2.0 Ledger & Identity Routes
 app.use("/api/payment-cases", paymentCaseRoutes);

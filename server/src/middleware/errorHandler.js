@@ -18,6 +18,12 @@ export const errorHandler = (err, req, res, next) => {
       message: e.message
     }));
   }
+  // Handle Body-Parser Payload Too Large Errors
+  else if (err.status === 413 || err.statusCode === 413 || err.type === "entity.too.large") {
+    statusCode = 413;
+    errorCode = "PAYLOAD_TOO_LARGE";
+    message = "Request entity too large";
+  }
   // Handle JSON Syntax Errors
   else if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
     statusCode = 400;

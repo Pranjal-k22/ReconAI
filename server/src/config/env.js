@@ -22,6 +22,7 @@ const envSchema = z
     RAZORPAY_KEY_SECRET: z.string().optional().default(""),
     RAZORPAY_MODE: z.enum(["test", "live"]).default("test"),
     RAZORPAY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+    RAZORPAY_WEBHOOK_SECRET: z.string().optional().default(""),
     DEMO_MODE: z
       .union([z.boolean(), z.string()])
       .transform((val) => {

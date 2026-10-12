@@ -63,7 +63,11 @@ const auditLogSchema = new mongoose.Schema(
         "AUTH_LOGIN_FAILED",
         "ACCESS_DENIED_ALERT",
         "TOKEN_REVOKED",
-        "GLOBAL_AUDIT_ACCESSED"
+        "GLOBAL_AUDIT_ACCESSED",
+        "WEBHOOK_INGESTED",
+        "WEBHOOK_DUPLICATE_SKIPPED",
+        "WEBHOOK_SIGNATURE_FAILED",
+        "WEBHOOK_QUARANTINED"
       ],
       index: true
     },
