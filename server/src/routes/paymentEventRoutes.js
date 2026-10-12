@@ -7,6 +7,8 @@ import {
 import { authenticate, requireRoles, requireTenantScope } from "../middleware/authMiddleware.js";
 import { ROLES } from "../services/auth/tokenService.js";
 
+import { AppError } from "../utils/AppError.js";
+
 const router = express.Router();
 
 router.use(authenticate);
@@ -58,6 +60,21 @@ router.post(
   async (req, res, next) => {
     try {
       const payload = { ...req.body };
+
+      // Security Safeguard 1: External API callers cannot assert internal 'RECONAI_SYSTEM' provenance
+      if (payload.sourceSystem === "RECONAI_SYSTEM") {
+        throw AppError.badRequest("Callers cannot assert 'RECONAI_SYSTEM' provenance via ingestion API");
+      }
+
+      // Security Safeguard 2: Callers cannot assert server-verified telemetry trust metadata
+      if (
+        payload.serverVerifiedTelemetry !== undefined ||
+        payload.metadata?.serverVerifiedTelemetry !== undefined ||
+        payload.rawPayload?.serverVerifiedTelemetry !== undefined ||
+        payload.provenance?.serverVerifiedTelemetry !== undefined
+      ) {
+        throw AppError.badRequest("Caller-supplied 'serverVerifiedTelemetry' is prohibited; telemetry verification cannot be asserted via API payload");
+      }
 
       if (req.user.tenantId && !payload.tenantId) {
         payload.tenantId = req.user.tenantId;

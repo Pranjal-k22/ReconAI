@@ -177,4 +177,25 @@ describe("Phase 2 — PaymentLifecycleEvent Domain Model & Evidence Ledger Tests
 
     vi.restoreAllMocks();
   });
+
+  // Test 7: Provenance security invariant rejects caller-supplied serverVerifiedTelemetry
+  it("7. Provenance security invariant: rejects caller-supplied serverVerifiedTelemetry in rawPayload or provenance", async () => {
+    await expect(
+      eventService.appendLifecycleEvent({
+        tenantId: "sh_merchant_alpha",
+        sourceSystem: "GATEWAY_WEBHOOK",
+        normalizedEventType: "PAYMENT_CAPTURED",
+        rawPayload: { serverVerifiedTelemetry: true }
+      })
+    ).rejects.toThrow(/serverVerifiedTelemetry/i);
+
+    await expect(
+      eventService.appendLifecycleEvent({
+        tenantId: "sh_merchant_alpha",
+        sourceSystem: "GATEWAY_WEBHOOK",
+        normalizedEventType: "PAYMENT_CAPTURED",
+        provenance: { serverVerifiedTelemetry: true }
+      })
+    ).rejects.toThrow(/serverVerifiedTelemetry/i);
+  });
 });

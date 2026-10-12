@@ -170,7 +170,9 @@ export function classifyPaymentScenario({
     context.authenticatedFrontendEvent ||
     context.frontendTimeout === true ||
     context.browserDropped === true ||
-    context.frontendEvent
+    context.frontendEvent ||
+    context.lifecycleEvents !== undefined ||
+    context.serverVerifiedTelemetry !== undefined
   ) {
     claims.push({
       claimType: "FRONTEND_TIMEOUT_CLAIM",

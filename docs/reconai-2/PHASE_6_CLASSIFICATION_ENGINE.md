@@ -99,8 +99,13 @@ To store immutable, tenant-scoped classification findings without duplicating la
 A rigorous security analysis of frontend evidence provenance established that:
 1. **Absence of Client Ingestion Endpoint**: ReconAI currently hosts no client-side telemetry/beacon ingestion endpoints. `PaymentLifecycleEvent.SOURCE_SYSTEMS` does not include browser or client runtimes.
 2. **Caller Forgery Prevention**: Callers cannot supply `{ authenticated: true, sessionId: "...", eventId: "..." }` or any arbitrary boolean flag in `context` to elevate a client claim into a verified provider fact. Any caller-supplied frontend claim in `context` is strictly recorded in `claims` as an unverified customer claim (`authority: "CUSTOMER_CLAIM"`, `verified: false`).
-3. **Server-Verified Provenance Requirement**: Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`) is classified only when evidence originates from authoritative server-side ledger events (`RECONAI_SYSTEM` or `MERCHANT_ORDER`) carrying explicit cryptographic/server verification (`serverVerifiedTelemetry: true`) bound strictly to the matching tenant, merchant order, and gateway payment ID.
-4. **Safe Status Mismatch Fallback**: In the absence of server-verified telemetry (the default in the current architecture), `CAPTURED` gateway payment plus `PENDING` merchant order safely classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`) with explicit missing-evidence indicators explaining that trusted frontend checkout telemetry is unobserved.
+3. **Route & Service Provenance Enforcement**:
+   - `POST /api/payment-events` strictly rejects caller-supplied `serverVerifiedTelemetry` (HTTP 400).
+   - `POST /api/payment-events` strictly rejects external callers claiming `sourceSystem: "RECONAI_SYSTEM"` (HTTP 400).
+   - `appendLifecycleEvent` in `paymentLifecycleEventService.js` strictly rejects caller-supplied `serverVerifiedTelemetry` in payload or provenance (HTTP 400).
+   - Unauthorized principals (`CUSTOMER`, `SHOP`, etc.) cannot access `POST /api/payment-events` (HTTP 403).
+4. **Server-Verified Provenance Requirement**: Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`) is classified only when evidence originates from authoritative server-side ledger events (`RECONAI_SYSTEM` or `MERCHANT_ORDER`) carrying explicit cryptographic/server verification (`serverVerifiedTelemetry: true`) bound strictly to the matching tenant, merchant order, and gateway payment ID.
+5. **Safe Status Mismatch Fallback**: In the absence of server-verified telemetry (the default in the current architecture), `CAPTURED` gateway payment plus `PENDING` merchant order safely classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`) with explicit missing-evidence indicators explaining that trusted frontend checkout telemetry is unobserved. Case 1 remains unconfirmed in ordinary production flows.
 
 ---
 
@@ -113,8 +118,9 @@ A rigorous security analysis of frontend evidence provenance established that:
 | 3 | Real-MongoDB evidence persistence and isolation tests | 4 passed in `evidencePersistence.integration.test.js` | **PASS** |
 | 4 | Monitoring state-machine, scheduler, runtime-wiring tests | 34 passed in `tests/monitoring` | **PASS** |
 | 5 | Full webhook signature and ingestion suite | 25 passed in `tests/webhook` | **PASS** |
-| 6 | Full real-MongoDB integration suite | 37 passed across 5 test suites | **PASS** |
-| 7 | Full backend unit suite (`npm test`) | 404 passed across 57 test files | **PASS** |
-| 8 | Frontend production build (`npm run build`) | Built in 8.70s with zero errors | **PASS** |
-| 9 | `git diff --check` | Clean diff, zero trailing whitespace/conflict markers | **PASS** |
-| 10 | 120-scenario reconciliation benchmark | 120/120 classifications match (100.00% match rate) | **PASS** |
+| 6 | Endpoint & service provenance security tests | 8 passed in `tests/routes/paymentEventRoutes.test.js` | **PASS** |
+| 7 | Full real-MongoDB integration suite | 37 passed across 5 test suites | **PASS** |
+| 8 | Full backend unit suite (`npm test`) | 413 passed across 58 test files | **PASS** |
+| 9 | Frontend production build (`npm run build`) | Built in 7.68s with zero errors | **PASS** |
+| 10 | `git diff --check` | Clean diff, zero trailing whitespace/conflict markers | **PASS** |
+| 11 | 120-scenario reconciliation benchmark | 120/120 classifications match (100.00% match rate) | **PASS** |

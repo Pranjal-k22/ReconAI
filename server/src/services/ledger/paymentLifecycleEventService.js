@@ -220,6 +220,14 @@ export async function appendLifecycleEvent({
     throw AppError.badRequest(`Invalid or unsupported currency '${currency}'. Supported: ${SUPPORTED_CURRENCIES.join(", ")}`);
   }
 
+  // Security Invariant: Caller-supplied serverVerifiedTelemetry is strictly prohibited
+  if (
+    rawPayload?.serverVerifiedTelemetry !== undefined ||
+    provenance?.serverVerifiedTelemetry !== undefined
+  ) {
+    throw AppError.badRequest("Caller-supplied 'serverVerifiedTelemetry' is prohibited; telemetry verification cannot be asserted via ingestion payload");
+  }
+
   // 1. Sanitize & minimize payload using strict allowlist (rawPayload is never persisted)
   const normalizedPayload = sanitizeLifecyclePayload(rawPayload);
 

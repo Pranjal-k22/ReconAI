@@ -416,10 +416,18 @@ ReconAI/
   5. Case 1 classifies as `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` only when evidence arrives through authoritative server-verified ledger events.
   6. Cross-tenant, mismatched-order, or mismatched-payment telemetry cannot be reused to prove frontend timeout.
   7. Corrupted or unverified telemetry fails safely to `STATUS_MISMATCH`.
+- **Endpoint & Service Boundary Hardening**:
+  - `POST /api/payment-events` strictly rejects caller-supplied `serverVerifiedTelemetry` (HTTP 400).
+  - `POST /api/payment-events` strictly rejects external callers attempting to assert internal `sourceSystem: "RECONAI_SYSTEM"` (HTTP 400).
+  - `appendLifecycleEvent` in `paymentLifecycleEventService.js` strictly rejects caller-supplied `serverVerifiedTelemetry` in payload or provenance (HTTP 400).
+  - Added dedicated endpoint & service security suite `tests/routes/paymentEventRoutes.test.js` (8 tests).
+  - Added service invariant test 7 in `tests/ledger/paymentLifecycleEvent.test.js`.
 - **Verification Gates**:
   - `evidenceClassifier.test.js`: 41 passed (including 7 security tests)
-  - Full backend unit suite (`npm test`): 404 passed across 57 test files
+  - `paymentEventRoutes.test.js`: 8 passed
+  - `paymentLifecycleEvent.test.js`: 7 passed
+  - Full backend unit suite (`npm test`): 413 passed across 58 test files
   - Full integration suite (`npm run test:integration`): 37 passed across 5 test suites
-  - Frontend production build (`npm run build`): Built in 8.70s with zero errors
+  - Frontend production build (`npm run build`): Built in 7.68s with zero errors
   - `git diff --check`: Clean diff, zero issues
   - 120-scenario reconciliation benchmark: 120/120 passing (100.00%)
