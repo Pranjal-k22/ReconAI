@@ -19,6 +19,8 @@ export const ROLES = Object.freeze({
   AUDITOR: "AUDITOR",
   CUSTOMER_AI: "CUSTOMER_AI",
   SHOP_AI: "SHOP_AI",
+  INVESTIGATOR_AI: "INVESTIGATOR_AI",
+  RESOLUTION_PLANNER_AI: "RESOLUTION_PLANNER_AI",
   PAYMENT_CONTROLLER: "PAYMENT_CONTROLLER"
 });
 
@@ -32,6 +34,8 @@ export const HUMAN_ROLES = Object.freeze([
 export const SERVICE_ROLES = Object.freeze([
   ROLES.CUSTOMER_AI,
   ROLES.SHOP_AI,
+  ROLES.INVESTIGATOR_AI,
+  ROLES.RESOLUTION_PLANNER_AI,
   ROLES.PAYMENT_CONTROLLER
 ]);
 
@@ -120,6 +124,10 @@ export function signServiceToken({
 
   if (role === ROLES.SHOP_AI && !tenantId) {
     throw AppError.badRequest("SHOP_AI requires tenantId");
+  }
+
+  if ((role === ROLES.INVESTIGATOR_AI || role === ROLES.RESOLUTION_PLANNER_AI) && !tenantId) {
+    throw AppError.badRequest(`${role} requires tenantId`);
   }
 
   const env = getEnv();

@@ -5,6 +5,10 @@ import {
   updatePaymentCaseSafeHold,
   listPaymentCases
 } from "../services/ledger/paymentCaseService.js";
+import {
+  runMultiAgentInvestigation,
+  getInvestigationsByCaseId
+} from "../services/ai/multiAgentInvestigator.js";
 import { authenticate, requireRoles, requireTenantScope } from "../middleware/authMiddleware.js";
 import { ROLES } from "../services/auth/tokenService.js";
 import { AppError } from "../utils/AppError.js";
@@ -123,6 +127,74 @@ router.patch("/:caseId/safe-hold", requireRoles(ROLES.ADMIN), async (req, res, n
     });
 
     res.status(200).json({ success: true, data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/payment-cases/:caseId/investigate - Runs controller-mediated 4-agent AI investigation
+ */
+router.post(
+  "/:caseId/investigate",
+  requireRoles(
+    ROLES.ADMIN,
+    ROLES.PAYMENT_CONTROLLER,
+    ROLES.AUDITOR,
+    ROLES.SHOP,
+    ROLES.SHOP_AI,
+    ROLES.CUSTOMER,
+    ROLES.CUSTOMER_AI
+  ),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const { idempotencyKey } = req.body || {};
+
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER ||
+        (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
+
+      if (!scopedTenantId) {
+        throw AppError.badRequest("tenantId could not be determined for investigation");
+      }
+
+      const result = await runMultiAgentInvestigation({
+        caseId,
+        tenantId: scopedTenantId,
+        customerId: req.user.customerId || null,
+        actorRole: req.user.role,
+        idempotencyKey
+      });
+
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/payment-cases/:caseId/investigations - Retrieves past investigation runs
+ */
+router.get("/:caseId/investigations", async (req, res, next) => {
+  try {
+    const { caseId } = req.params;
+    const isGlobal =
+      req.user.role === ROLES.ADMIN ||
+      req.user.role === ROLES.PAYMENT_CONTROLLER ||
+      (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+    const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.query?.tenantId : req.user.tenantId;
+
+    const results = await getInvestigationsByCaseId(
+      caseId,
+      scopedTenantId,
+      (req.user.role === ROLES.CUSTOMER || req.user.role === ROLES.CUSTOMER_AI) ? req.user.customerId : null
+    );
+
+    res.status(200).json({ success: true, data: results });
   } catch (err) {
     next(err);
   }

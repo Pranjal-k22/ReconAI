@@ -12,6 +12,8 @@ import crypto from "crypto";
 export const SERVICE_ROLES = Object.freeze([
   "CUSTOMER_AI",
   "SHOP_AI",
+  "INVESTIGATOR_AI",
+  "RESOLUTION_PLANNER_AI",
   "PAYMENT_CONTROLLER"
 ]);
 
@@ -29,7 +31,7 @@ const servicePrincipalSchema = new mongoose.Schema(
       required: [true, "serviceRole is required"],
       enum: {
         values: SERVICE_ROLES,
-        message: "Invalid service role. Allowed: CUSTOMER_AI, SHOP_AI, PAYMENT_CONTROLLER"
+        message: "Invalid service role. Allowed: CUSTOMER_AI, SHOP_AI, INVESTIGATOR_AI, RESOLUTION_PLANNER_AI, PAYMENT_CONTROLLER"
       }
     },
     tenantId: {

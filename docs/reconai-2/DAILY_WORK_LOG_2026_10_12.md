@@ -431,3 +431,41 @@ ReconAI/
   - Frontend production build (`npm run build`): Built in 7.68s with zero errors
   - `git diff --check`: Clean diff, zero issues
   - 120-scenario reconciliation benchmark: 120/120 passing (100.00%)
+
+---
+
+## 9. Phase 7 — Multi-Agent AI Investigation and Evidence Exchange
+
+- **Objective**: Implement tenant-scoped, controller-mediated AI investigation layer across four bounded roles:
+  - `CUSTOMER_AI`: Synthesizes authenticated customer's claims and payment status summaries without accessing other customers or merchant secrets.
+  - `SHOP_AI`: Synthesizes merchant store order state and payment evidence without customer PII leakage.
+  - `INVESTIGATOR_AI`: Synthesizes controller-assembled evidence cards, separating verified provider facts from unverified claims, highlighting contradictions, missing evidence, and applicable rules.
+  - `RESOLUTION_PLANNER_AI`: Generates advisory, non-executable resolution proposals strictly adhering to `ALLOWED_ADVISORY_STEPS` with `isExecutable: false`, `authoritative: false`, `requiresPolicyEngine: true`.
+- **Architectural Safeguards**:
+  - Deterministic classification (`evidenceClassifier.js`) remains authoritative foundation.
+  - Strict input/output contracts validated with Zod (`agentContracts.js`).
+  - Controller-mediated evidence cards with citation validation (`validateCitedEvidence`). Hallucinated citations are detected and stripped.
+  - Layered prompt injection defense (`promptSanitizer.js`) neutralizes instructions (`[NEUTRALIZED_COMMAND]`), redacts secrets (`[REDACTED_SECRET]`), and strips script tags (`[STRIPPED_SCRIPT]`).
+  - Resilient deterministic fallbacks (`agentFallbacks.js`) when Gemini is disabled, rate-limited, timed out, or returns invalid JSON.
+  - Durable persistence in `AiInvestigationRun` model with compound indexes `{ tenantId, caseId }` and `{ tenantId, idempotencyKey }`.
+  - Non-executability invariant: zero financial mutations, zero provider write APIs called or enabled, zero state changes to `GatewayPayment`, `MerchantOrder`, or `PaymentCase`.
+- **API Endpoints Added**:
+  - `POST /api/payment-cases/:caseId/investigate`: Multi-agent investigation execution with row-level customer/tenant isolation and idempotency.
+  - `GET /api/payment-cases/:caseId/investigations`: Historical investigation queries scoped by tenant and customer.
+- **Verification Gates**:
+  - `multiAgentInvestigation.test.js`: 12 passed
+  - `paymentCaseInvestigationRoutes.test.js`: 7 passed
+  - `multiAgentInvestigationPersistence.integration.test.js`: 4 passed
+  - `tests/monitoring`: 34 passed across 3 test suites
+  - `tests/webhook`: 25 passed across 2 test suites
+  - `tests/classification`: 41 passed
+  - Full real-MongoDB integration suite (`npm run test:integration`): 41 passed across 6 test suites
+  - Full backend unit suite (`npm test`): 432 passed across 60 test files
+  - Frontend production build (`npm run build` in `client`): Passed in 8.20s
+  - `git diff --check`: Clean diff, 0 issues
+  - Deterministic 120-scenario reconciliation benchmark: 120/120 passing (100.00%)
+- **Binding Safety Confirmation**:
+  - Zero financial write APIs or provider mutations called or enabled.
+  - Phase 7 is COMPLETE and PASSING.
+  - Phase 8 has NOT started.
+
