@@ -167,15 +167,15 @@ All 15 required regression gates have passed cleanly on `main`:
 |---|---|---|---|
 | **Gate 1** | Orchestration service & state machine tests | 23 / 23 | **PASS** |
 | **Gate 2** | Orchestration routes & shared kill switch tests | 14 / 14 | **PASS** |
-| **Gate 3** | Task leases, renewal, stale recovery, and concurrency | 10 / 10 | **PASS** |
+| **Gate 3** | Task leases, renewal, stale recovery, and concurrency | 11 / 11 | **PASS** |
 | **Gate 4** | Provider adapter & outcome verification tests | 48 / 48 | **PASS** |
 | **Gate 5** | Policy evaluator & refund-limit tests | 68 / 68 | **PASS** |
 | **Gate 6** | Case 22 & Phase 6 classification tests | 41 / 41 | **PASS** |
 | **Gate 7** | Route authorization & tenant isolation tests | 143 / 143 | **PASS** |
-| **Gate 8** | Real MongoDB persistence & concurrency tests | 74 / 74 (9 suites) | **PASS** |
+| **Gate 8** | Real MongoDB persistence & concurrency tests | 75 / 75 (9 suites) | **PASS** |
 | **Gate 9** | Monitoring & worker runtime tests | 34 / 34 | **PASS** |
 | **Gate 10** | Webhook signature & ingestion tests | 25 / 25 | **PASS** |
-| **Gate 11** | Full real-MongoDB integration suite (`npm run test:integration`) | 74 / 74 (9 suites) | **PASS** |
+| **Gate 11** | Full real-MongoDB integration suite (`npm run test:integration`) | 75 / 75 (9 suites) | **PASS** |
 | **Gate 12** | Full backend test suite (`npx vitest run`) | 592 / 592 (68 files) | **PASS** |
 | **Gate 13** | Frontend production build (`npm run build`) | 2,400 modules, 0 errors | **PASS** |
 | **Gate 14** | Whitespace & format check (`git diff --check`) | Clean working copy | **PASS** |

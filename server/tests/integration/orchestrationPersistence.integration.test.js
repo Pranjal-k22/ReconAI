@@ -5,10 +5,12 @@ import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
 import { OrchestrationControl } from "../../src/models/OrchestrationControl.js";
+import { ProviderOperation } from "../../src/models/ProviderOperation.js";
 import {
   queueOrchestrationTask,
   claimDueOrchestrationTask,
   renewOrchestrationTaskLease,
+  transitionTaskState,
   processOrchestrationTask,
   sweepDueOrchestrationTasks
 } from "../../src/services/orchestration/orchestrationService.js";
@@ -55,6 +57,7 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
     await PaymentCase.deleteMany({});
     await GatewayPayment.deleteMany({});
     await MerchantOrder.deleteMany({});
+    await ProviderOperation.deleteMany({});
   });
 
   afterAll(async () => {
@@ -74,6 +77,7 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
     await PaymentCase.deleteMany({});
     await GatewayPayment.deleteMany({});
     await MerchantOrder.deleteMany({});
+    await ProviderOperation.deleteMany({});
   });
 
   describe("1. Unique Idempotency & Database Deduplication", () => {
@@ -259,6 +263,170 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
       const inDbAfter = await OrchestrationTask.findOne({ taskId: claimed1.taskId }).lean();
       expect(inDbAfter.lockedBy).toBe("worker-fast-2");
       expect(inDbAfter.state).toBe("CLAIMED");
+    });
+
+    it("guarantees long-running task lease renewal prevents concurrency, blocks competing workers during valid lease, and aborts former worker after legitimate lease expiry and reclaim", async () => {
+      let currentTime = new Date("2026-10-12T10:00:00.000Z");
+      const clock = () => new Date(currentTime.getTime());
+
+      const caseId = "CASE-LONG-RUN-CONCURRENCY";
+      const idempotencyKey = "idem_long_run_concurrency";
+
+      // Seed resources
+      await GatewayPayment.create({
+        gatewayPaymentId: "pay_long_run_01",
+        tenantId: TENANT_A,
+        merchantOrderId: "order_long_run_01",
+        amountPaise: 20000,
+        currency: "INR",
+        status: "CAPTURED"
+      });
+      await MerchantOrder.create({
+        merchantOrderId: "order_long_run_01",
+        tenantId: TENANT_A,
+        amountPaise: 20000,
+        currency: "INR",
+        status: "PAID"
+      });
+      await PaymentCase.create({
+        caseId,
+        tenantId: TENANT_A,
+        gatewayPaymentId: "pay_long_run_01",
+        merchantOrderId: "order_long_run_01",
+        discrepancyCategory: "STATUS_MISMATCH",
+        orderStatus: "ORDER_PAID",
+        captureStatus: "CAPTURE_CAPTURED",
+        resolutionCaseStatus: "CASE_INVESTIGATING"
+      });
+
+      // 1. Task queued at T0
+      const queuedTask = await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId,
+        idempotencyKey,
+        gatewayPaymentId: "pay_long_run_01",
+        merchantOrderId: "order_long_run_01",
+        asOfTime: clock()
+      });
+      expect(queuedTask).not.toBeNull();
+
+      // 1. Worker A claims the task at T0 with 30s lease
+      const claimedA = await claimDueOrchestrationTask({
+        workerId: "worker-A",
+        leaseDurationMs: 30000,
+        clock
+      });
+      expect(claimedA).not.toBeNull();
+      expect(claimedA.lockedBy).toBe("worker-A");
+      expect(claimedA.lockedUntil.getTime()).toBe(currentTime.getTime() + 30000); // T0 + 30s
+
+      const recordedFetchCalls = [];
+      let workerBClaimAttempt1Result = "UNTESTED";
+      let workerBReclaimResult = null;
+
+      // Deterministic read-only fetch implementation simulating a long-running provider check
+      const customFetch = async (url, options = {}) => {
+        recordedFetchCalls.push({
+          url: String(url),
+          method: options.method || "GET"
+        });
+
+        // 2. Keep worker A processing longer than original 30-second lease:
+        // Advance clock to T0 + 35s (> original 30s lease, but within the renewed lease which is T0 + 45s)
+        currentTime = new Date(currentTime.getTime() + 20000); // now T0 + 35s
+
+        // 3. Attempt to have worker B claim or recover the same task while A is still active
+        const claimBAttempt1 = await claimDueOrchestrationTask({
+          workerId: "worker-B",
+          clock
+        });
+        workerBClaimAttempt1Result = claimBAttempt1;
+
+        // 5. Simulate genuine lease expiry: advance clock past Worker A's renewed lease (T0 + 45s) to T0 + 50s
+        currentTime = new Date(currentTime.getTime() + 15000); // now T0 + 50s
+
+        // Worker B legitimately reclaims the task after Worker A's renewed lease expired
+        workerBReclaimResult = await claimDueOrchestrationTask({
+          workerId: "worker-B",
+          leaseDurationMs: 30000,
+          clock
+        });
+
+        // Return strictly read-only provider data
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: "pay_long_run_01",
+            status: "captured",
+            amount: 20000,
+            currency: "INR"
+          })
+        };
+      };
+
+      // Set time to T0 + 15s before Worker A enters Step 4 renewal (which extends lease to T0 + 45s)
+      currentTime = new Date(currentTime.getTime() + 15000); // T0 + 15s
+
+      // Worker A processes task with controlled clock and customFetch
+      const outcomeA = await processOrchestrationTask(claimedA, {
+        workerId: "worker-A",
+        clock,
+        customFetch,
+        policyConfig: { maxSingleRefundPaise: 500000, maxCumulativeRefundPaise: 2000000 }
+      });
+
+      // 4. Verify that B cannot execute the task concurrently while A holds a valid renewed lease
+      expect(workerBClaimAttempt1Result).toBeNull();
+
+      // 5. Verify that B legitimately reclaimed the task after lease genuinely expired
+      expect(workerBReclaimResult).not.toBeNull();
+      expect(workerBReclaimResult.lockedBy).toBe("worker-B");
+      expect(workerBReclaimResult.attemptCount).toBe(2);
+
+      // 6. Verify that A loses ownership and cannot commit a state transition after B legitimately reclaims the task
+      expect(outcomeA.status).toBe("LEASE_LOST");
+
+      // Verify direct transition by former Worker A is also rejected with LEASE_OWNERSHIP_LOST
+      await expect(
+        transitionTaskState(claimedA, "POLICY_EVALUATION", {
+          workerId: "worker-A",
+          clock
+        })
+      ).rejects.toThrow();
+
+      // Verify in MongoDB that task is STILL owned by Worker B and Worker A made ZERO updates after reclaim
+      const inDb = await OrchestrationTask.findOne({ taskId: claimedA.taskId }).lean();
+      expect(inDb.lockedBy).toBe("worker-B");
+      expect(inDb.state).toBe("CLAIMED");
+
+      // 7. Verify duplicate scheduling remains idempotent
+      const duplicateTask = await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId,
+        idempotencyKey,
+        asOfTime: clock()
+      });
+      expect(duplicateTask.taskId).toBe(claimedA.taskId);
+      const taskCount = await OrchestrationTask.countDocuments({
+        tenantId: TENANT_A,
+        idempotencyKey
+      });
+      expect(taskCount).toBe(1);
+
+      // 7. Verify NO provider mutation occurred (all calls were strictly read-only GET requests)
+      expect(recordedFetchCalls.length).toBe(1);
+      expect(recordedFetchCalls[0].method).toBe("GET");
+      const providerOperationsCount = await ProviderOperation.countDocuments({});
+      expect(providerOperationsCount).toBe(0);
+
+      // Verify Worker B can now proceed to process the reclaimed task cleanly
+      const outcomeB = await processOrchestrationTask(workerBReclaimResult, {
+        workerId: "worker-B",
+        clock,
+        policyConfig: { maxSingleRefundPaise: 500000, maxCumulativeRefundPaise: 2000000 }
+      });
+      expect(["WAITING_FOR_RECHECK", "COMPLETED"]).toContain(outcomeB.status);
     });
   });
 

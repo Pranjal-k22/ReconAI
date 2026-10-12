@@ -733,3 +733,50 @@ ReconAI/
   - Missing approved refund limits fail closed.
   - Case 22 remains unconditionally in `SAFE_HOLD`.
   - Phase 10 final correction complete. Stopped for review. Phase 11 remains locked.
+
+### Entry 13: Phase 10 Final Lease-Lifecycle Verification & Long-Running Task Concurrency
+
+- **Audits and Architectural Refinements**:
+  - **Dynamic Time Resolution Across Pipeline Steps**:
+    - Refactored `resolveCurrentTime = () => ...` in `processOrchestrationTask` and `claimDueOrchestrationTask` to dynamically sample clock time at each milestone (`typeof clock === "function" ? clock() : (asOfTime instanceof Date ? asOfTime : new Date())`).
+    - Resolved static timestamp freezing where long-running tasks lasting >30 seconds previously evaluated elapsed time against frozen function entry timestamps.
+    - Lease extensions before Step 4 (read-only provider status check) and Step 5 (deterministic policy evaluation) compute `newLockUntil` from current time `now + leaseDurationMs`.
+  - **Conditional Transition & Ownership Integrity**:
+    - `transitionTaskState` enforces atomic conditional update in MongoDB (`{ taskId, lockedBy: workerId, lockedUntil: { $gte: currentTime } }`).
+    - Attempted transitions by former workers whose lease expired and was reclaimed by another worker fail immediately with `AppError.conflict(..., code: "LEASE_OWNERSHIP_LOST")`.
+    - `processOrchestrationTask` catches `LEASE_OWNERSHIP_LOST` and halts safely with `{ status: "LEASE_LOST" }`, making zero database mutations.
+  - **Bounded Guarantee Without Process-Local Locks or Unbounded Loops**:
+    - Maximum possible duration of provider network operations is bounded by `RAZORPAY_REQUEST_TIMEOUT_MS = 10000ms`.
+    - Strategic lease renewal checkpoints before Step 4 and Step 5 ensure valid active lease throughout execution without unbounded retry loops or heartbeat thread overhead.
+- **Real MongoDB Persistence & Concurrency Verification**:
+  - Added targeted end-to-end long-running task concurrency test in `orchestrationPersistence.integration.test.js`:
+    1. Worker A claims task at T0 with 30s lease.
+    2. Worker A processes task with controlled test clock advancing through 35s (> original 30s lease).
+    3. Worker B attempts to claim/recover the task while Worker A holds valid renewed lease; claim is rejected (`null`).
+    4. Concurrency is prevented while Worker A holds active lease.
+    5. Test advances clock past renewed lease (to T0 + 50s); Worker B legitimately recovers stale task (`attemptCount: 2`).
+    6. Former Worker A resumes and is rejected with `LEASE_LOST` and zero state transitions committed.
+    7. Duplicate queueing remains strictly idempotent; zero provider mutations dispatched (`ProviderOperation.count = 0`).
+    8. Worker B executes reclaimed task to completion cleanly.
+- **Full Regression Gates Verification**:
+  1. Orchestration service & state machine (`tests/orchestration/**`): 23 tests passed
+  2. Orchestration routes & shared kill switch (`tests/routes/orchestrationRoutes.test.js`): 14 tests passed
+  3. Task leases, renewal, stale recovery, and concurrency (`tests/integration/orchestrationPersistence.integration.test.js`): 11 tests passed
+  4. Provider adapter & outcome verification (`tests/provider/**` & `tests/razorpay/**`): 48 tests passed
+  5. Policy evaluator & refund limits (`tests/policy/**`): 68 tests passed
+  6. Evidence classification (`tests/classification/**`): 41 tests passed
+  7. Tenant isolation & authorization (`tests/routes/**` & `tests/auth/**`): 143 tests passed
+  8. MongoDB persistence & concurrency (`tests/integration/**`): 75 tests passed across 9 suites
+  9. Monitoring & worker runtime (`tests/monitoring/**`): 34 tests passed
+  10. Webhook signature & ingestion (`tests/webhook/**`): 25 tests passed
+  11. Full real-MongoDB integration suite (`npm run test:integration`): 75/75 passed (9 test files)
+  12. Full backend test suite (`npx vitest run`): 592/592 passed (68 test files)
+  13. Frontend production build (`npm run build` in `client/`): 2,400 modules, 0 errors
+  14. Whitespace & format check (`git diff --check`): Clean working copy, 0 issues
+  15. 120-scenario reconciliation benchmark (`tests/reconciliation/benchmarkCompatibility.test.js`): 120/120 passing (100.00% match rate)
+- **Stopping Invariants Confirmed**:
+  - Autonomous worker remains disabled by default (`ORCHESTRATOR_WORKER_ENABLED=false`).
+  - Worker never dispatches refunds or mutates financial records.
+  - Missing approved refund limits fail closed.
+  - Case 22 remains unconditionally in `SAFE_HOLD`.
+  - Phase 10 final lease-lifecycle verification complete. Stopped for review. Phase 11 remains locked.
