@@ -81,6 +81,118 @@ describe("Razorpay Webhook Ingestion, Deduplication, & Safety Suite", () => {
       expect(events.length).toBe(1);
     });
 
+    it("same body + same signature + changed event-ID header is recognized as duplicate via raw body hash", async () => {
+      const paymentId = "pay_replay_diff_header";
+      const payloadObj = {
+        entity: "event",
+        account_id: "acc_merchant_beta",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: paymentId,
+              amount: 15000,
+              currency: "INR",
+              notes: { tenantId: "sh_merchant_beta" }
+            }
+          }
+        }
+      };
+
+      const rawBody = JSON.stringify(payloadObj);
+      const signature = signPayload(rawBody);
+
+      // Delivery 1 with event ID evt_orig_100
+      const res1 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", "evt_orig_100")
+        .send(rawBody);
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.data.status).toBe("ACCEPTED");
+      const originalEventId = res1.body.data.eventId;
+
+      // Delivery 2 with identical body + identical signature BUT changed event ID header evt_replayed_200
+      const res2 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", "evt_replayed_200")
+        .send(rawBody);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.status).toBe("DUPLICATE_ACKNOWLEDGED");
+      expect(res2.body.data.isDuplicate).toBe(true);
+      expect(res2.body.data.eventId).toBe(originalEventId);
+
+      // Only 1 event exists in store
+      const events = getInMemoryEvents().filter((e) => e.gatewayPaymentId === paymentId);
+      expect(events.length).toBe(1);
+    });
+
+    it("same event-ID + different signed body is quarantined (EVENT_ID_PAYLOAD_MISMATCH) and does not mutate state", async () => {
+      const eventId = "evt_collision_tamper_01";
+      const body1 = JSON.stringify({
+        entity: "event",
+        account_id: "acc_merchant_gamma",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_legit_101",
+              amount: 1000,
+              currency: "INR",
+              notes: { tenantId: "sh_merchant_gamma" }
+            }
+          }
+        }
+      });
+
+      // 1. Initial valid ingestion
+      const res1 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(body1))
+        .set("X-Razorpay-Event-Id", eventId)
+        .send(body1);
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.data.status).toBe("ACCEPTED");
+
+      // 2. Anomaly: Same event ID arrives with a DIFFERENT payload
+      const body2 = JSON.stringify({
+        entity: "event",
+        account_id: "acc_merchant_gamma",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_spoofed_202",
+              amount: 999999,
+              currency: "INR",
+              notes: { tenantId: "sh_merchant_gamma" }
+            }
+          }
+        }
+      });
+
+      const res2 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(body2))
+        .set("X-Razorpay-Event-Id", eventId)
+        .send(body2);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.status).toBe("QUARANTINED");
+      expect(res2.body.data.reason).toBe("EVENT_ID_PAYLOAD_MISMATCH");
+
+      // Verify that spoofed payment was NOT created
+      expect(getInMemoryPayment("pay_spoofed_202")).toBeUndefined();
+    });
+
     it("7. concurrent duplicate delivery remains idempotent", async () => {
       const eventId = "evt_rzp_concurrent_002";
       const rawBody = JSON.stringify({
@@ -316,6 +428,222 @@ describe("Razorpay Webhook Ingestion, Deduplication, & Safety Suite", () => {
       expect(events.length).toBe(1);
       expect(events[0].providerOccurredAt).toEqual(new Date(1672531200 * 1000));
       expect(events[0].ingestedAt).toBeDefined();
+    });
+
+    it("captured event associated with an order previously marked CANCELLED remains CANCELLED and is flagged for safe handling", async () => {
+      const orderId = "order_cancelled_999";
+      const paymentId = "pay_late_on_cancelled";
+      const tenantId = "sh_merchant_alpha";
+
+      // Seed CANCELLED merchant order
+      seedInMemoryOrder({
+        merchantOrderId: orderId,
+        tenantId,
+        amountPaise: 8000,
+        currency: "INR",
+        status: "CANCELLED"
+      });
+
+      // Seed PaymentCase for the cancelled order
+      seedInMemoryCase({
+        caseId: "CASE-CANCELLED-999",
+        tenantId,
+        merchantOrderId: orderId,
+        gatewayPaymentId: null,
+        orderStatus: "ORDER_CANCELLED",
+        captureStatus: "CAPTURE_NONE",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      // Valid signed payment.captured arrives for this cancelled order
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_alpha",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: paymentId,
+              order_id: orderId,
+              amount: 8000,
+              currency: "INR",
+              notes: { tenantId }
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_late_capture_cancelled")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.conflictFlag).toBe("CANCELLED_ORDER_CAPTURED");
+
+      // Invariant 1: MerchantOrder must NOT have been reversed or reopened
+      const orderAfter = getInMemoryOrder(orderId);
+      expect(orderAfter.status).toBe("CANCELLED");
+
+      // Invariant 2: GatewayPayment records accurate provider truth (funds were captured)
+      const paymentAfter = getInMemoryPayment(paymentId);
+      expect(paymentAfter.status).toBe("CAPTURED");
+
+      // Invariant 3: PaymentCase is flagged for safe hold and manual investigation
+      const caseAfter = getInMemoryCase("CASE-CANCELLED-999");
+      expect(caseAfter.orderStatus).toBe("ORDER_CANCELLED");
+      expect(caseAfter.captureStatus).toBe("CAPTURE_CAPTURED");
+      expect(caseAfter.discrepancyCategory).toBe("CANCELLED_ORDER_CAPTURED");
+      expect(caseAfter.safeHoldCode).toBe("LATE_CAPTURE_CANCELLED_ORDER");
+      expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+
+      // Invariant 4: Durable event ledger preserves the capture evidence
+      const events = getInMemoryEvents().filter((e) => e.gatewayPaymentId === paymentId);
+      expect(events.length).toBe(1);
+      expect(events[0].normalizedEventType).toBe("PAYMENT_CAPTURED");
+      expect(events[0].provenance.conflictFlag).toBe("CANCELLED_ORDER_CAPTURED");
+    });
+
+    it("late capture for a different payment attempt belonging to the same order preserves both attempts", async () => {
+      const orderId = "order_multi_attempt_555";
+      const attempt1PayId = "pay_attempt_1_failed";
+      const attempt2PayId = "pay_attempt_2_captured";
+      const tenantId = "sh_merchant_alpha";
+
+      // Seed order
+      seedInMemoryOrder({
+        merchantOrderId: orderId,
+        tenantId,
+        amountPaise: 15000,
+        currency: "INR",
+        status: "CREATED"
+      });
+
+      // Seed Attempt 1: Failed payment
+      seedInMemoryPayment({
+        gatewayPaymentId: attempt1PayId,
+        merchantOrderId: orderId,
+        tenantId,
+        amountPaise: 15000,
+        currency: "INR",
+        status: "FAILED"
+      });
+
+      seedInMemoryCase({
+        caseId: "CASE-MULTI-555",
+        tenantId,
+        merchantOrderId: orderId,
+        gatewayPaymentId: attempt1PayId,
+        captureStatus: "CAPTURE_FAILED",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      // Customer makes Attempt 2: payment.captured arrives
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_alpha",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: attempt2PayId,
+              order_id: orderId,
+              amount: 15000,
+              currency: "INR",
+              notes: { tenantId }
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_attempt_2_success")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+
+      // Attempt 1 remains FAILED
+      const attempt1After = getInMemoryPayment(attempt1PayId);
+      expect(attempt1After.status).toBe("FAILED");
+
+      // Attempt 2 is CAPTURED
+      const attempt2After = getInMemoryPayment(attempt2PayId);
+      expect(attempt2After.status).toBe("CAPTURED");
+
+      // Case captureStatus updates to CAPTURED
+      const caseAfter = getInMemoryCase("CASE-MULTI-555");
+      expect(caseAfter.captureStatus).toBe("CAPTURE_CAPTURED");
+    });
+
+    it("conflicting late capture for an already-failed payment entity transitions payment safely and flags case for review", async () => {
+      const paymentId = "pay_async_upi_late_capture";
+      const orderId = "order_async_upi_777";
+      const tenantId = "sh_merchant_alpha";
+
+      // Seed payment initially as FAILED
+      seedInMemoryPayment({
+        gatewayPaymentId: paymentId,
+        merchantOrderId: orderId,
+        tenantId,
+        amountPaise: 5000,
+        currency: "INR",
+        status: "FAILED"
+      });
+
+      seedInMemoryCase({
+        caseId: "CASE-LATE-777",
+        tenantId,
+        merchantOrderId: orderId,
+        gatewayPaymentId: paymentId,
+        captureStatus: "CAPTURE_FAILED",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      // Bank confirms late capture via Razorpay webhook
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_alpha",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: paymentId,
+              order_id: orderId,
+              amount: 5000,
+              currency: "INR",
+              notes: { tenantId }
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_bank_late_capture")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.conflictFlag).toBe("LATE_CAPTURE_AFTER_FAILURE");
+
+      // GatewayPayment accurately transitions to CAPTURED with late capture flag
+      const paymentAfter = getInMemoryPayment(paymentId);
+      expect(paymentAfter.status).toBe("CAPTURED");
+      expect(paymentAfter.isLateCapture).toBe(true);
+      expect(paymentAfter.previousStatus).toBe("FAILED");
+
+      // PaymentCase flags discrepancy for review
+      const caseAfter = getInMemoryCase("CASE-LATE-777");
+      expect(caseAfter.captureStatus).toBe("CAPTURE_CAPTURED");
+      expect(caseAfter.discrepancyCategory).toBe("STATUS_MISMATCH");
+      expect(caseAfter.safeHoldCode).toBe("ADMIN_HOLD");
+      expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
     });
   });
 

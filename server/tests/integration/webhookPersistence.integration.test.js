@@ -471,4 +471,207 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     const paymentInDb = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
     expect(paymentInDb.status).toBe("CAPTURED");
   });
+
+  it("6. replay with changed event-ID header is acknowledged as duplicate via MongoDB accountBodyHash unique index", async () => {
+    if (!isMongoAvailable) return;
+
+    const testEventId1 = `evt_integ_hdr1_${Date.now()}`;
+    const testEventId2 = `evt_integ_hdr2_${Date.now()}`;
+    const paymentId = `pay_integ_hdr_${Date.now()}`;
+    const accountId = "acc_integ_hdr";
+
+    trackedDeduplicationKeys.add(`RAZORPAY:${accountId}:${testEventId1}`);
+    trackedDeduplicationKeys.add(`RAZORPAY:${accountId}:${testEventId2}`);
+    trackedPaymentIds.add(paymentId);
+
+    const rawBody = JSON.stringify({
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            amount: 42000,
+            currency: "INR",
+            notes: { tenantId: "sh_integ_merchant" }
+          }
+        }
+      }
+    });
+
+    const signature = signBody(rawBody);
+
+    // Delivery 1 with header evt_integ_hdr1
+    const res1 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId1)
+      .send(rawBody);
+
+    expect(res1.status).toBe(200);
+    expect(res1.body.data.status).toBe("ACCEPTED");
+    const origEventId = res1.body.data.eventId;
+
+    // Delivery 2 with same body, same signature, DIFFERENT header evt_integ_hdr2
+    const res2 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId2)
+      .send(rawBody);
+
+    expect(res2.status).toBe(200);
+    expect(res2.body.data.status).toBe("DUPLICATE_ACKNOWLEDGED");
+    expect(res2.body.data.isDuplicate).toBe(true);
+    expect(res2.body.data.eventId).toBe(origEventId);
+
+    // Verify in real MongoDB that exactly ONE document exists for this payment
+    const count = await PaymentLifecycleEvent.countDocuments({ gatewayPaymentId: paymentId });
+    expect(count).toBe(1);
+  });
+
+  it("7. event ID with different signed body is quarantined in real MongoDB (EVENT_ID_PAYLOAD_MISMATCH)", async () => {
+    if (!isMongoAvailable) return;
+
+    const eventId = `evt_integ_mismatch_${Date.now()}`;
+    const accountId = "acc_integ_mismatch";
+    trackedDeduplicationKeys.add(`RAZORPAY:${accountId}:${eventId}`);
+
+    const body1 = JSON.stringify({
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_legit_${Date.now()}`,
+            amount: 5000,
+            currency: "INR",
+            notes: { tenantId: "sh_integ_merchant" }
+          }
+        }
+      }
+    });
+
+    const res1 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signBody(body1))
+      .set("X-Razorpay-Event-Id", eventId)
+      .send(body1);
+
+    expect(res1.status).toBe(200);
+    expect(res1.body.data.status).toBe("ACCEPTED");
+
+    // Same event ID with different payload
+    const body2 = JSON.stringify({
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_spoofed_${Date.now()}`,
+            amount: 999999,
+            currency: "INR",
+            notes: { tenantId: "sh_integ_merchant" }
+          }
+        }
+      }
+    });
+
+    const res2 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signBody(body2))
+      .set("X-Razorpay-Event-Id", eventId)
+      .send(body2);
+
+    expect(res2.status).toBe(200);
+    expect(res2.body.data.status).toBe("QUARANTINED");
+    expect(res2.body.data.reason).toBe("EVENT_ID_PAYLOAD_MISMATCH");
+  });
+
+  it("8. late capture on CANCELLED order against real MongoDB preserves CANCELLED status and flags SAFE_HOLD in PaymentCase", async () => {
+    if (!isMongoAvailable) return;
+
+    const orderId = `order_integ_canc_${Date.now()}`;
+    const paymentId = `pay_integ_canc_${Date.now()}`;
+    const caseId = `CASE_INTEG_CANC_${Date.now()}`;
+    const tenantId = "sh_integ_merchant";
+
+    trackedOrderIds.add(orderId);
+    trackedPaymentIds.add(paymentId);
+    trackedCaseIds.add(caseId);
+
+    // Seed CANCELLED order in MongoDB
+    await MerchantOrder.create({
+      merchantOrderId: orderId,
+      tenantId,
+      amountPaise: 6000,
+      currency: "INR",
+      status: "CANCELLED"
+    });
+
+    // Seed PaymentCase in MongoDB
+    await PaymentCase.create({
+      caseId,
+      tenantId,
+      merchantOrderId: orderId,
+      expectedAmountPaise: 6000,
+      currency: "INR",
+      discrepancyCategory: "GENERAL_EXCEPTION",
+      orderStatus: "ORDER_CANCELLED",
+      captureStatus: "CAPTURE_NONE",
+      resolutionCaseStatus: "CASE_DETECTED"
+    });
+
+    const rawBody = JSON.stringify({
+      entity: "event",
+      account_id: "acc_integ_canc",
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 6000,
+            currency: "INR",
+            notes: { tenantId }
+          }
+        }
+      }
+    });
+
+    const eventId = `evt_integ_canc_${Date.now()}`;
+    trackedDeduplicationKeys.add(`RAZORPAY:acc_integ_canc:${eventId}`);
+
+    const res = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signBody(rawBody))
+      .set("X-Razorpay-Event-Id", eventId)
+      .send(rawBody);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.conflictFlag).toBe("CANCELLED_ORDER_CAPTURED");
+
+    // Invariant in MongoDB: MerchantOrder remains CANCELLED
+    const orderInDb = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+    expect(orderInDb.status).toBe("CANCELLED");
+
+    // Invariant in MongoDB: GatewayPayment is CAPTURED
+    const paymentInDb = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(paymentInDb.status).toBe("CAPTURED");
+
+    // Invariant in MongoDB: PaymentCase flagged with safe hold
+    const caseInDb = await PaymentCase.findOne({ caseId }).lean();
+    expect(caseInDb.orderStatus).toBe("ORDER_CANCELLED");
+    expect(caseInDb.captureStatus).toBe("CAPTURE_CAPTURED");
+    expect(caseInDb.discrepancyCategory).toBe("CANCELLED_ORDER_CAPTURED");
+    expect(caseInDb.safeHoldCode).toBe("LATE_CAPTURE_CANCELLED_ORDER");
+    expect(caseInDb.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+  });
 });

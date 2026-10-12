@@ -24,7 +24,7 @@
   `req.rawBody` preserves the exact original payload buffer without deserialization or key ordering alterations.
 - **Payload Size Enforcement:** `1mb` hard cap enforced at Express body parser level; payloads exceeding 1MB are rejected immediately with HTTP `413 Payload Too Large`.
 - **Response Codes:**
-  - `200 OK`: Event accepted (`ACCEPTED`), duplicate acknowledged (`DUPLICATE_ACKNOWLEDGED`), or safely quarantined (`QUARANTINED`). Controlled JSON response returned with `{ success: true, data: { status, eventId, isDuplicate } }`.
+  - `200 OK`: Event accepted (`ACCEPTED`), duplicate acknowledged (`DUPLICATE_ACKNOWLEDGED`), or safely quarantined (`QUARANTINED`). Controlled JSON response returned with `{ success: true, data: { status, eventId, isDuplicate, conflictFlag, reason } }`.
   - `400 Bad Request`: Malformed JSON or malformed envelope structure violating Zod validation schema.
   - `401 Unauthorized`: Missing signature header, malformed hex signature, or cryptographic HMAC mismatch.
   - `413 Payload Too Large`: Payload body exceeding 1MB limit.
@@ -45,52 +45,65 @@
 1. **Format Validation:** Signature must be exactly 64 hexadecimal characters (`/^[0-9a-fA-F]{64}$/`). Malformed signatures are rejected prior to buffer allocation.
 2. **Constant-Time Comparison:** Verified using `crypto.timingSafeEqual(sigBuffer, expectedBuffer)` to prevent timing side-channel attacks.
 3. **Exact Raw Bytes:** HMAC calculation operates on `Buffer.from(req.rawBody)`. Any change in whitespace, indentation, or key ordering between signing and verification invalidates the signature.
-4. **Log Sanitization:** Sensitive payload fields (`password`, `token`, `secret`, `authorization`, `cookie`, `key`, `gemini_api_key`) are recursively redacted to `[REDACTED]` prior to audit logging or storage in `PaymentLifecycleEvent.normalizedPayload`.
+4. **Pre-verification Isolation:** Cryptographic verification is executed strictly BEFORE any database lookup, key reservation, or state mutation. An invalid signature can NEVER reserve a deduplication key or poison subsequent legitimate ingestion.
+5. **Log Sanitization:** Sensitive payload fields (`password`, `token`, `secret`, `authorization`, `cookie`, `key`, `gemini_api_key`) are recursively redacted to `[REDACTED]` prior to audit logging or storage in `PaymentLifecycleEvent.normalizedPayload`.
 
 ---
 
-## 4. Durable Event Identity & Idempotency
+## 4. Durable Event Identity, Deduplication & Replay Hardening
 
-- **Primary Event Key:** Derived from header `X-Razorpay-Event-Id` when present:
-  `deduplicationKey = "RAZORPAY:" + accountId + ":" + headerEventId`
-- **Stable Fallback Key:** If `X-Razorpay-Event-Id` is absent from headers, a deterministic, provider-account-scoped SHA-256 fingerprint of the raw payload bytes is used:
-  `deduplicationKey = "RAZORPAY_FALLBACK:" + accountId + ":" + sha256(rawBytes)`
-- **MongoDB Unique Index:** Enforced via `PaymentLifecycleEvent.schema`:
-  `deduplicationKey: { type: String, required: true, unique: true, index: true }`
-- **Duplicate Race Handling:**
-  Concurrent deliveries of the same event catch MongoDB duplicate-key errors (`err.code === 11000` or `E11000`) and return an idempotent acknowledgement:
-  `{ success: true, data: { status: "DUPLICATE_ACKNOWLEDGED", isDuplicate: true, eventId } }`
-  This ensures zero duplicate database records and zero double-processing side effects under extreme concurrency.
-- **Audit Logging:** Every duplicate delivery triggers a `WEBHOOK_DUPLICATE_SKIPPED` audit entry.
+Razorpay documents the HMAC signature as verifying the raw request body, while the `X-Razorpay-Event-Id` header is passed separately for delivery idempotency. Because the separate header is not cryptographically signed within the HMAC body digest, ReconAI 2.0 implements a **two-tier deduplication defense**:
+
+1. **Header-Scoped Deduplication Key:**
+   `deduplicationKey = "RAZORPAY:" + accountId + ":" + headerEventId` (or fallback `RAZORPAY_FALLBACK:...`).
+   Enforced via MongoDB unique index:
+   `deduplicationKey: { type: String, required: true, unique: true, index: true }`
+2. **Account-Scoped Raw Body SHA-256 Fingerprint (`accountBodyHash`):**
+   `accountBodyHash = "RAZORPAY_BODY:" + accountId + ":" + sha256(rawBytes)`
+   Enforced via MongoDB sparse unique index:
+   `accountBodyHash: { type: String, unique: true, sparse: true, index: true }`
+3. **Modified-Header Replay Defense:**
+   If a replay arrives with the exact same signed body and signature but with a *changed or spoofed `X-Razorpay-Event-Id` header*, the `accountBodyHash` index intercepts it. The request is idempotently acknowledged as `DUPLICATE_ACKNOWLEDGED` (`isDuplicate: true`), creating zero duplicate records and executing zero state changes.
+4. **Event-ID Payload Tampering / Collision Defense:**
+   If a known event ID arrives with a *different* signed raw body hash (payload tampering or provider event ID collision), it is NOT acknowledged as an ordinary duplicate. The request is quarantined with status `QUARANTINED`, reason `EVENT_ID_PAYLOAD_MISMATCH`, an audit alert is logged, and canonical payment state remains completely untouched.
+5. **Concurrency & Race Conditions:**
+   Concurrent duplicate deliveries (whether matching on `deduplicationKey` or `accountBodyHash`) are caught via MongoDB `E11000` duplicate key exceptions. The system retrieves the existing event and returns `DUPLICATE_ACKNOWLEDGED`, ensuring database consistency across multi-process deployments.
 
 ---
 
-## 5. Replay, Out-of-Order Safety & Canonical State Progression
+## 5. Replay, Late-Event Safety & Canonical State Progression
 
-1. **Timestamp Headers:** Official Razorpay webhooks do not support custom timestamp headers (such as Stripe's `t=` header). Delivery time is derived from the signed envelope's `created_at` field (seconds since UNIX epoch), while `ingestedAt` records local ingestion time. No artificial freshness windows are enforced that would reject valid provider retries over their 24-hour retry window.
-2. **Terminal State Progression Guards:**
-   Gateway payment status transitions are strictly governed by `canTransitionGatewayStatus`:
-   - `CAPTURED` can transition only to `REFUNDED` or `PARTIALLY_REFUNDED`. It cannot regress to `AUTHORIZED`, `FAILED`, or `CREATED`.
-   - `REFUNDED` is terminal and cannot transition to any other status.
-   - `FAILED` is terminal and cannot regress or transition.
-   - Out-of-order delivery of a delayed `payment.failed` event for a previously `CAPTURED` payment is durably recorded in `PaymentLifecycleEvent` but log-warned and prevented from mutating the canonical `GatewayPayment` status.
-3. **PaymentCase Orthogonal Dimension Safety:**
-   `PaymentCase.captureStatus` updates safely: if already `CAPTURE_CAPTURED`, delayed `payment.authorized` or `payment.failed` webhooks are prevented from regressing `captureStatus`.
+1. **Timestamp Headers Policy:**
+   Official Razorpay webhooks do NOT support custom signed timestamp headers (such as Stripe's `t=` header). Delivery time is derived from the envelope's `created_at` field (seconds since UNIX epoch), while `ingestedAt` records local server receipt time. ReconAI does NOT invent a signed delivery-timestamp header or reject legitimate provider retries across Razorpay's documented 24-hour retry window based on an undocumented age threshold.
+2. **Protection Against Delayed Regressions:**
+   Once a payment reaches `CAPTURED`, a delayed or out-of-order `payment.failed` event cannot regress `GatewayPayment.status` to `FAILED` or `PaymentCase.captureStatus` to `CAPTURE_FAILED`. The failed event is durably recorded in `PaymentLifecycleEvent` as immutable evidence, but canonical progression is preserved.
+3. **Late Capture on CANCELLED Orders:**
+   If a valid `payment.captured` event arrives for a merchant order previously marked `CANCELLED`:
+   - `MerchantOrder.status` remains `CANCELLED` (no automatic cancellation reversal or reopen).
+   - `GatewayPayment.status` records provider truth as `CAPTURED`.
+   - `PaymentCase` flags `discrepancyCategory: "CANCELLED_ORDER_CAPTURED"`, `safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER"`, `orderStatus: "ORDER_CANCELLED"`, and `resolutionCaseStatus: "CASE_SAFE_HOLD"`.
+   - The response returns `conflictFlag: "CANCELLED_ORDER_CAPTURED"`.
+   - No automatic refund, transfer, or write API is executed.
+4. **Late Capture After Initial Payment Failure:**
+   If an async bank confirmation arrives for a payment entity previously recorded as `FAILED`:
+   - `GatewayPayment.status` transitions to `CAPTURED`, setting `isLateCapture: true` and `previousStatus: "FAILED"`.
+   - `PaymentCase` flags `discrepancyCategory: "STATUS_MISMATCH"`, `safeHoldCode: "ADMIN_HOLD"`, and `resolutionCaseStatus: "CASE_SAFE_HOLD"`.
+   - The event is durably recorded in `PaymentLifecycleEvent` with `conflictFlag: "LATE_CAPTURE_AFTER_FAILURE"`.
+5. **Multiple Payment Attempts for Same Order:**
+   When a customer makes multiple payment attempts for a single order (e.g. Attempt 1 fails, Attempt 2 succeeds), each attempt is keyed by its unique `gatewayPaymentId`. Attempt 1 remains `FAILED`, Attempt 2 records `CAPTURED`, and `PaymentCase` resolves to `captureStatus: "CAPTURE_CAPTURED"`. Neither attempt overwrites or corrupts the other.
 
 ---
 
 ## 6. Correlation, Tenant Isolation & Quarantining
 
-- **Tenant Resolution:** The event's tenant identity is derived from:
+- **Authoritative Tenant Derivation:**
   1. `payload.payment.entity.notes.tenantId`
   2. Matching `MerchantOrder.tenantId` (correlated via `order_id`)
   3. Matching `GatewayPayment.tenantId` (correlated via `gatewayPaymentId`)
-- **Cross-Tenant Spoofing Prevention:** If `notes.tenantId` claims Tenant A, but the referenced `merchantOrderId` belongs to Tenant B, a cross-tenant security alert is triggered:
-  - An `ACCESS_DENIED_ALERT` audit log entry is recorded with full provenance.
-  - The event is durably recorded as `QUARANTINED` with `provenance.status = "QUARANTINED_CROSS_TENANT_MISMATCH"`.
-  - Canonical orders or payments of Tenant B are never touched or exposed.
-- **Unmatched Tenant:** Events lacking any identifiable tenant linkage are quarantined with `QUARANTINED_UNRESOLVED_TENANT`.
-- **Unsupported Event Types:** Validly signed webhook events for unhandled provider features (e.g. `subscription.charged`, `virtual_account.credited`) are durably stored for audit and investigation with status `QUARANTINED_UNSUPPORTED_EVENT_TYPE`, without mutating payment or case ledgers.
+- **Cross-Tenant Injection Defense:**
+  If `notes.tenantId` claims Tenant A, but the referenced `merchantOrderId` belongs to Tenant B, an `ACCESS_DENIED_ALERT` audit entry is created. The event is quarantined with `status: "QUARANTINED"`, reason: `CROSS_TENANT_MISMATCH`. Tenant B's order is never exposed or modified.
+- **Unmatched Tenant:** Quarantined with `QUARANTINED_UNRESOLVED_TENANT`.
+- **Unsupported Event Types:** Quarantined with `QUARANTINED_UNSUPPORTED_EVENT_TYPE`.
 
 ---
 
@@ -98,17 +111,19 @@
 
 | Test Suite | File Path | Test Count | Result |
 |------------|-----------|------------|--------|
-| Webhook Signatures & Middleware | `server/tests/webhook/webhookSignature.test.js` | 9 | PASS |
-| Webhook Ingestion, Deduplication, Replay & Correlation | `server/tests/webhook/webhookIngestion.test.js` | 10 | PASS |
-| Real MongoDB Webhook Persistence Integration | `server/tests/integration/webhookPersistence.integration.test.js` | 5 | PASS |
-| Real MongoDB Service Persistence Integration | `server/tests/integration/servicePersistence.integration.test.js` | 10 | PASS |
-| Full Backend Unit Test Suite | `npm test` across all 53 test files | 323 | PASS |
-| Synthetic Reconciliation Benchmark | `tests/reconciliation/benchmarkCompatibility.test.js` | 120 / 120 | 100.00% MATCH |
-| Frontend Production Build | `npm run build` in `client/` | 1 | PASS |
+| Webhook Signatures & Middleware | `server/tests/webhook/webhookSignature.test.js` | 10 | **PASS (10/10)** |
+| Webhook Ingestion, Deduplication, Replay & Correlation | `server/tests/webhook/webhookIngestion.test.js` | 15 | **PASS (15/15)** |
+| Real MongoDB Webhook Persistence Integration | `server/tests/integration/webhookPersistence.integration.test.js` | 8 | **PASS (8/8)** |
+| Real MongoDB Service Persistence Integration | `server/tests/integration/servicePersistence.integration.test.js` | 10 | **PASS (10/10)** |
+| Full Real MongoDB Integration Test Suite | `npm run test:integration` | 18 | **PASS (18/18)** |
+| Full Backend Unit Test Suite | `npm test` across all 53 test files | 329 | **PASS (329/329)** |
+| Synthetic Reconciliation Benchmark | `tests/reconciliation/benchmarkCompatibility.test.js` | 120 / 120 | **100.00% MATCH** |
+| Frontend Production Build | `npm run build` in `client/` | Vite v5.4.21 bundle | **PASS (0 errors)** |
+| Git Diff / Whitespace Check | `git diff --check` | Clean working tree | **0 errors** |
 
 ---
 
 ## 8. Safety & Compliance Confirmation
 
-- **Zero Financial Writes:** No provider write APIs (refunds, transfers, payouts, captures, or payment creation) are executed or enabled. All Razorpay integrations remain read-only.
-- **Phase 5 Not Started:** No settlement polling scheduler, automated state machine transitions, or automated financial action workers have been initialized. Phase 4 is strictly confined to provider-event ingestion, signature verification, and idempotency.
+- **Zero Financial Writes:** No provider write APIs (refunds, transfers, payouts, captures, or payment mutations) were executed, enabled, or implemented. Razorpay integration remains strictly read-only.
+- **Phase 5 Remains Locked:** No autonomous financial actions, background settlement polling schedulers, or automated lifecycle reversal loops have been started.

@@ -30,6 +30,7 @@ export async function handleRazorpayWebhook(req, res, next) {
         status: result.status,
         eventId: result.eventId || null,
         isDuplicate: result.isDuplicate || false,
+        conflictFlag: result.conflictFlag || null,
         reason: result.reason || null
       }
     });

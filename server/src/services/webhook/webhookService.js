@@ -33,9 +33,10 @@ export function canTransitionGatewayStatus(currentStatus, newStatus) {
     return newStatus === "CAPTURED" || newStatus === "FAILED";
   }
   if (currentStatus === "FAILED") {
-    return false;
+    // Late capture for an initially failed payment attempt is a provider-valid transition
+    return newStatus === "CAPTURED";
   }
-  if (currentStatus === "CREATED") {
+  if (currentStatus === "CREATED" || currentStatus === "PENDING") {
     return true;
   }
   return false;
@@ -43,12 +44,14 @@ export function canTransitionGatewayStatus(currentStatus, newStatus) {
 
 // Non-production in-memory stores for unit testing when MongoDB is offline
 const inMemoryEvents = new Map(); // deduplicationKey -> eventDoc
+const inMemoryBodyHashes = new Map(); // accountBodyHash -> deduplicationKey
 const inMemoryPayments = new Map(); // gatewayPaymentId -> paymentDoc
 const inMemoryOrders = new Map(); // merchantOrderId -> orderDoc
 const inMemoryCases = new Map(); // caseId -> caseDoc
 
 export function resetInMemoryWebhookStore() {
   inMemoryEvents.clear();
+  inMemoryBodyHashes.clear();
   inMemoryPayments.clear();
   inMemoryOrders.clear();
   inMemoryCases.clear();
@@ -245,9 +248,12 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
   const amountPaise = typeof paymentEntity.amount === "number" ? paymentEntity.amount : null;
   const currency = (paymentEntity.currency || "INR").toUpperCase();
 
-  // 5. Durable Idempotency Key Derivation
+  // 5. Durable Idempotency & Raw Body Hash Derivation
   const headerEventId = headers["x-razorpay-event-id"] ? headers["x-razorpay-event-id"].trim() : null;
   const accountId = (eventEnvelope.account_id || "").trim() || "default";
+
+  // Raw body SHA-256 fingerprint scoped to the provider account
+  const accountBodyHash = `RAZORPAY_BODY:${accountId}:${payloadFingerprint}`;
 
   let deduplicationKey = "";
   let sourceEventId = "";
@@ -311,6 +317,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       sourceSystem: "GATEWAY_WEBHOOK",
       sourceEventId,
       deduplicationKey,
+      accountBodyHash,
       normalizedEventType: "WEBHOOK_RECEIVED",
       merchantOrderId,
       gatewayPaymentId,
@@ -330,9 +337,10 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     };
 
     if (isMongoConnected) {
-      await PaymentLifecycleEvent.create(quarantinedEventDoc);
+      await PaymentLifecycleEvent.create(quarantinedEventDoc).catch(() => {});
     } else {
       inMemoryEvents.set(deduplicationKey, quarantinedEventDoc);
+      inMemoryBodyHashes.set(accountBodyHash, deduplicationKey);
     }
 
     return {
@@ -364,13 +372,168 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     processingOutcome = "QUARANTINED_UNRESOLVED_TENANT";
   }
 
-  // 7. Durable Event Ingestion (Deduplication)
+  // 7. Durable Deduplication & Anomaly Detection (Event-ID + Raw Body Hash)
+  if (isMongoConnected) {
+    // Check A: Has this exact event ID been ingested?
+    const existingByEventId = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+    if (existingByEventId) {
+      // Security Anomaly Check: Same event ID + different signed body
+      if (existingByEventId.payloadFingerprint !== payloadFingerprint) {
+        await createAuditEvent({
+          actorType: "RAZORPAY_ADAPTER",
+          actorId: "webhook-ingress",
+          action: "WEBHOOK_QUARANTINED",
+          entityType: "WebhookEvent",
+          entityId: deduplicationKey,
+          metadata: {
+            reason: "EVENT_ID_PAYLOAD_MISMATCH",
+            existingFingerprint: existingByEventId.payloadFingerprint,
+            newFingerprint: payloadFingerprint,
+            sourceEventId
+          }
+        }).catch(() => {});
+
+        return {
+          success: true,
+          status: "QUARANTINED",
+          reason: "EVENT_ID_PAYLOAD_MISMATCH",
+          eventId: existingByEventId.eventId
+        };
+      }
+
+      // Legitimate identical retry: duplicate acknowledged
+      await createAuditEvent({
+        actorType: "RAZORPAY_ADAPTER",
+        actorId: "webhook-ingress",
+        action: "WEBHOOK_DUPLICATE_SKIPPED",
+        entityType: "PaymentLifecycleEvent",
+        entityId: existingByEventId.eventId,
+        metadata: { deduplicationKey, sourceEventId }
+      }).catch(() => {});
+
+      return {
+        success: true,
+        status: "DUPLICATE_ACKNOWLEDGED",
+        isDuplicate: true,
+        eventId: existingByEventId.eventId
+      };
+    }
+
+    // Check B: Has this exact raw body hash already been processed for this provider account?
+    // (Protects against replays with modified/different event-ID headers)
+    const existingByBody = await PaymentLifecycleEvent.findOne({ accountBodyHash }).lean();
+    if (existingByBody) {
+      await createAuditEvent({
+        actorType: "RAZORPAY_ADAPTER",
+        actorId: "webhook-ingress",
+        action: "WEBHOOK_DUPLICATE_SKIPPED",
+        entityType: "PaymentLifecycleEvent",
+        entityId: existingByBody.eventId,
+        metadata: {
+          reason: "RAW_BODY_REPLAY_DIFFERENT_EVENT_ID",
+          originalEventId: existingByBody.sourceEventId,
+          replayEventId: sourceEventId,
+          accountBodyHash
+        }
+      }).catch(() => {});
+
+      return {
+        success: true,
+        status: "DUPLICATE_ACKNOWLEDGED",
+        isDuplicate: true,
+        eventId: existingByBody.eventId
+      };
+    }
+  } else {
+    // In-memory offline checks
+    if (inMemoryEvents.has(deduplicationKey)) {
+      const existing = inMemoryEvents.get(deduplicationKey);
+      if (existing.payloadFingerprint !== payloadFingerprint) {
+        await createAuditEvent({
+          actorType: "RAZORPAY_ADAPTER",
+          actorId: "webhook-ingress",
+          action: "WEBHOOK_QUARANTINED",
+          entityType: "WebhookEvent",
+          entityId: deduplicationKey,
+          metadata: {
+            reason: "EVENT_ID_PAYLOAD_MISMATCH",
+            existingFingerprint: existing.payloadFingerprint,
+            newFingerprint: payloadFingerprint,
+            sourceEventId
+          }
+        }).catch(() => {});
+
+        return {
+          success: true,
+          status: "QUARANTINED",
+          reason: "EVENT_ID_PAYLOAD_MISMATCH",
+          eventId: existing.eventId
+        };
+      }
+
+      await createAuditEvent({
+        actorType: "RAZORPAY_ADAPTER",
+        actorId: "webhook-ingress",
+        action: "WEBHOOK_DUPLICATE_SKIPPED",
+        entityType: "PaymentLifecycleEvent",
+        entityId: existing.eventId,
+        metadata: { deduplicationKey, sourceEventId }
+      }).catch(() => {});
+
+      return {
+        success: true,
+        status: "DUPLICATE_ACKNOWLEDGED",
+        isDuplicate: true,
+        eventId: existing.eventId
+      };
+    }
+
+    if (inMemoryBodyHashes.has(accountBodyHash)) {
+      const existingKey = inMemoryBodyHashes.get(accountBodyHash);
+      const existing = inMemoryEvents.get(existingKey);
+      await createAuditEvent({
+        actorType: "RAZORPAY_ADAPTER",
+        actorId: "webhook-ingress",
+        action: "WEBHOOK_DUPLICATE_SKIPPED",
+        entityType: "PaymentLifecycleEvent",
+        entityId: existing?.eventId || "unknown",
+        metadata: {
+          reason: "RAW_BODY_REPLAY_DIFFERENT_EVENT_ID",
+          originalEventId: existing?.sourceEventId,
+          replayEventId: sourceEventId,
+          accountBodyHash
+        }
+      }).catch(() => {});
+
+      return {
+        success: true,
+        status: "DUPLICATE_ACKNOWLEDGED",
+        isDuplicate: true,
+        eventId: existing?.eventId || null
+      };
+    }
+  }
+
+  // 8. Durable Event Creation
+  const isOrderCancelled = Boolean(matchingOrder && matchingOrder.status === "CANCELLED");
+  const newPaymentStatus = mapToGatewayPaymentStatus(eventName);
+  const isLateCaptureAfterFailure = Boolean(
+    matchingPayment && matchingPayment.status === "FAILED" && newPaymentStatus === "CAPTURED"
+  );
+
+  const conflictFlag = isOrderCancelled
+    ? "CANCELLED_ORDER_CAPTURED"
+    : isLateCaptureAfterFailure
+    ? "LATE_CAPTURE_AFTER_FAILURE"
+    : null;
+
   const eventDoc = {
     eventId: `evt_wh_${crypto.randomUUID()}`,
     tenantId: resolvedTenantId,
     sourceSystem: "GATEWAY_WEBHOOK",
     sourceEventId,
     deduplicationKey,
+    accountBodyHash,
     normalizedEventType,
     merchantOrderId,
     gatewayPaymentId,
@@ -388,7 +551,8 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       deliveryAttempt: headers["x-razorpay-delivery-attempt"] || 1,
       signatureVerified: true,
       hasHeaderEventId: !!headerEventId,
-      processingStatus: processingOutcome
+      processingStatus: processingOutcome,
+      conflictFlag
     }
   };
 
@@ -398,14 +562,40 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       lifecycleEvent = await PaymentLifecycleEvent.create(eventDoc);
     } catch (err) {
       if (err.code === 11000 || (err.message && err.message.includes("E11000"))) {
-        const existing = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+        const existing = await PaymentLifecycleEvent.findOne({
+          $or: [{ deduplicationKey }, { accountBodyHash }]
+        }).lean();
+
+        if (existing && existing.payloadFingerprint !== payloadFingerprint) {
+          await createAuditEvent({
+            actorType: "RAZORPAY_ADAPTER",
+            actorId: "webhook-ingress",
+            action: "WEBHOOK_QUARANTINED",
+            entityType: "WebhookEvent",
+            entityId: deduplicationKey,
+            metadata: {
+              reason: "EVENT_ID_PAYLOAD_MISMATCH",
+              existingFingerprint: existing.payloadFingerprint,
+              newFingerprint: payloadFingerprint,
+              sourceEventId
+            }
+          }).catch(() => {});
+
+          return {
+            success: true,
+            status: "QUARANTINED",
+            reason: "EVENT_ID_PAYLOAD_MISMATCH",
+            eventId: existing.eventId
+          };
+        }
+
         await createAuditEvent({
           actorType: "RAZORPAY_ADAPTER",
           actorId: "webhook-ingress",
           action: "WEBHOOK_DUPLICATE_SKIPPED",
           entityType: "PaymentLifecycleEvent",
           entityId: existing?.eventId || deduplicationKey,
-          metadata: { deduplicationKey, sourceEventId }
+          metadata: { deduplicationKey, sourceEventId, accountBodyHash }
         }).catch(() => {});
 
         return {
@@ -418,51 +608,34 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       throw err;
     }
   } else {
-    // In-memory deduplication check
-    if (inMemoryEvents.has(deduplicationKey)) {
-      const existing = inMemoryEvents.get(deduplicationKey);
-      await createAuditEvent({
-        actorType: "RAZORPAY_ADAPTER",
-        actorId: "webhook-ingress",
-        action: "WEBHOOK_DUPLICATE_SKIPPED",
-        entityType: "PaymentLifecycleEvent",
-        entityId: existing.eventId,
-        metadata: { deduplicationKey, sourceEventId }
-      }).catch(() => {});
-
-      return {
-        success: true,
-        status: "DUPLICATE_ACKNOWLEDGED",
-        isDuplicate: true,
-        eventId: existing.eventId
-      };
-    }
     inMemoryEvents.set(deduplicationKey, eventDoc);
+    inMemoryBodyHashes.set(accountBodyHash, deduplicationKey);
     lifecycleEvent = eventDoc;
   }
 
-  // 8. Canonical State Progression & Out-of-Order Safety
+  // 9. Canonical State Progression & Out-of-Order Safety
   if (!isUnmatchedTenant && !isUnsupportedEventType) {
-    const newPaymentStatus = mapToGatewayPaymentStatus(eventName);
-
     if (gatewayPaymentId && newPaymentStatus) {
       if (matchingPayment) {
         const canTransition = canTransitionGatewayStatus(matchingPayment.status, newPaymentStatus);
 
         if (canTransition) {
+          const updateFields = {
+            status: newPaymentStatus,
+            rawData: sanitizeWebhookPayload(paymentEntity)
+          };
+          if (isLateCaptureAfterFailure) {
+            updateFields.isLateCapture = true;
+            updateFields.previousStatus = "FAILED";
+          }
+
           if (isMongoConnected) {
             await GatewayPayment.updateOne(
               { gatewayPaymentId },
-              {
-                $set: {
-                  status: newPaymentStatus,
-                  rawData: sanitizeWebhookPayload(paymentEntity)
-                }
-              }
+              { $set: updateFields }
             );
           } else {
-            matchingPayment.status = newPaymentStatus;
-            matchingPayment.rawData = sanitizeWebhookPayload(paymentEntity);
+            Object.assign(matchingPayment, updateFields);
           }
         } else {
           logger.warn(
@@ -496,20 +669,39 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       }
     }
 
-    // Update orthogonal dimensions in PaymentCase without regressing terminal states
+    // Update orthogonal dimensions in PaymentCase without regressing terminal states or reversing cancellations
     if (gatewayPaymentId || merchantOrderId) {
       if (isMongoConnected) {
-        const caseQuery = gatewayPaymentId
-          ? { gatewayPaymentId, tenantId: resolvedTenantId }
-          : { merchantOrderId, tenantId: resolvedTenantId };
+        const caseConditions = [];
+        if (gatewayPaymentId) caseConditions.push({ gatewayPaymentId });
+        if (merchantOrderId) caseConditions.push({ merchantOrderId });
+        const caseQuery = { tenantId: resolvedTenantId, $or: caseConditions };
 
         const existingCase = await PaymentCase.findOne(caseQuery);
         if (existingCase) {
           let caseModified = false;
+          if (gatewayPaymentId && !existingCase.gatewayPaymentId) {
+            existingCase.gatewayPaymentId = gatewayPaymentId;
+            caseModified = true;
+          }
+
           if (eventName === "payment.captured") {
             existingCase.captureStatus = "CAPTURE_CAPTURED";
             if (amountPaise) existingCase.actualAmountPaise = amountPaise;
             caseModified = true;
+
+            if (isOrderCancelled) {
+              // Conflicting evidence: Capture on cancelled order! Flag for safe handling
+              existingCase.discrepancyCategory = "CANCELLED_ORDER_CAPTURED";
+              existingCase.safeHoldCode = "LATE_CAPTURE_CANCELLED_ORDER";
+              existingCase.resolutionCaseStatus = "CASE_SAFE_HOLD";
+              existingCase.orderStatus = "ORDER_CANCELLED";
+            } else if (isLateCaptureAfterFailure) {
+              // Conflicting evidence: Late capture after failure! Flag for safe handling
+              existingCase.discrepancyCategory = "STATUS_MISMATCH";
+              existingCase.safeHoldCode = "ADMIN_HOLD";
+              existingCase.resolutionCaseStatus = "CASE_SAFE_HOLD";
+            }
           } else if (eventName === "payment.authorized") {
             if (existingCase.captureStatus !== "CAPTURE_CAPTURED") {
               existingCase.authorizationStatus = "AUTH_AUTHORIZED";
@@ -519,6 +711,11 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
             if (existingCase.captureStatus !== "CAPTURE_CAPTURED") {
               existingCase.captureStatus = "CAPTURE_FAILED";
               caseModified = true;
+            } else {
+              logger.warn(
+                { gatewayPaymentId, caseId: existingCase.caseId },
+                "Out-of-order payment.failed ignored for previously captured case"
+              );
             }
           }
 
@@ -537,6 +734,17 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
               if (eventName === "payment.captured") {
                 kase.captureStatus = "CAPTURE_CAPTURED";
                 if (amountPaise) kase.actualAmountPaise = amountPaise;
+
+                if (isOrderCancelled) {
+                  kase.discrepancyCategory = "CANCELLED_ORDER_CAPTURED";
+                  kase.safeHoldCode = "LATE_CAPTURE_CANCELLED_ORDER";
+                  kase.resolutionCaseStatus = "CASE_SAFE_HOLD";
+                  kase.orderStatus = "ORDER_CANCELLED";
+                } else if (isLateCaptureAfterFailure) {
+                  kase.discrepancyCategory = "STATUS_MISMATCH";
+                  kase.safeHoldCode = "ADMIN_HOLD";
+                  kase.resolutionCaseStatus = "CASE_SAFE_HOLD";
+                }
               } else if (eventName === "payment.authorized") {
                 if (kase.captureStatus !== "CAPTURE_CAPTURED") {
                   kase.authorizationStatus = "AUTH_AUTHORIZED";
@@ -553,7 +761,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     }
   }
 
-  // 9. Audit Event Logging
+  // 10. Audit Event Logging
   await createAuditEvent({
     actorType: "RAZORPAY_ADAPTER",
     actorId: "webhook-ingress",
@@ -564,10 +772,12 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       eventName,
       normalizedEventType,
       deduplicationKey,
+      accountBodyHash,
       tenantId: resolvedTenantId,
       gatewayPaymentId,
       merchantOrderId,
-      processingOutcome
+      processingOutcome,
+      conflictFlag
     }
   }).catch(() => {});
 
@@ -575,6 +785,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     success: true,
     status: processingOutcome,
     isDuplicate: false,
+    conflictFlag,
     eventId: lifecycleEvent.eventId
   };
 }

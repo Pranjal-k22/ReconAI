@@ -82,6 +82,14 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    accountBodyHash: {
+      type: String,
+      trim: true,
+      default: null,
+      unique: true,
+      sparse: true,
+      index: true
+    },
     normalizedEventType: {
       type: String,
       required: [true, "normalizedEventType is required"],

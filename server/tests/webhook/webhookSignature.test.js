@@ -146,5 +146,48 @@ describe("Razorpay Webhook Signature Verification Suite", () => {
 
       expect(res.status).toBe(413);
     });
+
+    it("invalid signature cannot reserve deduplication key or poison legitimate later ingestion", async () => {
+      const eventId = "evt_poison_attempt_01";
+      const validPayload = JSON.stringify({
+        entity: "event",
+        account_id: "acc_test_poison",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_poison_01",
+              amount: 5000,
+              currency: "INR",
+              notes: { tenantId: "sh_poison_test" }
+            }
+          }
+        }
+      });
+      const validSig = generateSignature(validPayload, TEST_WEBHOOK_SECRET);
+      const badSig = "0".repeat(64);
+
+      // 1. Attacker attempts to poison event ID with an invalid signature
+      const res1 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", badSig)
+        .set("X-Razorpay-Event-Id", eventId)
+        .send(validPayload);
+
+      expect(res1.status).toBe(401);
+
+      // 2. Legitimate provider delivers same event ID with valid signature
+      const res2 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", validSig)
+        .set("X-Razorpay-Event-Id", eventId)
+        .send(validPayload);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.status).toBe("ACCEPTED");
+      expect(res2.body.data.isDuplicate).toBe(false);
+    });
   });
 });
