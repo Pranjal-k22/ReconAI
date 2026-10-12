@@ -11,7 +11,7 @@ let isShuttingDown = false;
 
 export const getMonitoringWorker = () => monitoringWorker;
 
-export const startServer = async () => {
+export const startServer = async ({ customFetch = null } = {}) => {
   try {
     // Step 1: Validate environment variables early
     const env = validateEnv();
@@ -30,7 +30,8 @@ export const startServer = async () => {
       monitoringWorker = startMonitoringWorker({
         intervalMs: env.MONITORING_INTERVAL_MS || 30000,
         maxTasks: env.MONITORING_MAX_CONCURRENT_READS || 5,
-        leaseDurationMs: env.MONITORING_LEASE_DURATION_MS || 30000
+        leaseDurationMs: env.MONITORING_LEASE_DURATION_MS || 30000,
+        customFetch
       });
     }
 
@@ -47,7 +48,7 @@ export const startServer = async () => {
   }
 };
 
-export const handleGracefulShutdown = async (signal) => {
+export const handleGracefulShutdown = async (signal, { exitProcess = true } = {}) => {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
@@ -60,19 +61,22 @@ export const handleGracefulShutdown = async (signal) => {
   }
 
   if (server) {
-    server.close(async () => {
-      logger.info("HTTP server closed.");
-      await disconnectDatabase();
-      logger.info("Graceful shutdown completed cleanly.");
-      process.exit(0);
+    await new Promise((resolve) => {
+      server.close(async () => {
+        logger.info("HTTP server closed.");
+        await disconnectDatabase();
+        resolve();
+      });
     });
-
-    setTimeout(() => {
-      logger.error("Forced exit: Shutdown timed out.");
-      process.exit(1);
-    }, 10000);
   } else {
     await disconnectDatabase();
+  }
+
+  logger.info("Graceful shutdown completed cleanly.");
+  isShuttingDown = false;
+  server = null;
+
+  if (exitProcess) {
     process.exit(0);
   }
 };

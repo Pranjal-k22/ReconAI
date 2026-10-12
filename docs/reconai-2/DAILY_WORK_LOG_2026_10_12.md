@@ -358,9 +358,9 @@ ReconAI/
    - Durable job persistence via `PaymentMonitoringTask` with atomic distributed lease locks (`findOneAndUpdate`) and automatic dead-letter recovery of expired leases from crashed workers.
    - Connected real runtime worker activation in `server.js` (Option A in-process) and created standalone worker entrypoint in `worker.js` (Option B with `npm run start:worker`), both with graceful shutdown handlers (`SIGINT`/`SIGTERM`).
    - Connected real task enqueueing: webhook ingestion auto-schedules monitoring for `payment.authorized`/`payment.created` and completes tasks on terminal events; payment sync auto-enqueues pending records; added bounded `enqueueUnmonitoredPendingPayments`.
-   - Verified with real runtime smoke test (`server/scripts/monitoringSmokeTest.js`) against isolated MongoDB.
-   - Added 34 unit tests (`paymentStateMachine.test.js` [15], `monitoringScheduler.test.js` [10], `monitoringRuntimeWiring.test.js` [9]) and 7 real-MongoDB integration tests (`monitoringPersistence.integration.test.js`).
-   - All 363 backend unit tests pass across 56 test files, all 30 real-MongoDB integration tests pass, frontend build passes, and reconciliation benchmark achieves 120/120 (100.00%).
+   - Verified production startup path (`startServer`), database target validation (`validateTestDatabaseUri`), zero-leak network isolation (`globalThis.fetch` blocked), and clean `SIGTERM` shutdown via both `server/scripts/monitoringSmokeTest.js` and `tests/integration/productionStartup.integration.test.js`.
+   - Added 34 unit tests (`paymentStateMachine.test.js` [15], `monitoringScheduler.test.js` [10], `monitoringRuntimeWiring.test.js` [9]) and 10 real-MongoDB integration tests (`monitoringPersistence.integration.test.js` [7], `productionStartup.integration.test.js` [3]).
+   - All 363 backend unit tests pass across 56 test files, all 33 real-MongoDB integration tests pass across 4 suites, frontend build passes, and reconciliation benchmark achieves 120/120 (100.00%).
 
 ---
 

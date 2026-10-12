@@ -9,7 +9,7 @@ let isShuttingDown = false;
 
 export const getWorkerInstance = () => workerInstance;
 
-export const startStandaloneWorker = async () => {
+export const startStandaloneWorker = async ({ customFetch = null } = {}) => {
   try {
     const env = validateEnv();
 
@@ -24,7 +24,8 @@ export const startStandaloneWorker = async () => {
       intervalMs: env.MONITORING_INTERVAL_MS || 30000,
       maxTasks: env.MONITORING_MAX_CONCURRENT_READS || 5,
       leaseDurationMs: env.MONITORING_LEASE_DURATION_MS || 30000,
-      workerId: `worker_proc_${process.pid}`
+      workerId: `worker_proc_${process.pid}`,
+      customFetch
     });
 
     logger.info(`🚀 ReconAI Payment Monitoring Worker process running [PID: ${process.pid}]`);
@@ -35,7 +36,7 @@ export const startStandaloneWorker = async () => {
   }
 };
 
-export const handleWorkerShutdown = async (signal) => {
+export const handleWorkerShutdown = async (signal, { exitProcess = true } = {}) => {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
@@ -48,7 +49,11 @@ export const handleWorkerShutdown = async (signal) => {
 
   await disconnectDatabase();
   logger.info("Worker process disconnected cleanly. Exiting.");
-  process.exit(0);
+  isShuttingDown = false;
+
+  if (exitProcess) {
+    process.exit(0);
+  }
 };
 
 process.on("SIGINT", () => handleWorkerShutdown("SIGINT"));

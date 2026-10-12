@@ -150,13 +150,14 @@ Phase 5 registers the following append-only audit actions in `AuditLog`:
 | **2. Monitoring Scheduler & Retry Unit Tests** | `tests/monitoring/monitoringScheduler.test.js` | **PASS** (10/10 tests) |
 | **3. Runtime Wiring & Task Lifecycle Tests** | `tests/monitoring/monitoringRuntimeWiring.test.js` | **PASS** (9/9 tests) |
 | **4. Real-MongoDB Persistence & Concurrency** | `tests/integration/monitoringPersistence.integration.test.js` | **PASS** (7/7 tests) |
-| **5. Webhook Ingestion & Signature Suite** | `tests/webhook/` | **PASS** (25/25 tests) |
-| **6. Full Integration Suite (Real MongoDB)** | `npm run test:integration` | **PASS** (30/30 tests across 3 suites) |
-| **7. Full Backend Unit & Domain Suite** | `npm test` | **PASS** (363/363 tests across 56 suites) |
-| **8. Real Runtime Smoke Test** | `node scripts/monitoringSmokeTest.js` | **PASS** (Real DB, live worker activation & shutdown) |
-| **9. 120-Scenario Reconciliation Benchmark** | `tests/reconciliation/benchmarkCompatibility.test.js` | **PASS** (120/120 classifications, 100.00% match rate) |
-| **10. Frontend Production Build** | `npm run build` (in `/client`) | **PASS** (Zero build errors) |
-| **11. Git Diff Check** | `git diff --check` | **PASS** (Clean whitespace, no conflicts) |
+| **5. Production Startup & Network Isolation** | `tests/integration/productionStartup.integration.test.js` | **PASS** (3/3 tests) |
+| **6. Webhook Ingestion & Signature Suite** | `tests/webhook/` | **PASS** (25/25 tests) |
+| **7. Full Integration Suite (Real MongoDB)** | `npm run test:integration` | **PASS** (33/33 tests across 4 suites) |
+| **8. Full Backend Unit & Domain Suite** | `npm test` | **PASS** (363/363 tests across 56 suites) |
+| **9. Real Runtime Smoke Test** | `node scripts/monitoringSmokeTest.js` | **PASS** (Production entrypoint, zero network calls, clean SIGTERM) |
+| **10. 120-Scenario Reconciliation Benchmark** | `tests/reconciliation/benchmarkCompatibility.test.js` | **PASS** (120/120 classifications, 100.00% match rate) |
+| **11. Frontend Production Build** | `npm run build` (in `/client`) | **PASS** (Zero build errors) |
+| **12. Git Diff Check** | `git diff --check` | **PASS** (Clean whitespace, no conflicts) |
 
 ---
 
