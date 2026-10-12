@@ -60,8 +60,17 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
    `deduplicationKey: { type: String, required: true, unique: true, index: true }`
 2. **Account-Scoped Raw Body SHA-256 Fingerprint (`accountBodyHash`):**
    `accountBodyHash = "RAZORPAY_BODY:" + accountId + ":" + sha256(rawBytes)`
-   Enforced via MongoDB sparse unique index:
-   `accountBodyHash: { type: String, unique: true, sparse: true, index: true }`
+   Enforced via MongoDB **partial unique index** (without `default: null`):
+   ```javascript
+   paymentLifecycleEventSchema.index(
+     { accountBodyHash: 1 },
+     {
+       unique: true,
+       partialFilterExpression: { accountBodyHash: { $type: "string" } }
+     }
+   );
+   ```
+   **Why Partial Unique Index is Required:** In MongoDB, sparse indexes still index documents where the field has an explicit `null` value. If Mongoose applied `default: null`, multiple non-webhook lifecycle events (e.g. claims, orders, reconciliations) would collide on `{ accountBodyHash: null }`. By omitting `default: null` and applying `partialFilterExpression: { accountBodyHash: { $type: "string" } }`, MongoDB only indexes documents where `accountBodyHash` is an actual string. Multiple documents with omitted or null hashes coexist with zero collisions, while duplicate string hashes are strictly rejected with `E11000`.
 3. **Modified-Header Replay Defense:**
    If a replay arrives with the exact same signed body and signature but with a *changed or spoofed `X-Razorpay-Event-Id` header*, the `accountBodyHash` index intercepts it. The request is idempotently acknowledged as `DUPLICATE_ACKNOWLEDGED` (`isDuplicate: true`), creating zero duplicate records and executing zero state changes.
 4. **Event-ID Payload Tampering / Collision Defense:**
@@ -81,13 +90,22 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
    If a valid `payment.captured` event arrives for a merchant order previously marked `CANCELLED`:
    - `MerchantOrder.status` remains `CANCELLED` (no automatic cancellation reversal or reopen).
    - `GatewayPayment.status` records provider truth as `CAPTURED`.
-   - `PaymentCase` flags `discrepancyCategory: "CANCELLED_ORDER_CAPTURED"`, `safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER"`, `orderStatus: "ORDER_CANCELLED"`, and `resolutionCaseStatus: "CASE_SAFE_HOLD"`.
+   - `PaymentCase` fields set to:
+     - `resolutionCaseStatus = "CASE_SAFE_HOLD"` (overall case lifecycle state)
+     - `safeHoldCode = "LATE_CAPTURE_CANCELLED_ORDER"` (specific hold reason code)
+     - `discrepancyCategory = "CANCELLED_ORDER_CAPTURED"` (discrepancy category)
+     - `orderStatus = "ORDER_CANCELLED"`
+     - `captureStatus = "CAPTURE_CAPTURED"`
    - The response returns `conflictFlag: "CANCELLED_ORDER_CAPTURED"`.
    - No automatic refund, transfer, or write API is executed.
 4. **Late Capture After Initial Payment Failure:**
    If an async bank confirmation arrives for a payment entity previously recorded as `FAILED`:
-   - `GatewayPayment.status` transitions to `CAPTURED`, setting `isLateCapture: true` and `previousStatus: "FAILED"`.
-   - `PaymentCase` flags `discrepancyCategory: "STATUS_MISMATCH"`, `safeHoldCode: "ADMIN_HOLD"`, and `resolutionCaseStatus: "CASE_SAFE_HOLD"`.
+   - `GatewayPayment` fields set to `status: "CAPTURED"`, `isLateCapture: true`, and `previousStatus: "FAILED"`.
+   - `PaymentCase` fields set to:
+     - `resolutionCaseStatus = "CASE_SAFE_HOLD"` (overall case lifecycle state)
+     - `safeHoldCode = "ADMIN_HOLD"` (administrative review hold reason code)
+     - `discrepancyCategory = "STATUS_MISMATCH"` (discrepancy category)
+     - `captureStatus = "CAPTURE_CAPTURED"`
    - The event is durably recorded in `PaymentLifecycleEvent` with `conflictFlag: "LATE_CAPTURE_AFTER_FAILURE"`.
 5. **Multiple Payment Attempts for Same Order:**
    When a customer makes multiple payment attempts for a single order (e.g. Attempt 1 fails, Attempt 2 succeeds), each attempt is keyed by its unique `gatewayPaymentId`. Attempt 1 remains `FAILED`, Attempt 2 records `CAPTURED`, and `PaymentCase` resolves to `captureStatus: "CAPTURE_CAPTURED"`. Neither attempt overwrites or corrupts the other.
@@ -113,9 +131,9 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
 |------------|-----------|------------|--------|
 | Webhook Signatures & Middleware | `server/tests/webhook/webhookSignature.test.js` | 10 | **PASS (10/10)** |
 | Webhook Ingestion, Deduplication, Replay & Correlation | `server/tests/webhook/webhookIngestion.test.js` | 15 | **PASS (15/15)** |
-| Real MongoDB Webhook Persistence Integration | `server/tests/integration/webhookPersistence.integration.test.js` | 8 | **PASS (8/8)** |
+| Real MongoDB Webhook Persistence Integration | `server/tests/integration/webhookPersistence.integration.test.js` | 10 | **PASS (10/10)** |
 | Real MongoDB Service Persistence Integration | `server/tests/integration/servicePersistence.integration.test.js` | 10 | **PASS (10/10)** |
-| Full Real MongoDB Integration Test Suite | `npm run test:integration` | 18 | **PASS (18/18)** |
+| Full Real MongoDB Integration Test Suite | `npm run test:integration` | 20 | **PASS (20/20)** |
 | Full Backend Unit Test Suite | `npm test` across all 53 test files | 329 | **PASS (329/329)** |
 | Synthetic Reconciliation Benchmark | `tests/reconciliation/benchmarkCompatibility.test.js` | 120 / 120 | **100.00% MATCH** |
 | Frontend Production Build | `npm run build` in `client/` | Vite v5.4.21 bundle | **PASS (0 errors)** |

@@ -109,6 +109,14 @@ const gatewayPaymentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {}
     },
+    isLateCapture: {
+      type: Boolean,
+      default: false
+    },
+    previousStatus: {
+      type: String,
+      default: null
+    },
     importBatchId: {
       type: String,
       trim: true,

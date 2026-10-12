@@ -84,11 +84,7 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
     },
     accountBodyHash: {
       type: String,
-      trim: true,
-      default: null,
-      unique: true,
-      sparse: true,
-      index: true
+      trim: true
     },
     normalizedEventType: {
       type: String,
@@ -181,6 +177,13 @@ paymentLifecycleEventSchema.index({ tenantId: 1, caseId: 1 });
 paymentLifecycleEventSchema.index({ tenantId: 1, gatewayPaymentId: 1 });
 paymentLifecycleEventSchema.index({ tenantId: 1, merchantOrderId: 1 });
 paymentLifecycleEventSchema.index({ tenantId: 1, sourceSystem: 1, sourceEventId: 1 });
+paymentLifecycleEventSchema.index(
+  { accountBodyHash: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { accountBodyHash: { $type: "string" } }
+  }
+);
 
 export const PaymentLifecycleEvent =
   mongoose.models.PaymentLifecycleEvent ||

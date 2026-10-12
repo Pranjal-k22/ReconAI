@@ -336,12 +336,16 @@ ReconAI/
    Added repeatable real MongoDB persistence integration test suite (`servicePersistence.integration.test.js`) verifying 10 database-backed scenarios across reconnection, application reinitialization, and genuine separate OS process reads.
 8. **`17f3126`**: `feat(reconai-2): add verified provider webhook ingestion`
    Implemented signature-verified Razorpay webhook ingress with raw-body preservation, constant-time comparison, durable MongoDB idempotency/deduplication, out-of-order state regression prevention, cross-tenant correlation defense, and 24 focused automated tests.
-9. **Phase 4 Corrective Hardening**: `fix(reconai-2): harden replay deduplication and late-event safety`
-   - Added account-scoped raw body SHA-256 fingerprint (`accountBodyHash`) with MongoDB sparse unique index to neutralize replays attempting to bypass deduplication via modified event-ID headers.
+9. **`2680067`**: `fix(reconai-2): harden replay deduplication and late-event safety`
+   - Added account-scoped raw body SHA-256 fingerprint (`accountBodyHash`) to neutralize replays attempting to bypass deduplication via modified event-ID headers.
    - Quarantined payload mismatch anomalies (same event ID + different body) as `EVENT_ID_PAYLOAD_MISMATCH` with security audit logging.
    - Guaranteed pre-verification isolation: invalid signatures never reserve deduplication keys or poison later ingestion.
    - Safe late-event handling: late captures on cancelled orders preserve `CANCELLED` status and flag `SAFE_HOLD` without automatic reversals or refunds; late captures after failure transition safely to `CAPTURED` with `isLateCapture: true` and flag discrepancy; distinct payment attempts for same order remain decoupled.
-   - 33 focused tests passing (25 webhook unit, 8 real MongoDB integration) + 329 backend unit tests passing + 120/120 reconciliation benchmark at 100%.
+10. **Phase 4 Final Index Safety & Status Reconciliation**: `fix(reconai-2): enforce partial unique index and reconcile hold statuses`
+   - Fixed sparse null-collision risk on `accountBodyHash` by removing `default: null` and applying MongoDB `partialFilterExpression: { accountBodyHash: { $type: "string" } }`, guaranteeing multiple documents with omitted or null hashes coexist without collision while all string hashes remain strictly unique.
+   - Added `isLateCapture` and `previousStatus` to `GatewayPayment` schema.
+   - Reconciled and documented exact canonical `PaymentCase` fields: `resolutionCaseStatus` (`"CASE_SAFE_HOLD"`), `safeHoldCode` (`"LATE_CAPTURE_CANCELLED_ORDER"` vs `"ADMIN_HOLD"`), and `discrepancyCategory` (`"CANCELLED_ORDER_CAPTURED"` vs `"STATUS_MISMATCH"`).
+   - 35 focused tests passing (25 webhook unit, 10 real MongoDB integration) + 329 backend unit tests passing + 20 full integration tests passing + 120/120 reconciliation benchmark at 100%.
 
 ---
 
@@ -350,5 +354,5 @@ ReconAI/
 - **Zero Autonomous Financial Execution:** Payment action statuses remain strictly limited to:
   `["PROPOSED", "SIMULATED", "REJECTED_BY_POLICY", "HELD_IN_SAFE_HOLD"]`.
 - **No Provider Write APIs:** Razorpay and external gateway integrations remain strictly read-only. No live refund, transfer, payout, or disbursement execution endpoints exist or were called.
-- **Phase 4 Status:** Phase 4 (Provider Event Ingestion and Webhook Safety) corrective hardening completed with all tests passing.
+- **Phase 4 Status:** Phase 4 (Provider Event Ingestion and Webhook Safety) complete and verified across all database safety and lifecycle invariants.
 - **Phase 5 Status:** Phase 5 (Autonomous financial actions, background settlement polling scheduler, automated state machine auto-reversals) has **NOT** started.

@@ -674,4 +674,186 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     expect(caseInDb.safeHoldCode).toBe("LATE_CAPTURE_CANCELLED_ORDER");
     expect(caseInDb.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
   });
+
+  it("9. verify accountBodyHash partial unique index: multiple documents with omitted/null accountBodyHash coexist without collision, while duplicate string hashes are rejected", async () => {
+    if (!isMongoAvailable) return;
+
+    // Inspect actual MongoDB index definition
+    const indexes = await PaymentLifecycleEvent.collection.indexes();
+    const hashIndex = indexes.find((idx) => idx.name === "accountBodyHash_1");
+    expect(hashIndex).toBeDefined();
+    expect(hashIndex.unique).toBe(true);
+    expect(hashIndex.partialFilterExpression).toEqual({
+      accountBodyHash: { $type: "string" }
+    });
+
+    // 1. Create and persist 2 distinct lifecycle events through the normal model path omitting accountBodyHash
+    const evtId1 = `evt_probe_nohash_${Date.now()}_1`;
+    const evtId2 = `evt_probe_nohash_${Date.now()}_2`;
+    trackedEventIds.add(evtId1);
+    trackedEventIds.add(evtId2);
+
+    const doc1 = await PaymentLifecycleEvent.create({
+      eventId: evtId1,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_PROBE_${Date.now()}_1`,
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fingerprint_probe_1"
+    });
+    expect(doc1.accountBodyHash).toBeUndefined();
+
+    const doc2 = await PaymentLifecycleEvent.create({
+      eventId: evtId2,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_PROBE_${Date.now()}_2`,
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fingerprint_probe_2"
+    });
+    expect(doc2.accountBodyHash).toBeUndefined();
+
+    // 2. Both writes succeed when other keys are distinct
+    const countNoHash = await PaymentLifecycleEvent.countDocuments({
+      eventId: { $in: [evtId1, evtId2] }
+    });
+    expect(countNoHash).toBe(2);
+
+    // 3. Verify that duplicate non-empty string hashes for the same account are STILL rejected
+    const testHash = `RAZORPAY_BODY:acc_unique_probe:${Date.now()}`;
+    const hashEvt1 = `evt_hash_probe_1_${Date.now()}`;
+    const hashEvt2 = `evt_hash_probe_2_${Date.now()}`;
+    trackedEventIds.add(hashEvt1);
+    trackedEventIds.add(hashEvt2);
+
+    await PaymentLifecycleEvent.create({
+      eventId: hashEvt1,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_HASH_${Date.now()}_1`,
+      accountBodyHash: testHash,
+      normalizedEventType: "PAYMENT_CAPTURED",
+      payloadFingerprint: "fingerprint_hash_1"
+    });
+
+    let duplicateRejected = false;
+    try {
+      await PaymentLifecycleEvent.create({
+        eventId: hashEvt2,
+        tenantId: "sh_probe_tenant",
+        sourceSystem: "GATEWAY_WEBHOOK",
+        deduplicationKey: `KEY_HASH_${Date.now()}_2`, // Different deduplicationKey
+        accountBodyHash: testHash, // DUPLICATE accountBodyHash
+        normalizedEventType: "PAYMENT_CAPTURED",
+        payloadFingerprint: "fingerprint_hash_2"
+      });
+    } catch (err) {
+      if (err.code === 11000 || (err.message && err.message.includes("E11000"))) {
+        duplicateRejected = true;
+      }
+    }
+    expect(duplicateRejected).toBe(true);
+
+    // 4. Test survival after reconnecting
+    await mongoose.disconnect();
+    expect(mongoose.connection.readyState).toBe(0);
+
+    await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+    expect(mongoose.connection.readyState).toBe(1);
+
+    const doc3 = await PaymentLifecycleEvent.create({
+      eventId: `evt_probe_after_reconnect_${Date.now()}`,
+      tenantId: "sh_probe_tenant",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      deduplicationKey: `KEY_PROBE_${Date.now()}_3`,
+      normalizedEventType: "ORDER_CREATED",
+      payloadFingerprint: "fingerprint_probe_3"
+    });
+    expect(doc3).toBeDefined();
+    trackedEventIds.add(doc3.eventId);
+  });
+
+  it("10. conflicting late capture after failure against real MongoDB persists GatewayPayment CAPTURED with isLateCapture and flags PaymentCase with resolutionCaseStatus CASE_SAFE_HOLD and safeHoldCode ADMIN_HOLD", async () => {
+    if (!isMongoAvailable) return;
+
+    const paymentId = `pay_integ_late_fail_${Date.now()}`;
+    const orderId = `order_integ_late_fail_${Date.now()}`;
+    const caseId = `CASE_INTEG_LATE_FAIL_${Date.now()}`;
+    const tenantId = "sh_integ_merchant";
+
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+    trackedCaseIds.add(caseId);
+
+    // Seed GatewayPayment initially as FAILED
+    await GatewayPayment.create({
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      tenantId,
+      amountPaise: 9500,
+      currency: "INR",
+      status: "FAILED",
+      method: "UPI",
+      source: "RAZORPAY",
+      gatewayCreatedAt: new Date()
+    });
+
+    // Seed PaymentCase with captureStatus: CAPTURE_FAILED
+    await PaymentCase.create({
+      caseId,
+      tenantId,
+      merchantOrderId: orderId,
+      gatewayPaymentId: paymentId,
+      expectedAmountPaise: 9500,
+      currency: "INR",
+      discrepancyCategory: "GENERAL_EXCEPTION",
+      orderStatus: "ORDER_CREATED",
+      captureStatus: "CAPTURE_FAILED",
+      resolutionCaseStatus: "CASE_DETECTED"
+    });
+
+    // Webhook delivers late payment.captured
+    const eventId = `evt_integ_late_fail_${Date.now()}`;
+    trackedDeduplicationKeys.add(`RAZORPAY:acc_integ_late_fail:${eventId}`);
+
+    const rawBody = JSON.stringify({
+      entity: "event",
+      account_id: "acc_integ_late_fail",
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 9500,
+            currency: "INR",
+            notes: { tenantId }
+          }
+        }
+      }
+    });
+
+    const res = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signBody(rawBody))
+      .set("X-Razorpay-Event-Id", eventId)
+      .send(rawBody);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.conflictFlag).toBe("LATE_CAPTURE_AFTER_FAILURE");
+
+    // Invariant in MongoDB: GatewayPayment transitioned to CAPTURED with isLateCapture
+    const paymentInDb = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(paymentInDb.status).toBe("CAPTURED");
+    expect(paymentInDb.isLateCapture).toBe(true);
+    expect(paymentInDb.previousStatus).toBe("FAILED");
+
+    // Invariant in MongoDB: PaymentCase exact fields
+    const caseInDb = await PaymentCase.findOne({ caseId }).lean();
+    expect(caseInDb.captureStatus).toBe("CAPTURE_CAPTURED");
+    expect(caseInDb.discrepancyCategory).toBe("STATUS_MISMATCH");
+    expect(caseInDb.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(caseInDb.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+  });
 });
