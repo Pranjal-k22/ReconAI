@@ -362,12 +362,24 @@ ReconAI/
    - Added 34 unit tests (`paymentStateMachine.test.js` [15], `monitoringScheduler.test.js` [10], `monitoringRuntimeWiring.test.js` [9]) and 10 real-MongoDB integration tests (`monitoringPersistence.integration.test.js` [7], `productionStartup.integration.test.js` [3]).
    - All 363 backend unit tests pass across 56 test files, all 33 real-MongoDB integration tests pass across 4 suites, frontend build passes, and reconciliation benchmark achieves 120/120 (100.00%).
 
+12. **Phase 6: Deterministic Edge-Case Classification & Evidence Engine**: `feat(reconai-2): add deterministic evidence classification`
+   - Implemented deterministic, explainable classification engine across all 30 approved payment lifecycle scenarios (`server/src/services/classification/evidenceClassifier.js`).
+   - Implemented `EvidenceRecord` Mongoose model (`server/src/models/EvidenceRecord.js`) storing structured facts (`PROVIDER_VERIFIED`, `SYSTEM_RECORD`), claims (`CUSTOMER_CLAIM`), contradictions, missing evidence, safe-hold codes, controlled recommendations, and supporting evidence references.
+   - Enforced strict fact vs claim separation: customer statements alleging bank debits are categorized as claims (`CUSTOMER_CLAIM`, `verified: false`), never as verified bank facts.
+   - Preserved order cancellation on late captures under safe-hold (`LATE_CAPTURE_CANCELLED_ORDER`), strictly prohibiting automated reopening or unverified reversals.
+   - Neutralized hostile prompts and embedded instruction attacks via `sanitizeClaimText`.
+   - Guaranteed tenant isolation and deduplicated re-evaluations via partial unique index on `{ tenantId: 1, evaluationKey: 1 }`.
+   - Created dedicated unit test suite for all 30 scenarios (`server/tests/classification/evidenceClassifier.test.js` [32 tests]).
+   - Created real-MongoDB integration test suite for durable evidence persistence, indexing, and tenant isolation (`server/tests/integration/evidencePersistence.integration.test.js` [4 tests]).
+   - Re-verified all regression gates: 395 backend unit tests across 57 test files, 37 real-MongoDB integration tests across 5 files, frontend production build, and 120/120 reconciliation benchmark (100.00% match rate).
+   - Documented full traceability matrix in `docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md`.
+
 ---
 
 ## 7. Confirmation of Binding Safety Guardrails
 
-- **Zero Autonomous Financial Execution:** Payment action statuses remain strictly limited to:
-  `["PROPOSED", "SIMULATED", "REJECTED_BY_POLICY", "HELD_IN_SAFE_HOLD"]`.
-- **No Provider Write APIs:** Razorpay and external gateway integrations remain strictly read-only. No live refund, transfer, payout, or disbursement execution endpoints exist or were called.
-- **Phase 5 Status:** Phase 5 (Deterministic Payment Lifecycle Monitoring and Canonical State Machine) complete and verified across all lifecycle, concurrency, and persistence invariants.
-- **Phase 6 Status:** Phase 6 (Edge-case and multi-dimensional discrepancy resolution engine) has **NOT** started.
+- **Zero Autonomous Financial Execution:** Financial mutations (refunds, captures, payouts, transfers, ledger adjustments) remain strictly prohibited from execution. Findings are classification and evidence collections only.
+- **No Provider Write APIs:** Razorpay and external gateway integrations remain strictly read-only. No financial write APIs were called or enabled.
+- **Phase 6 Status:** Phase 6 (Deterministic Edge-Case Classification and Evidence Engine) is **COMPLETE and PASSING**.
+- **Phase 7 Status:** Phase 7 (AI Investigation & Agent Evaluation) has **NOT** started.
+- **Phase 8 Status:** Phase 8 (Autonomous Resolution Actions) has **NOT** started.

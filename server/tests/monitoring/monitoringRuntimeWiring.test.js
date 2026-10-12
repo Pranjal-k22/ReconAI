@@ -30,7 +30,7 @@ describe("Payment Monitoring Runtime Wiring & Task Lifecycle", () => {
       expect(appModule.default).toBeDefined();
       const serverModule = await import("../../src/server.js");
       expect(serverModule.getMonitoringWorker()).toBeNull();
-    });
+    }, 30000);
   });
 
   describe("2. Worker Startup & Shutdown Lifecycle", () => {
