@@ -38,7 +38,22 @@ const envSchema = z
     JWT_ISSUER: z.string().default("reconai-auth-service"),
     JWT_AUDIENCE: z.string().default("reconai-api"),
     SERVICE_TOKEN_SECRET: z.string().min(16).default("reconai-service-token-secret-32chars-min!"),
-    SERVICE_TOKEN_AUDIENCE: z.string().default("reconai-service")
+    SERVICE_TOKEN_AUDIENCE: z.string().default("reconai-service"),
+    MONITORING_WORKER_ENABLED: z
+      .union([z.boolean(), z.string()])
+      .transform((val) => {
+        if (typeof val === "boolean") return val;
+        if (typeof val === "string") {
+          return val.toLowerCase() === "true" || val === "1";
+        }
+        return true;
+      })
+      .default(true),
+    MONITORING_INTERVAL_MS: z.coerce.number().int().positive().default(30000),
+    MONITORING_LEASE_DURATION_MS: z.coerce.number().int().positive().default(30000),
+    MONITORING_MAX_CONCURRENT_READS: z.coerce.number().int().positive().default(5),
+    MONITORING_MAX_ATTEMPTS: z.coerce.number().int().positive().default(4),
+    MONITORING_DEADLINE_MINUTES: z.coerce.number().int().positive().default(60)
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV !== "test" && (!data.MONGODB_URI || data.MONGODB_URI.trim() === "")) {

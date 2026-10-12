@@ -347,6 +347,18 @@ ReconAI/
    - Reconciled and documented exact canonical `PaymentCase` fields: `resolutionCaseStatus` (`"CASE_SAFE_HOLD"`), `safeHoldCode` (`"LATE_CAPTURE_CANCELLED_ORDER"` vs `"ADMIN_HOLD"`), and `discrepancyCategory` (`"CANCELLED_ORDER_CAPTURED"` vs `"STATUS_MISMATCH"`).
    - 35 focused tests passing (25 webhook unit, 10 real MongoDB integration) + 329 backend unit tests passing + 20 full integration tests passing + 120/120 reconciliation benchmark at 100%.
 
+11. **Phase 5: Deterministic Payment Lifecycle Monitoring**: `feat(reconai-2): add deterministic payment lifecycle monitoring`
+   - Centralized monotonic canonical transition policy across all 8 dimensions in `server/src/services/stateMachine/paymentStateMachine.js`.
+   - Prevented state regressions (terminal `CAPTURED` cannot revert to `FAILED`).
+   - Implemented edge-case preservation under safe-hold:
+     - Late capture after failure updates `GatewayPayment` to `CAPTURED`, records `isLateCapture: true`, flags `LATE_CAPTURE_AFTER_FAILURE`, and sets `PaymentCase` to `CASE_SAFE_HOLD` (`ADMIN_HOLD`).
+     - Late capture on cancelled orders preserves `MerchantOrder.status = "CANCELLED"`, flags `CANCELLED_ORDER_CAPTURED`, sets `PaymentCase` to `CASE_SAFE_HOLD` (`LATE_CAPTURE_CANCELLED_ORDER`), with zero automatic refund or order reopening.
+   - Bounded provider-read rechecks via Razorpay GET `/v1/payments/:id` with exponential backoff `[60s, 300s, 900s, 1800s]` and jitter.
+   - Critical timeout policy: timeouts and retry exhaustion leave outcomes `UNKNOWN` or `PENDING` rather than marking payments failed. Exhausted tasks trigger safe-hold containment (`ADMIN_HOLD`, `MONITORING_RETRY_EXHAUSTED`).
+   - Durable job persistence via `PaymentMonitoringTask` with atomic distributed lease locks (`findOneAndUpdate`) and automatic dead-letter recovery of expired leases from crashed workers.
+   - Added 25 unit tests (`paymentStateMachine.test.js` [15], `monitoringScheduler.test.js` [10]) and 7 real-MongoDB integration tests (`monitoringPersistence.integration.test.js`).
+   - All 354 backend unit tests pass, all 30 real-MongoDB integration tests pass, frontend build passes, and reconciliation benchmark achieves 120/120 (100.00%).
+
 ---
 
 ## 7. Confirmation of Binding Safety Guardrails
@@ -354,5 +366,5 @@ ReconAI/
 - **Zero Autonomous Financial Execution:** Payment action statuses remain strictly limited to:
   `["PROPOSED", "SIMULATED", "REJECTED_BY_POLICY", "HELD_IN_SAFE_HOLD"]`.
 - **No Provider Write APIs:** Razorpay and external gateway integrations remain strictly read-only. No live refund, transfer, payout, or disbursement execution endpoints exist or were called.
-- **Phase 4 Status:** Phase 4 (Provider Event Ingestion and Webhook Safety) complete and verified across all database safety and lifecycle invariants.
-- **Phase 5 Status:** Phase 5 (Autonomous financial actions, background settlement polling scheduler, automated state machine auto-reversals) has **NOT** started.
+- **Phase 5 Status:** Phase 5 (Deterministic Payment Lifecycle Monitoring and Canonical State Machine) complete and verified across all lifecycle, concurrency, and persistence invariants.
+- **Phase 6 Status:** Phase 6 (Edge-case and multi-dimensional discrepancy resolution engine) has **NOT** started.

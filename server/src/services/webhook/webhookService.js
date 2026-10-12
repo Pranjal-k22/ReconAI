@@ -7,40 +7,19 @@ import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
 import { GatewayPayment } from "../../models/GatewayPayment.js";
 import { MerchantOrder } from "../../models/MerchantOrder.js";
 import { PaymentCase } from "../../models/PaymentCase.js";
+import { PaymentMonitoringTask } from "../../models/PaymentMonitoringTask.js";
 import { createAuditEvent } from "../audit/auditService.js";
+import {
+  canTransitionGatewayStatus,
+  evaluateCanonicalTransition
+} from "../stateMachine/paymentStateMachine.js";
 import {
   isValidSignatureFormat,
   razorpayWebhookEnvelopeSchema,
   sanitizeWebhookPayload
 } from "../../validators/webhookValidators.js";
 
-/**
- * Determines whether a GatewayPayment status transition is permitted.
- * Terminal states (CAPTURED, REFUNDED, FAILED) cannot be regressed by out-of-order deliveries.
- */
-export function canTransitionGatewayStatus(currentStatus, newStatus) {
-  if (!currentStatus || currentStatus === newStatus) return true;
-  if (currentStatus === "CAPTURED") {
-    return newStatus === "REFUNDED" || newStatus === "PARTIALLY_REFUNDED";
-  }
-  if (currentStatus === "REFUNDED") {
-    return false;
-  }
-  if (currentStatus === "PARTIALLY_REFUNDED") {
-    return newStatus === "REFUNDED";
-  }
-  if (currentStatus === "AUTHORIZED") {
-    return newStatus === "CAPTURED" || newStatus === "FAILED";
-  }
-  if (currentStatus === "FAILED") {
-    // Late capture for an initially failed payment attempt is a provider-valid transition
-    return newStatus === "CAPTURED";
-  }
-  if (currentStatus === "CREATED" || currentStatus === "PENDING") {
-    return true;
-  }
-  return false;
-}
+export { canTransitionGatewayStatus };
 
 // Non-production in-memory stores for unit testing when MongoDB is offline
 const inMemoryEvents = new Map(); // deduplicationKey -> eventDoc
@@ -689,6 +668,14 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
         } else {
           inMemoryPayments.set(gatewayPaymentId, newPaymentDoc);
         }
+      }
+
+      // Settle any active monitoring tasks upon receiving authoritative provider webhook
+      if (isMongoConnected && gatewayPaymentId && (newPaymentStatus === "CAPTURED" || newPaymentStatus === "FAILED" || newPaymentStatus === "REFUNDED")) {
+        await PaymentMonitoringTask.updateMany(
+          { gatewayPaymentId, status: { $in: ["PENDING", "IN_PROGRESS"] } },
+          { $set: { status: "COMPLETED", lockedUntil: null, lastObservedStatus: newPaymentStatus, outcomeReason: "WEBHOOK_EVENT_ARRIVED" } }
+        ).catch(() => {});
       }
     }
 
