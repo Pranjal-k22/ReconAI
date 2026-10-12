@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { logger } from "../../config/logger.js";
-import { checkOrchestratorGate } from "./orchestratorGate.js";
+import { checkOrchestratorGate, checkOrchestratorGateSync } from "./orchestratorGate.js";
 import { sweepDueOrchestrationTasks } from "./orchestrationService.js";
 
 /**
@@ -43,7 +43,7 @@ export function startOrchestrationWorker({
   policyConfig = null,
   runImmediate = true
 } = {}) {
-  const gate = checkOrchestratorGate();
+  const gate = checkOrchestratorGateSync();
 
   if (!gate.allowed) {
     logger.info(
@@ -65,8 +65,8 @@ export function startOrchestrationWorker({
   const runSweep = async () => {
     if (isSweeping || isStopped) return;
 
-    // Check gate on each sweep
-    const currentGate = checkOrchestratorGate();
+    // Check authoritative gate on each sweep across processes
+    const currentGate = await checkOrchestratorGate();
     if (!currentGate.allowed) {
       return;
     }

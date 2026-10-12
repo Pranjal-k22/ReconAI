@@ -677,3 +677,59 @@ ReconAI/
   - Refund limits remain fail-closed.
   - Case 22 remains unconditionally in safe hold.
   - Stopped after Phase 10. No further phases started.
+
+### Entry 12: Phase 10 Final Correction — Process-Shared Kill Switch and Lease Ownership Safety
+
+- **Audits and Architectural Refinements**:
+  - **Process-Shared Kill Switch (`OrchestrationControl`)**:
+    - Replaced process-local in-memory flag with durable, shared MongoDB model (`OrchestrationControl`) with unique index `{ controlKey: 1 }`.
+    - Guarantees kill switch set via `POST /api/orchestration/kill-switch` in the API process is observed by all worker processes (including standalone `node src/worker.js` and worker pools).
+    - Checks effective control before claiming work (`claimDueOrchestrationTask`) and before each consequential execution step (read-only provider recheck, policy evaluation) in `processOrchestrationTask`.
+    - Unreadable switch state or database unavailability strictly fails closed (`DATABASE_UNAVAILABLE_FAIL_CLOSED`).
+    - Process restart never silently restores an unsafe enabled state. Re-enabling requires explicit authenticated operator action.
+    - Added additive index migration in `server/scripts/migrateIndexes.js` (`migrateOrchestrationControlIndexes`).
+  - **Lease Ownership Guard & Safe Lease Renewal**:
+    - Implemented `renewOrchestrationTaskLease({ taskId, workerId, leaseDurationMs, asOfTime })`:
+      - Atomic conditional MongoDB update: `{ taskId, lockedBy: workerId, lockedUntil: { $gte: asOfTime }, state: { $in: ["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"] } }`.
+      - Extends lease while processing actively continues before expiration.
+      - Fails closed if task was claimed by another worker or is in non-renewable state.
+    - Updated `transitionTaskState`:
+      - Enforces atomic conditional query verifying current worker ownership and non-expired lease: `{ taskId, lockedBy: workerId, lockedUntil: { $gte: asOfTime } }`.
+      - If ownership is lost, rejects update with `AppError.conflict(..., code: "LEASE_OWNERSHIP_LOST")`.
+      - Prevents former owner from persisting state transitions or corrupting new owner's state after lease expiration or crash recovery.
+    - Updated `processOrchestrationTask`:
+      - Evaluates authoritative shared gate and renews lease before read-only provider checks and policy evaluations.
+      - If renewal fails or lease is lost, cleanly halts processing with `{ status: "LEASE_LOST" }` without mutating database records.
+      - In-flight kill switch engagement transitions task safely to `WAITING_FOR_RECHECK` with cleared locks.
+    - Updated `sweepDueOrchestrationTasks`:
+      - Handles `LEASE_LOST` without writing `FAILED_RETRYABLE`, preventing overwriting of active leases held by new owners.
+- **Targeted Integration & Regression Tests**:
+  - Real MongoDB integration tests in `orchestrationPersistence.integration.test.js`:
+    - Process-shared kill switch persistence in MongoDB stops standalone worker process from claiming work.
+    - Database error reading control state fails closed immediately.
+    - Mid-run kill switch engagement safely halts in-flight task to `WAITING_FOR_RECHECK` with cleared locks.
+    - Active task renews lease safely in MongoDB and prevents competing workers from reclaiming it.
+    - Former worker cannot commit state transitions after losing lease ownership to a new worker.
+  - Unit tests in `orchestratorGateAndService.test.js` and `orchestrationRoutes.test.js` updated to verify async gate checks and lease renewal semantics.
+- **Full Regression Gates Verification**:
+  1. Orchestration state machine and service (`tests/orchestration/**`): 23 tests passed
+  2. Operator routes, shared kill switch, and authorization (`tests/routes/orchestrationRoutes.test.js`): 14 tests passed
+  3. Task leases, renewal, stale recovery, idempotency, and concurrency (`tests/integration/orchestrationPersistence.integration.test.js`): 10 tests passed
+  4. Provider adapter and outcome verification (`tests/provider/**` & `tests/razorpay/**`): 48 tests passed
+  5. Policy evaluator and refund limits (`tests/policy/**`): 68 tests passed
+  6. Evidence classification (`tests/classification/**`): 41 tests passed
+  7. Tenant isolation and authorization (`tests/routes/**` & `tests/auth/**`): 143 tests passed
+  8. MongoDB persistence and concurrency (`tests/integration/**`): 74 tests passed across 9 suites
+  9. Monitoring and worker runtime (`tests/monitoring/**`): 34 tests passed
+  10. Webhook signatures and ingestion (`tests/webhook/**`): 25 tests passed
+  11. Full real-MongoDB integration suite (`npm run test:integration`): 74/74 passed (9 test files)
+  12. Full backend test suite (`npx vitest run`): 592/592 passed (68 test files)
+  13. Frontend production build (`npm run build` in `client/`): 2,400 modules, 0 errors
+  14. Whitespace & format check (`git diff --check`): Clean working copy, 0 issues
+  15. 120-scenario reconciliation benchmark (`tests/reconciliation/benchmarkCompatibility.test.js`): 120/120 passing (100.00% match rate)
+- **Stopping Invariants Confirmed**:
+  - Worker remains disabled by default (`ORCHESTRATOR_WORKER_ENABLED=false`).
+  - Worker never dispatches refunds or mutates financial records.
+  - Missing approved refund limits fail closed.
+  - Case 22 remains unconditionally in `SAFE_HOLD`.
+  - Phase 10 final correction complete. Stopped for review. Phase 11 remains locked.

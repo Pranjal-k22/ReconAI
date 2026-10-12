@@ -156,6 +156,19 @@ export async function migrateOrchestrationTaskIndexes(db) {
   };
 }
 
+/**
+ * Ensures indexes for OrchestrationControl model are created idempotently.
+ */
+export async function migrateOrchestrationControlIndexes(db) {
+  const collection = db.collection("orchestrationcontrols");
+  await collection.createIndex({ controlKey: 1 }, { unique: true, background: true });
+
+  return {
+    status: "SYNCHRONIZED",
+    message: "OrchestrationControl indexes successfully synchronized."
+  };
+}
+
 // Standalone execution entrypoint
 if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
   const sanitizeUri = (uri) => {
@@ -188,6 +201,9 @@ if (process.argv[1] && process.argv[1].endsWith("migrateIndexes.js")) {
 
       const orchResult = await migrateOrchestrationTaskIndexes(mongoose.connection.db);
       logger.info(`✅ OrchestrationTask index migration finished: ${orchResult.status} - ${orchResult.message}`);
+
+      const controlResult = await migrateOrchestrationControlIndexes(mongoose.connection.db);
+      logger.info(`✅ OrchestrationControl index migration finished: ${controlResult.status} - ${controlResult.message}`);
 
       await mongoose.disconnect();
       process.exit(0);

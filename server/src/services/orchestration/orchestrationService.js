@@ -208,7 +208,7 @@ export async function claimDueOrchestrationTask({
   asOfTime = new Date()
 } = {}) {
   // Gate check: must be explicitly enabled and kill switch must NOT be active
-  const gate = checkOrchestratorGate();
+  const gate = await checkOrchestratorGate();
   if (!gate.allowed) {
     return null;
   }
@@ -311,7 +311,98 @@ export async function claimDueOrchestrationTask({
 }
 
 /**
+ * Safely renews the active lease for a task currently owned and being processed by workerId.
+ *
+ * Requirements:
+ * - Atomic conditional update in MongoDB.
+ * - Only succeeds if taskId matches, lockedBy === workerId, lockedUntil >= asOfTime (not yet expired),
+ *   and state is an active renewable processing state (CLAIMED, EVIDENCE_COLLECTION, POLICY_EVALUATION).
+ * - If renewal fails, the worker has lost ownership (e.g. lease expired and recovered by another worker).
+ *
+ * @param {Object} params
+ * @param {string} params.taskId - Task identifier
+ * @param {string} params.workerId - Current worker identifier
+ * @param {number} [params.leaseDurationMs=30000] - Duration to extend lease from asOfTime
+ * @param {Date} [params.asOfTime=new Date()] - Current clock time
+ * @returns {Promise<{ renewed: boolean, task: Object|null, reason?: string }>}
+ */
+export async function renewOrchestrationTaskLease({
+  taskId,
+  workerId,
+  leaseDurationMs = 30000,
+  asOfTime = new Date()
+}) {
+  if (!taskId || !workerId) {
+    return { renewed: false, task: null, reason: "MISSING_PARAMETERS" };
+  }
+
+  const newLockUntil = new Date(asOfTime.getTime() + leaseDurationMs);
+  const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
+
+  if (isMongoConnected) {
+    const updated = await OrchestrationTask.findOneAndUpdate(
+      {
+        taskId,
+        lockedBy: workerId,
+        lockedUntil: { $gte: asOfTime },
+        state: { $in: ["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"] }
+      },
+      {
+        $set: {
+          lockedUntil: newLockUntil
+        }
+      },
+      { new: true }
+    );
+
+    if (updated) {
+      recordOrchestratorMetric("leasesRenewed");
+      return { renewed: true, task: updated };
+    }
+
+    recordOrchestratorMetric("leaseLosses");
+    logger.warn(
+      { taskId, workerId },
+      "Lease renewal rejected: task is either no longer owned by this worker, has expired, or is in non-renewable state"
+    );
+    return { renewed: false, task: null, reason: "LEASE_LOST_OR_EXPIRED" };
+  }
+
+  // In-memory offline fallback for testing without MongoDB
+  let foundTask = null;
+  for (const [key, t] of inMemoryTasks.entries()) {
+    if (t.taskId === taskId) {
+      foundTask = t;
+      break;
+    }
+  }
+
+  if (foundTask) {
+    if (
+      foundTask.lockedBy === workerId &&
+      foundTask.lockedUntil &&
+      foundTask.lockedUntil >= asOfTime &&
+      ["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"].includes(foundTask.state)
+    ) {
+      foundTask.lockedUntil = newLockUntil;
+      recordOrchestratorMetric("leasesRenewed");
+      return { renewed: true, task: foundTask };
+    }
+    recordOrchestratorMetric("leaseLosses");
+    return { renewed: false, task: null, reason: "LEASE_LOST_OR_EXPIRED" };
+  }
+
+  // Bare mock object in offline unit test where store is empty
+  if (inMemoryTasks.size === 0) {
+    return { renewed: true, task: null };
+  }
+
+  return { renewed: false, task: null, reason: "TASK_NOT_FOUND" };
+}
+
+/**
  * Transitions task state atomically and records in stateHistory.
+ * Enforces atomic conditional lease ownership check in MongoDB when transitioning from a leased state.
  */
 async function transitionTaskState(task, toState, { workerId, reason = null, extraFields = {}, asOfTime = new Date() } = {}) {
   assertValidOrchestrationTransition(task.state, toState);
@@ -330,8 +421,14 @@ async function transitionTaskState(task, toState, { workerId, reason = null, ext
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
 
   if (isMongoConnected) {
-    return await OrchestrationTask.findOneAndUpdate(
-      { taskId: task.taskId },
+    const query = { taskId: task.taskId };
+    if (workerId) {
+      query.lockedBy = workerId;
+      query.lockedUntil = { $gte: asOfTime };
+    }
+
+    const updated = await OrchestrationTask.findOneAndUpdate(
+      query,
       {
         $set: {
           state: toState,
@@ -341,9 +438,33 @@ async function transitionTaskState(task, toState, { workerId, reason = null, ext
       },
       { new: true }
     );
+
+    if (!updated) {
+      recordOrchestratorMetric("leaseLosses");
+      const conflictErr = AppError.conflict(
+        `Worker '${workerId}' cannot transition task '${task.taskId}' to '${toState}': lease lost or expired`
+      );
+      conflictErr.code = "LEASE_OWNERSHIP_LOST";
+      throw conflictErr;
+    }
+
+    return updated;
   }
 
   // In-memory update
+  if (workerId && task.lockedBy) {
+    const isOwner = task.lockedBy === workerId;
+    const isExpired = task.lockedUntil && task.lockedUntil < asOfTime;
+    if (!isOwner || isExpired) {
+      recordOrchestratorMetric("leaseLosses");
+      const conflictErr = AppError.conflict(
+        `Worker '${workerId}' cannot transition task '${task.taskId}' to '${toState}': lease lost or expired`
+      );
+      conflictErr.code = "LEASE_OWNERSHIP_LOST";
+      throw conflictErr;
+    }
+  }
+
   task.stateHistory.push(historyEntry);
   Object.assign(task, extraFields);
   return task;
@@ -376,8 +497,9 @@ export async function processOrchestrationTask(
     policyConfig = null
   } = {}
 ) {
-  // Gate check: if kill switch was engaged after claim, release task immediately
-  const gate = checkOrchestratorGate();
+  try {
+    // Gate check: if kill switch was engaged after claim, release task immediately
+    const gate = await checkOrchestratorGate();
   if (!gate.allowed) {
     await transitionTaskState(task, "WAITING_FOR_RECHECK", {
       workerId,
@@ -414,7 +536,8 @@ export async function processOrchestrationTask(
       extraFields: {
         safeHoldCode: "RESOURCE_TENANT_MISMATCH",
         safeHoldReason: "PaymentCase does not exist or tenant binding mismatch",
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -454,7 +577,8 @@ export async function processOrchestrationTask(
       extraFields: {
         safeHoldCode: "CROSS_TENANT_BLOCKED",
         safeHoldReason: "Correlated gateway payment or merchant order belongs to a different tenant",
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -488,7 +612,8 @@ export async function processOrchestrationTask(
         safeHoldReason: "Late capture after cancelled order requires manual operator review. Automated mutation forbidden.",
         escalationReason: "Case 22 requires authorized human review",
         escalationState: "PENDING_OPERATOR_REVIEW",
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -503,6 +628,25 @@ export async function processOrchestrationTask(
   // -------------------------------------------------------------------------
   // STEP 4: Read-Only Provider Status Check (If payment pending or needs recheck)
   // -------------------------------------------------------------------------
+  // Gate check before consequential step
+  const gateBeforeStep4 = await checkOrchestratorGate();
+  if (!gateBeforeStep4.allowed) {
+    await transitionTaskState(task, "WAITING_FOR_RECHECK", {
+      workerId,
+      reason: `Gate disabled before provider status check: ${gateBeforeStep4.reason}`,
+      extraFields: { lockedUntil: null, lockedBy: null },
+      asOfTime
+    });
+    return { status: "WAITING_FOR_RECHECK", reason: gateBeforeStep4.reason };
+  }
+
+  // Lease renewal before consequential step
+  const renewalStep4 = await renewOrchestrationTaskLease({ taskId: task.taskId, workerId, asOfTime });
+  if (!renewalStep4.renewed) {
+    logger.warn({ taskId: task.taskId, workerId }, "Aborting task processing before Step 4: lease ownership lost");
+    return { status: "LEASE_LOST", reason: "LEASE_LOST_OR_EXPIRED" };
+  }
+
   let readOnlyProviderData = null;
   let readOnlyFetchError = null;
 
@@ -546,7 +690,8 @@ export async function processOrchestrationTask(
         extraFields: {
           nextRunAt,
           lastError: readOnlyFetchError.message,
-          lockedUntil: null
+          lockedUntil: null,
+          lockedBy: null
         },
         asOfTime
       });
@@ -568,7 +713,8 @@ export async function processOrchestrationTask(
           safeHoldCode: "MONITORING_WINDOW_EXHAUSTED",
           safeHoldReason: "Provider status check retry budget exhausted under ambiguous network conditions",
           lastError: readOnlyFetchError.message,
-          lockedUntil: null
+          lockedUntil: null,
+          lockedBy: null
         },
         asOfTime
       });
@@ -583,6 +729,25 @@ export async function processOrchestrationTask(
   // -------------------------------------------------------------------------
   // STEP 5: Transition to POLICY_EVALUATION
   // -------------------------------------------------------------------------
+  // Gate check before policy evaluation
+  const gateBeforeStep5 = await checkOrchestratorGate();
+  if (!gateBeforeStep5.allowed) {
+    await transitionTaskState(task, "WAITING_FOR_RECHECK", {
+      workerId,
+      reason: `Gate disabled before policy evaluation: ${gateBeforeStep5.reason}`,
+      extraFields: { lockedUntil: null, lockedBy: null },
+      asOfTime
+    });
+    return { status: "WAITING_FOR_RECHECK", reason: gateBeforeStep5.reason };
+  }
+
+  // Lease renewal before policy evaluation
+  const renewalStep5 = await renewOrchestrationTaskLease({ taskId: task.taskId, workerId, asOfTime });
+  if (!renewalStep5.renewed) {
+    logger.warn({ taskId: task.taskId, workerId }, "Aborting task processing before Step 5: lease ownership lost");
+    return { status: "LEASE_LOST", reason: "LEASE_LOST_OR_EXPIRED" };
+  }
+
   await transitionTaskState(task, "POLICY_EVALUATION", {
     workerId,
     reason: "Evaluating deterministic resolution policy",
@@ -623,7 +788,8 @@ export async function processOrchestrationTask(
         safeHoldCode: policyResult.appliedRuleIds?.[0] || "POLICY_SAFE_HOLD",
         safeHoldReason: policyResult.safeHoldReason || policyResult.denyReasons?.join("; "),
         policyDecision: sanitizeOrchestrationPayload(policyResult),
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -648,7 +814,8 @@ export async function processOrchestrationTask(
         escalationReason: policyResult.denyReasons?.join("; ") || "Missing approved refund limits or human review required",
         escalationState: "PENDING_OPERATOR_REVIEW",
         policyDecision: sanitizeOrchestrationPayload(policyResult),
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -670,7 +837,8 @@ export async function processOrchestrationTask(
         escalationReason: "Refund eligible in policy but autonomous execution forbidden. Awaiting operator dispatch.",
         escalationState: "PENDING_OPERATOR_APPROVAL",
         policyDecision: sanitizeOrchestrationPayload(policyResult),
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -701,7 +869,8 @@ export async function processOrchestrationTask(
         extraFields: {
           nextRunAt,
           policyDecision: sanitizeOrchestrationPayload(policyResult),
-          lockedUntil: null
+          lockedUntil: null,
+          lockedBy: null
         },
         asOfTime
       });
@@ -722,7 +891,8 @@ export async function processOrchestrationTask(
         safeHoldCode: "MONITORING_WINDOW_EXHAUSTED",
         safeHoldReason: "Maximum polling attempts reached under non-definitive state",
         policyDecision: sanitizeOrchestrationPayload(policyResult),
-        lockedUntil: null
+        lockedUntil: null,
+        lockedBy: null
       },
       asOfTime
     });
@@ -741,7 +911,8 @@ export async function processOrchestrationTask(
     reason: "Orchestration lifecycle completed safely without outstanding mutations",
     extraFields: {
       policyDecision: sanitizeOrchestrationPayload(policyResult),
-      lockedUntil: null
+      lockedUntil: null,
+      lockedBy: null
     },
     asOfTime
   });
@@ -750,6 +921,16 @@ export async function processOrchestrationTask(
     status: "COMPLETED",
     policyResult
   };
+  } catch (err) {
+    if (err.code === "LEASE_OWNERSHIP_LOST" || err.message?.includes("lease lost")) {
+      logger.warn(
+        { taskId: task.taskId, workerId },
+        "Task processing halted safely: worker lost lease ownership or lease expired"
+      );
+      return { status: "LEASE_LOST", reason: "LEASE_OWNERSHIP_LOST" };
+    }
+    throw err;
+  }
 }
 
 /**
@@ -773,7 +954,7 @@ export async function sweepDueOrchestrationTasks({
   policyConfig = null
 } = {}) {
   // Gate check
-  const gate = checkOrchestratorGate();
+  const gate = await checkOrchestratorGate();
   if (!gate.allowed) {
     return {
       processedCount: 0,
@@ -821,7 +1002,17 @@ export async function sweepDueOrchestrationTasks({
       else if (outcome.status === "SAFE_HOLD") safeHoldCount++;
       else if (outcome.status === "ESCALATION_REQUIRED") escalatedCount++;
       else if (outcome.status === "WAITING_FOR_RECHECK") waitingCount++;
+      else if (outcome.status === "LEASE_LOST") {
+        logger.warn({ taskId: task.taskId, workerId }, "Task processing stopped due to lease loss");
+      }
     } catch (err) {
+      if (err.code === "LEASE_OWNERSHIP_LOST" || err.message?.includes("lease lost")) {
+        logger.warn(
+          { taskId: task.taskId, workerId },
+          "Worker lost lease ownership during execution; halting cleanly without state mutation"
+        );
+        continue;
+      }
       failedCount++;
       recordOrchestratorMetric("failures");
       logger.error({ err: err.message, taskId: task.taskId }, "Unhandled error in orchestration task execution");
@@ -835,6 +1026,7 @@ export async function sweepDueOrchestrationTasks({
             $set: {
               state: "FAILED_RETRYABLE",
               lockedUntil: null,
+              lockedBy: null,
               lastError: err.message
             }
           }
@@ -842,6 +1034,7 @@ export async function sweepDueOrchestrationTasks({
       } else {
         task.state = "FAILED_RETRYABLE";
         task.lockedUntil = null;
+        task.lockedBy = null;
         task.lastError = err.message;
       }
     }

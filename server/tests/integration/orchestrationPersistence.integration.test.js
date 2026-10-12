@@ -4,16 +4,19 @@ import { OrchestrationTask } from "../../src/models/OrchestrationTask.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
+import { OrchestrationControl } from "../../src/models/OrchestrationControl.js";
 import {
   queueOrchestrationTask,
   claimDueOrchestrationTask,
+  renewOrchestrationTaskLease,
   processOrchestrationTask,
   sweepDueOrchestrationTasks
 } from "../../src/services/orchestration/orchestrationService.js";
 import {
   setOrchestratorKillSwitch,
   getOrchestratorMetrics,
-  resetOrchestratorMetrics
+  resetOrchestratorMetrics,
+  checkOrchestratorGate
 } from "../../src/services/orchestration/orchestratorGate.js";
 
 function validateTestDatabaseUri(uri) {
@@ -48,6 +51,7 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
     }
     await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
     await OrchestrationTask.deleteMany({});
+    await OrchestrationControl.deleteMany({});
     await PaymentCase.deleteMany({});
     await GatewayPayment.deleteMany({});
     await MerchantOrder.deleteMany({});
@@ -62,10 +66,11 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
 
   beforeEach(async () => {
     resetOrchestratorMetrics();
-    setOrchestratorKillSwitch(false);
+    await setOrchestratorKillSwitch(false);
     process.env.ORCHESTRATOR_WORKER_ENABLED = "true";
 
     await OrchestrationTask.deleteMany({});
+    await OrchestrationControl.deleteMany({});
     await PaymentCase.deleteMany({});
     await GatewayPayment.deleteMany({});
     await MerchantOrder.deleteMany({});
@@ -148,6 +153,112 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
 
       const metrics = getOrchestratorMetrics();
       expect(metrics.staleLeasesRecovered).toBe(1);
+    });
+
+    it("renews lease safely in MongoDB while task is actively running and prevents second worker from reclaiming", async () => {
+      const t0 = new Date();
+      await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_1,
+        idempotencyKey: "idem_renewal_test_01",
+        asOfTime: t0
+      });
+
+      // Worker 1 claims task with 30s lease
+      const claimed = await claimDueOrchestrationTask({
+        workerId: "worker-active-1",
+        leaseDurationMs: 30000,
+        asOfTime: t0
+      });
+      expect(claimed).not.toBeNull();
+      expect(claimed.lockedBy).toBe("worker-active-1");
+
+      // At T0 + 20s, Worker 1 renews lease for 60s
+      const t20 = new Date(t0.getTime() + 20000);
+      const renewal = await renewOrchestrationTaskLease({
+        taskId: claimed.taskId,
+        workerId: "worker-active-1",
+        leaseDurationMs: 60000,
+        asOfTime: t20
+      });
+
+      expect(renewal.renewed).toBe(true);
+      expect(renewal.task.lockedUntil.getTime()).toBe(t20.getTime() + 60000);
+
+      // Verify in MongoDB directly
+      const inDb = await OrchestrationTask.findOne({ taskId: claimed.taskId }).lean();
+      expect(inDb.lockedUntil.getTime()).toBe(t20.getTime() + 60000);
+
+      // At T0 + 35s (past original 30s lease, but within renewed lease), Worker 2 tries to claim
+      const t35 = new Date(t0.getTime() + 35000);
+      const claimAttempt = await claimDueOrchestrationTask({
+        workerId: "worker-competitor",
+        asOfTime: t35
+      });
+      expect(claimAttempt).toBeNull(); // Reclaim blocked because lease was renewed
+    });
+
+    it("prevents former worker from persisting state transitions after losing lease ownership", async () => {
+      const t0 = new Date();
+      await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_1,
+        idempotencyKey: "idem_lease_loss_guard",
+        asOfTime: t0
+      });
+
+      // Worker 1 claims task with 30s lease
+      const claimed1 = await claimDueOrchestrationTask({
+        workerId: "worker-delayed-1",
+        leaseDurationMs: 30000,
+        asOfTime: t0
+      });
+      expect(claimed1).not.toBeNull();
+
+      // At T0 + 40s (Worker 1's lease expired), Worker 2 recovers the stale lease
+      const t40 = new Date(t0.getTime() + 40000);
+      const claimed2 = await claimDueOrchestrationTask({
+        workerId: "worker-fast-2",
+        leaseDurationMs: 30000,
+        asOfTime: t40
+      });
+      expect(claimed2).not.toBeNull();
+      expect(claimed2.lockedBy).toBe("worker-fast-2");
+
+      // Seed resources so worker-1 could have processed if it hadn't lost lease
+      await GatewayPayment.create({
+        gatewayPaymentId: "pay_lease_loss",
+        tenantId: TENANT_A,
+        status: "CAPTURED",
+        amountPaise: 10000
+      });
+      await MerchantOrder.create({
+        merchantOrderId: "order_lease_loss",
+        tenantId: TENANT_A,
+        status: "PAID",
+        amountPaise: 10000
+      });
+      await PaymentCase.create({
+        caseId: CASE_ID_1,
+        tenantId: TENANT_A,
+        gatewayPaymentId: "pay_lease_loss",
+        merchantOrderId: "order_lease_loss",
+        discrepancyCategory: "STATUS_MISMATCH"
+      });
+
+      // Former Worker 1 wakes up at T0 + 45s and tries to process task
+      const outcomeWorker1 = await processOrchestrationTask(claimed1, {
+        workerId: "worker-delayed-1",
+        asOfTime: new Date(t0.getTime() + 45000)
+      });
+
+      // Former worker's attempt must be aborted due to lease loss
+      expect(outcomeWorker1.status).toBe("LEASE_LOST");
+
+      // Verify that task in MongoDB is STILL owned by Worker 2 and NOT corrupted by Worker 1
+      const inDbAfter = await OrchestrationTask.findOne({ taskId: claimed1.taskId }).lean();
+      expect(inDbAfter.lockedBy).toBe("worker-fast-2");
+      expect(inDbAfter.state).toBe("CLAIMED");
     });
   });
 
@@ -270,6 +381,93 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
 
       const preservedPayment = await GatewayPayment.findOne({ gatewayPaymentId: "pay_case22_int" }).lean();
       expect(preservedPayment.status).toBe("CAPTURED");
+    });
+  });
+
+  describe("4. Process-Shared Kill Switch Across Process Boundaries", () => {
+    it("persists kill switch to MongoDB OrchestrationControl and stops separate worker process claims", async () => {
+      await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_1,
+        idempotencyKey: "idem_shared_switch_1"
+      });
+
+      // API process engages kill switch durably in MongoDB
+      await setOrchestratorKillSwitch(true, {
+        updatedBy: "ADMIN_OPERATOR_API",
+        reason: "Emergency kill switch audit"
+      });
+
+      // Verify persistence in MongoDB OrchestrationControl collection
+      const controlDoc = await OrchestrationControl.findOne({
+        controlKey: "GLOBAL_ORCHESTRATION_CONTROL"
+      }).lean();
+      expect(controlDoc).not.toBeNull();
+      expect(controlDoc.killSwitchActive).toBe(true);
+      expect(controlDoc.updatedBy).toBe("ADMIN_OPERATOR_API");
+
+      // Separate worker process attempts claim (checks MongoDB gate)
+      const claimResult = await claimDueOrchestrationTask({
+        workerId: "standalone-node-worker-process"
+      });
+
+      expect(claimResult).toBeNull();
+
+      // Disengage cleanly
+      await setOrchestratorKillSwitch(false, { updatedBy: "ADMIN_OPERATOR_API" });
+      const allowedClaim = await claimDueOrchestrationTask({
+        workerId: "standalone-node-worker-process"
+      });
+      expect(allowedClaim).not.toBeNull();
+    });
+
+    it("fails closed when shared control database state is unreadable or encounters DB error", async () => {
+      // Temporarily mock OrchestrationControl.findOne to reject
+      const origFindOne = OrchestrationControl.findOne;
+      OrchestrationControl.findOne = () => ({
+        lean: () => Promise.reject(new Error("Connection reset by peer"))
+      });
+
+      try {
+        const gate = await checkOrchestratorGate();
+        expect(gate.allowed).toBe(false);
+        expect(gate.reason).toBe("DATABASE_UNAVAILABLE_FAIL_CLOSED");
+
+        const claim = await claimDueOrchestrationTask();
+        expect(claim).toBeNull();
+      } finally {
+        OrchestrationControl.findOne = origFindOne;
+      }
+    });
+
+    it("stops an in-flight worker before consequential step when kill switch is engaged mid-run", async () => {
+      // Seed payment case
+      await PaymentCase.create({
+        caseId: "CASE-MID-RUN",
+        tenantId: TENANT_A,
+        discrepancyCategory: "STATUS_MISMATCH"
+      });
+
+      const task = await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId: "CASE-MID-RUN",
+        idempotencyKey: "idem_mid_run"
+      });
+
+      const claimed = await claimDueOrchestrationTask({ workerId: "worker-mid-run" });
+      expect(claimed).not.toBeNull();
+
+      // Engage kill switch while task is in flight
+      await setOrchestratorKillSwitch(true, { updatedBy: "ADMIN", reason: "Mid-run halt" });
+
+      const outcome = await processOrchestrationTask(claimed, { workerId: "worker-mid-run" });
+      expect(outcome.status).toBe("WAITING_FOR_RECHECK");
+
+      // Verify task in DB released locks cleanly
+      const inDb = await OrchestrationTask.findOne({ taskId: task.taskId }).lean();
+      expect(inDb.state).toBe("WAITING_FOR_RECHECK");
+      expect(inDb.lockedUntil).toBeNull();
+      expect(inDb.lockedBy).toBeNull();
     });
   });
 });

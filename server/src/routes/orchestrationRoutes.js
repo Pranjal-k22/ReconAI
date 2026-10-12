@@ -20,19 +20,23 @@ router.use(authenticate);
 router.get(
   "/status",
   requireRoles(ROLES.ADMIN, ROLES.AUDITOR, ROLES.PAYMENT_CONTROLLER),
-  (req, res) => {
-    const gate = checkOrchestratorGate();
-    const metrics = getOrchestratorMetrics();
-    const killSwitch = isOrchestratorKillSwitchActive();
+  async (req, res, next) => {
+    try {
+      const gate = await checkOrchestratorGate();
+      const metrics = getOrchestratorMetrics();
+      const killSwitch = await isOrchestratorKillSwitchActive();
 
-    res.status(200).json({
-      success: true,
-      data: {
-        gate,
-        killSwitchActive: killSwitch,
-        metrics
-      }
-    });
+      res.status(200).json({
+        success: true,
+        data: {
+          gate,
+          killSwitchActive: killSwitch,
+          metrics
+        }
+      });
+    } catch (err) {
+      next(err);
+    }
   }
 );
 
@@ -45,9 +49,12 @@ router.post(
   requireRoles(ROLES.ADMIN),
   async (req, res, next) => {
     try {
-      const { active } = req.body;
+      const { active, reason } = req.body;
       const killSwitchEngaged = Boolean(active);
-      setOrchestratorKillSwitch(killSwitchEngaged);
+      await setOrchestratorKillSwitch(killSwitchEngaged, {
+        updatedBy: req.user.userId || req.user.email || "admin",
+        reason
+      });
 
       await createAuditEvent({
         actorType: "ADMIN",

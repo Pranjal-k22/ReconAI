@@ -112,7 +112,7 @@ describe("Orchestration Routes (GET /api/orchestration/status, POST /kill-switch
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.killSwitchActive).toBe(true);
-      expect(orchGate.isOrchestratorKillSwitchActive()).toBe(true);
+      expect(await orchGate.isOrchestratorKillSwitchActive()).toBe(true);
 
       // Disengage cleanly
       const resDisengage = await request(app)
@@ -122,7 +122,7 @@ describe("Orchestration Routes (GET /api/orchestration/status, POST /kill-switch
 
       expect(resDisengage.status).toBe(200);
       expect(resDisengage.body.data.killSwitchActive).toBe(false);
-      expect(orchGate.isOrchestratorKillSwitchActive()).toBe(false);
+      expect(await orchGate.isOrchestratorKillSwitchActive()).toBe(false);
     });
   });
 

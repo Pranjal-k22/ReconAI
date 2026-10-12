@@ -98,10 +98,10 @@ When a deterministic resolution policy indicates that a refund or financial muta
 
 ---
 
-## 5. Concurrency Control, Leases, and Idempotency
+## 5. Concurrency Control, Leases, and Ownership Safety
 
-1. **Atomic Leasing (`findOneAndUpdate`)**:
-   Tasks are claimed using atomic compare-and-set semantics:
+1. **Atomic Distributed Leasing (`findOneAndUpdate`)**:
+   Tasks are claimed atomically using compare-and-set semantics:
    ```javascript
    {
      $or: [
@@ -110,19 +110,36 @@ When a deterministic resolution policy indicates that a refund or financial muta
      ]
    }
    ```
-2. **Stale Lease Recovery**:
-   If a worker process crashes, its lease expires after `leaseDurationMs` (default 30 seconds). A surviving worker automatically claims the task, records `staleLeasesRecovered` in metrics, and resumes processing without duplicating external side-effects.
-3. **Compound Idempotency Index**:
+2. **Safe Lease Renewal (`renewOrchestrationTaskLease`)**:
+   - Long-running tasks safely renew their lease while actively processing before the lease expires.
+   - Renewal updates MongoDB atomically: `{ taskId, lockedBy: workerId, lockedUntil: { $gte: asOfTime }, state: { $in: ["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"] } }`.
+   - Renewal succeeds only if the worker remains the valid, unexpired owner. If renewal fails, the worker loses ownership and halts execution cleanly with `{ status: "LEASE_LOST" }`.
+3. **Atomic State Transition Ownership Guard**:
+   - All state transitions in `transitionTaskState` enforce an atomic conditional update verifying current lease ownership:
+     `{ taskId: task.taskId, lockedBy: workerId, lockedUntil: { $gte: asOfTime } }`.
+   - If the task was recovered by another worker after a timeout or crash, any subsequent mutation attempt by the former worker throws `AppError.conflict(..., code: "LEASE_OWNERSHIP_LOST")`.
+   - The former worker is permanently prevented from overwriting the new owner's state or corrupting orchestration history.
+4. **Stale Lease Recovery**:
+   If a worker process crashes, its lease expires after `leaseDurationMs` (default 30 seconds). A surviving worker automatically recovers the task, increments `attemptCount`, records `staleLeasesRecovered` in metrics, and resumes processing without duplicating external side-effects.
+5. **Compound Idempotency Index**:
    ```javascript
    orchestrationTaskSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true });
    ```
    Repeated triggers with identical idempotency keys return the existing run rather than spawning competing runs.
-4. **Bounded Retry Schedule**:
+6. **Bounded Retry Schedule**:
    Adheres strictly to the approved progression: `[60s, 300s, 900s, 1800s]`. Max attempts default to 4. When attempts are exhausted, the task safely halts in `SAFE_HOLD` or `ESCALATION_REQUIRED`.
 
 ---
 
-## 6. Configuration Gate & Operational Controls
+## 6. Process-Shared Kill Switch & Operational Controls
+
+### Durable, Process-Shared Control Architecture (`OrchestrationControl`)
+- The operator kill switch is backed durably by MongoDB via the `OrchestrationControl` model (`{ controlKey: "GLOBAL_ORCHESTRATION_CONTROL" }` with a unique index).
+- Setting the switch via `POST /api/orchestration/kill-switch` in the API process is immediately observed across process boundaries by separate worker processes (`node src/worker.js` and worker pools).
+- Evaluated before claiming new work and before each consequential execution step (read-only provider status check, policy evaluation).
+- When engaged, workers stop claiming new tasks, cleanly halt in-flight tasks to `WAITING_FOR_RECHECK` with cleared locks, and never convert interruptions into financial outcomes.
+- If MongoDB is unreachable or the switch document is unreadable, workers strictly fail closed (`DATABASE_UNAVAILABLE_FAIL_CLOSED`).
+- Process restarts cannot silently restore an enabled state if the persistent switch is active.
 
 ### Environment Variables
 
@@ -138,33 +155,34 @@ When a deterministic resolution policy indicates that a refund or financial muta
 - **Endpoint**: `POST /api/orchestration/kill-switch`
 - **RBAC**: Strictly restricted to `ADMIN`.
 - **Payload**: `{ "active": true }` to halt; `{ "active": false }` to resume.
-- **Audit**: Emits `ORCHESTRATOR_KILL_SWITCH_ENGAGED` / `ORCHESTRATOR_KILL_SWITCH_DISENGAGED` audit log.
+- **Audit**: Emits `ORCHESTRATOR_KILL_SWITCH_ENGAGED` / `ORCHESTRATOR_KILL_SWITCH_DISENGAGED` audit log and persists state to `OrchestrationControl`.
 
 ---
 
 ## 7. Regression Verification Gates
 
-All 14 required regression gates have passed cleanly on `main`:
+All 15 required regression gates have passed cleanly on `main`:
 
 | Gate | Description | Passed / Total | Result |
 |---|---|---|---|
-| **Gate 1** | Orchestration service & state machine tests | 21 / 21 | **PASS** |
-| **Gate 2** | Orchestration routes & kill switch tests | 14 / 14 | **PASS** |
-| **Gate 3** | Provider adapter & outcome verification tests | 43 / 43 | **PASS** |
-| **Gate 4** | Policy evaluator & refund-limit tests | 68 / 68 | **PASS** |
-| **Gate 5** | Case 22 & Phase 6 classification tests | 41 / 41 | **PASS** |
-| **Gate 6** | Route authorization & tenant isolation tests | 64 / 64 | **PASS** |
-| **Gate 7** | Real MongoDB orchestration persistence tests | 5 / 5 | **PASS** |
-| **Gate 8** | Monitoring & worker runtime tests | 34 / 34 | **PASS** |
-| **Gate 9** | Webhook signature & ingestion tests | 25 / 25 | **PASS** |
-| **Gate 10** | Full real-MongoDB integration suite (`npm run test:integration`) | 69 / 69 (9 suites) | **PASS** |
-| **Gate 11** | Full backend test suite (`npx vitest run`) | 595 / 595 (68 files) | **PASS** |
-| **Gate 12** | Frontend production build (`npm run build`) | 2,400 modules, 0 errors | **PASS** |
-| **Gate 13** | Whitespace & format check (`git diff --check`) | Clean working copy | **PASS** |
-| **Gate 14** | 120-scenario reconciliation benchmark | 120 / 120 (100.00%) | **PASS** |
+| **Gate 1** | Orchestration service & state machine tests | 23 / 23 | **PASS** |
+| **Gate 2** | Orchestration routes & shared kill switch tests | 14 / 14 | **PASS** |
+| **Gate 3** | Task leases, renewal, stale recovery, and concurrency | 10 / 10 | **PASS** |
+| **Gate 4** | Provider adapter & outcome verification tests | 48 / 48 | **PASS** |
+| **Gate 5** | Policy evaluator & refund-limit tests | 68 / 68 | **PASS** |
+| **Gate 6** | Case 22 & Phase 6 classification tests | 41 / 41 | **PASS** |
+| **Gate 7** | Route authorization & tenant isolation tests | 143 / 143 | **PASS** |
+| **Gate 8** | Real MongoDB persistence & concurrency tests | 74 / 74 (9 suites) | **PASS** |
+| **Gate 9** | Monitoring & worker runtime tests | 34 / 34 | **PASS** |
+| **Gate 10** | Webhook signature & ingestion tests | 25 / 25 | **PASS** |
+| **Gate 11** | Full real-MongoDB integration suite (`npm run test:integration`) | 74 / 74 (9 suites) | **PASS** |
+| **Gate 12** | Full backend test suite (`npx vitest run`) | 592 / 592 (68 files) | **PASS** |
+| **Gate 13** | Frontend production build (`npm run build`) | 2,400 modules, 0 errors | **PASS** |
+| **Gate 14** | Whitespace & format check (`git diff --check`) | Clean working copy | **PASS** |
+| **Gate 15** | 120-scenario reconciliation benchmark | 120 / 120 (100.00%) | **PASS** |
 
 ---
 
 ## 8. Explicit Stopping Condition
 
-Phase 10 is complete and all safety invariants have been preserved. No further development phases may be started pending formal review and acceptance.
+Phase 10 final correction is complete and all safety invariants have been preserved. No further development phases may be started pending formal review and acceptance.

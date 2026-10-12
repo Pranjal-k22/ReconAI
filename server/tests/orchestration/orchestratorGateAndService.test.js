@@ -10,6 +10,7 @@ import {
 import {
   queueOrchestrationTask,
   claimDueOrchestrationTask,
+  renewOrchestrationTaskLease,
   processOrchestrationTask,
   sweepDueOrchestrationTasks,
   resetInMemoryOrchestrationStore,
@@ -18,30 +19,30 @@ import {
 import { startOrchestrationWorker } from "../../src/services/orchestration/orchestrationWorker.js";
 
 describe("Orchestrator Gate and Service Unit Tests", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     resetOrchestratorMetrics();
     resetInMemoryOrchestrationStore();
-    setOrchestratorKillSwitch(false);
+    await setOrchestratorKillSwitch(false);
   });
 
   describe("1. Centralized Configuration Gate & Kill Switch", () => {
-    it("fails closed by default when ORCHESTRATOR_WORKER_ENABLED is false", () => {
+    it("fails closed by default when ORCHESTRATOR_WORKER_ENABLED is false", async () => {
       // By default in test environment, ORCHESTRATOR_WORKER_ENABLED is false
-      const gate = checkOrchestratorGate();
+      const gate = await checkOrchestratorGate();
       expect(gate.allowed).toBe(false);
       expect(gate.reason).toBe("ORCHESTRATOR_WORKER_DISABLED");
     });
 
-    it("fails closed immediately when operator kill switch is engaged", () => {
-      setOrchestratorKillSwitch(true);
-      expect(isOrchestratorKillSwitchActive()).toBe(true);
+    it("fails closed immediately when operator kill switch is engaged", async () => {
+      await setOrchestratorKillSwitch(true);
+      expect(await isOrchestratorKillSwitchActive()).toBe(true);
 
-      const gate = checkOrchestratorGate();
+      const gate = await checkOrchestratorGate();
       expect(gate.allowed).toBe(false);
       expect(gate.reason).toBe("KILL_SWITCH_ACTIVE");
 
-      setOrchestratorKillSwitch(false);
-      expect(isOrchestratorKillSwitchActive()).toBe(false);
+      await setOrchestratorKillSwitch(false);
+      expect(await isOrchestratorKillSwitchActive()).toBe(false);
     });
 
     it("worker startup fails closed and returns disabled handle when gate is not allowed", () => {
@@ -60,6 +61,72 @@ describe("Orchestrator Gate and Service Unit Tests", () => {
       const sweep = await sweepDueOrchestrationTasks();
       expect(sweep.processedCount).toBe(0);
       expect(sweep.reason).toBe("ORCHESTRATOR_WORKER_DISABLED");
+    });
+  });
+
+  describe("1.1 Lease Renewal & Ownership Guards", () => {
+    it("renews an active lease successfully for the owning worker", async () => {
+      process.env.ORCHESTRATOR_WORKER_ENABLED = "true";
+      const now = new Date();
+      await queueOrchestrationTask({
+        tenantId: "tenant_renew_1",
+        caseId: "case_renew_1",
+        idempotencyKey: "key_renew_1",
+        asOfTime: now
+      });
+
+      const claimed = await claimDueOrchestrationTask({
+        workerId: "worker-owner",
+        leaseDurationMs: 30000,
+        asOfTime: now
+      });
+      expect(claimed).not.toBeNull();
+      expect(claimed.lockedBy).toBe("worker-owner");
+
+      const renewal = await renewOrchestrationTaskLease({
+        taskId: claimed.taskId,
+        workerId: "worker-owner",
+        leaseDurationMs: 60000,
+        asOfTime: new Date(now.getTime() + 10000)
+      });
+
+      expect(renewal.renewed).toBe(true);
+      expect(renewal.task.lockedUntil.getTime()).toBe(now.getTime() + 70000);
+      process.env.ORCHESTRATOR_WORKER_ENABLED = "false";
+    });
+
+    it("rejects lease renewal when worker does not own the task or lease expired", async () => {
+      process.env.ORCHESTRATOR_WORKER_ENABLED = "true";
+      const now = new Date();
+      await queueOrchestrationTask({
+        tenantId: "tenant_renew_2",
+        caseId: "case_renew_2",
+        idempotencyKey: "key_renew_2",
+        asOfTime: now
+      });
+
+      const claimed = await claimDueOrchestrationTask({
+        workerId: "worker-owner-1",
+        leaseDurationMs: 30000,
+        asOfTime: now
+      });
+
+      // Wrong worker attempts renewal
+      const wrongRenewal = await renewOrchestrationTaskLease({
+        taskId: claimed.taskId,
+        workerId: "worker-impostor",
+        asOfTime: now
+      });
+      expect(wrongRenewal.renewed).toBe(false);
+
+      // Expired lease renewal attempt
+      const expiredRenewal = await renewOrchestrationTaskLease({
+        taskId: claimed.taskId,
+        workerId: "worker-owner-1",
+        asOfTime: new Date(now.getTime() + 40000) // 40s later, lease was 30s
+      });
+      expect(expiredRenewal.renewed).toBe(false);
+      process.env.ORCHESTRATOR_WORKER_ENABLED = "false";
     });
   });
 
