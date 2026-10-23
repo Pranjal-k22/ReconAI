@@ -98,6 +98,7 @@ export function ReconNavbar() {
             
             {/* Theme Switcher Button */}
             <button
+              id="theme-toggle-btn"
               onClick={toggleTheme}
               className="p-2 rounded-xl border transition-all duration-200 cursor-pointer flex items-center justify-center hover:scale-105"
               style={{
