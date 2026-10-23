@@ -33,8 +33,12 @@ export function ReconSphere({
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
 
+    // Detect reduced motion and mobile viewport for performance
+    const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+
     // Generate 3D sphere points (Fibonacci sphere distribution)
-    const numPoints = 140;
+    const numPoints = prefersReducedMotion || isMobile ? 70 : 140;
     const points = [];
     const radius = size * 0.32;
 
@@ -75,8 +79,10 @@ export function ReconSphere({
         lineColor = "rgba(16, 185, 129, 0.16)";
       }
 
-      // Rotate around Y and X axes
-      rotationAngle += 0.005;
+      // Rotate around Y and X axes (halted if reduced motion requested)
+      if (!prefersReducedMotion) {
+        rotationAngle += 0.005;
+      }
       const cosY = Math.cos(rotationAngle + mouseOffset.x * 0.001);
       const sinY = Math.sin(rotationAngle + mouseOffset.x * 0.001);
       const cosX = Math.cos(0.35 + mouseOffset.y * 0.001);

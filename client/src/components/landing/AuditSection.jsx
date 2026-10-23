@@ -127,9 +127,9 @@ export function AuditSection() {
           
           {/* Left Column: Visual Audit Timeline (Cols 1-7) */}
           <div className="lg:col-span-7 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b text-xs font-mono text-neutral-400" style={{ borderColor: isNight ? "rgba(255,255,255,0.08)" : "#E7E3DA" }}>
-              <span>CASE #RC-84920 LIFECYCLE AUDIT TRAIL</span>
-              <span className="text-emerald-500 font-bold">ALL HASHES VERIFIED</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b text-xs font-mono text-neutral-400 gap-2" style={{ borderColor: isNight ? "rgba(255,255,255,0.08)" : "#E7E3DA" }}>
+              <span>CASE #RC-84920 SIMULATED AUDIT TRACE (SYNTHETIC DATA)</span>
+              <span className="text-emerald-500 font-bold">CRYPTOGRAPHIC INTEGRITY VERIFIED</span>
             </div>
 
             <div className="space-y-3">
