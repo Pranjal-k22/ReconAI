@@ -2,7 +2,7 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import { logger } from "../../config/logger.js";
 import { PaymentMonitoringTask } from "../../models/PaymentMonitoringTask.js";
-import { executeMonitoringRecheck } from "./paymentMonitoringService.js";
+import { executeMonitoringRecheck, enqueueUnmonitoredPendingPayments } from "./paymentMonitoringService.js";
 
 /**
  * ReconAI 2.0 - Payment Monitoring Background Worker
@@ -162,6 +162,43 @@ export async function sweepDueMonitoringTasks({
 }
 
 /**
+ * Runs a single discrete worker cycle (enqueueing unmonitored pending payments + sweeping due tasks).
+ * Useful for deterministic testing and manual cycle execution.
+ */
+export async function runMonitoringWorkerCycle({
+  maxTasks = 5,
+  asOfTime = null,
+  customFetch = null,
+  workerId = "worker-1",
+  leaseDurationMs = 30000,
+  runEnqueue = true,
+  enqueueLimit = 50,
+  tenantId = null
+} = {}) {
+  let enqueueSummary = { enqueuedCount: 0, skippedCount: 0 };
+  if (runEnqueue) {
+    enqueueSummary = await enqueueUnmonitoredPendingPayments({
+      tenantId,
+      limit: enqueueLimit,
+      asOfTime: getEffectiveMonitoringTime(asOfTime)
+    });
+  }
+
+  const sweepSummary = await sweepDueMonitoringTasks({
+    maxTasks,
+    asOfTime,
+    customFetch,
+    workerId,
+    leaseDurationMs
+  });
+
+  return {
+    enqueueSummary,
+    sweepSummary
+  };
+}
+
+/**
  * Starts background interval runner for the monitoring worker.
  */
 export function startMonitoringWorker({
@@ -170,15 +207,28 @@ export function startMonitoringWorker({
   leaseDurationMs = 30000,
   workerId = `worker_${crypto.randomUUID().slice(0, 8)}`,
   customFetch = null,
-  runImmediate = true
+  runImmediate = true,
+  enqueueEveryNSweeps = 10,
+  enqueueLimit = 50
 } = {}) {
   let isRunning = false;
   let isStopped = false;
+  let sweepCount = 0;
 
   const runSweep = async () => {
     if (isRunning || isStopped) return;
     isRunning = true;
     try {
+      // Call enqueueUnmonitoredPendingPayments once at worker start (sweepCount 0) and then every N sweeps
+      if (sweepCount === 0 || sweepCount % enqueueEveryNSweeps === 0) {
+        try {
+          await enqueueUnmonitoredPendingPayments({ limit: enqueueLimit });
+        } catch (enqueueErr) {
+          logger.warn({ err: enqueueErr.message }, "Background unmonitored pending payment enqueue failed");
+        }
+      }
+      sweepCount++;
+
       await sweepDueMonitoringTasks({ maxTasks, workerId, customFetch, leaseDurationMs });
     } catch (err) {
       logger.error({ err: err.message }, "Background monitoring worker sweep failed");
@@ -193,7 +243,10 @@ export function startMonitoringWorker({
 
   const intervalId = setInterval(runSweep, intervalMs);
 
-  logger.info({ workerId, intervalMs, maxTasks, leaseDurationMs }, "Payment monitoring background worker started");
+  logger.info(
+    { workerId, intervalMs, maxTasks, leaseDurationMs, enqueueEveryNSweeps },
+    "Payment monitoring background worker started"
+  );
 
   return {
     intervalId,

@@ -6,8 +6,8 @@ const isIntegrationRun =
 
 export default defineConfig({
   test: {
-    testTimeout: 15000,
-    hookTimeout: 15000,
+    testTimeout: isIntegrationRun ? 35000 : 15000,
+    hookTimeout: isIntegrationRun ? 35000 : 15000,
     exclude: [
       "**/node_modules/**",
       "**/dist/**",

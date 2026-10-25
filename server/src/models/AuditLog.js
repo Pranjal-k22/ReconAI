@@ -74,7 +74,11 @@ const auditLogSchema = new mongoose.Schema(
         "MONITORING_POLL_RESCHEDULED",
         "MONITORING_RETRY_EXHAUSTED",
         "MONITORING_LEASE_EXPIRED_RECOVERED",
-        "MONITORING_SAFE_HOLD_APPLIED"
+        "MONITORING_SAFE_HOLD_APPLIED",
+        "SAFE_HOLD_APPLIED",
+        "STALE_EVENT_DROPPED",
+        "ORCHESTRATION_TASK_QUEUED",
+        "ORCHESTRATION_TASK_TRANSITIONED"
       ],
       index: true
     },

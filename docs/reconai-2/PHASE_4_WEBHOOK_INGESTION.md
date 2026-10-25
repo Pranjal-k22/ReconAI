@@ -103,11 +103,13 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
 
 ## 5. Replay, Late-Event Safety & Canonical State Progression
 
-1. **Timestamp Headers Policy:**
-   Official Razorpay webhooks do NOT support custom signed timestamp headers (such as Stripe's `t=` header). Delivery time is derived from the envelope's `created_at` field (seconds since UNIX epoch), while `ingestedAt` records local server receipt time. ReconAI does NOT invent a signed delivery-timestamp header or reject legitimate provider retries across Razorpay's documented 24-hour retry window based on an undocumented age threshold.
-2. **Protection Against Delayed Regressions:**
+1. **Provider Timestamp Ordering & Same-Rank Precedence:**
+   Delivery time is derived from the envelope's signed `created_at` timestamp (seconds since UNIX epoch), persisted as `providerEventAt` on `PaymentLifecycleEvent` and tracked as `lastProviderEventAt` on `GatewayPayment`. For events of equal status rank, state mutation is applied ONLY when `providerEventAt` is strictly newer than `lastProviderEventAt`. Older or equal events are recorded as immutable evidence but dropped from mutating state, emitting a `STALE_EVENT_DROPPED` audit entry. If `providerEventAt` is missing from the payload, the local server `ingestedAt` time is used as a fallback and flagged in audit logs.
+2. **Deterministic Refund Ordering & Terminality:**
+   Refund lifecycle adheres to explicit ranking: `created < pending < processed / failed`. The terminal states `processed` and `failed` are terminal and immutable; they never overwrite each other. Any earlier-rank event (`created`, `pending`) or conflicting terminal state arriving after a terminal refund state is recorded is dropped with `STALE_EVENT_DROPPED`.
+3. **Protection Against Delayed Regressions:**
    Once a payment reaches `CAPTURED`, a delayed or out-of-order `payment.failed` event cannot regress `GatewayPayment.status` to `FAILED` or `PaymentCase.captureStatus` to `CAPTURE_FAILED`. The failed event is durably recorded in `PaymentLifecycleEvent` as immutable evidence, but canonical progression is preserved.
-3. **Late Capture on CANCELLED Orders:**
+4. **Late Capture on CANCELLED Orders:**
    If a valid `payment.captured` event arrives for a merchant order previously marked `CANCELLED`:
    - `MerchantOrder.status` remains `CANCELLED` (no automatic cancellation reversal or reopen).
    - `GatewayPayment.status` records provider truth as `CAPTURED`.
@@ -119,29 +121,33 @@ Razorpay documents the HMAC signature as verifying the raw request body, while t
      - `captureStatus = "CAPTURE_CAPTURED"`
    - The response returns `conflictFlag: "CANCELLED_ORDER_CAPTURED"`.
    - No automatic refund, transfer, or write API is executed.
-4. **Late Capture After Initial Payment Failure:**
+5. **Late Capture After Initial Payment Failure:**
    If an async bank confirmation arrives for a payment entity previously recorded as `FAILED`:
    - `GatewayPayment` fields set to `status: "CAPTURED"`, `isLateCapture: true`, and `previousStatus: "FAILED"`.
    - `PaymentCase` fields set to:
      - `resolutionCaseStatus = "CASE_SAFE_HOLD"` (overall case lifecycle state)
-     - `safeHoldCode = "ADMIN_HOLD"` (administrative review hold reason code)
+     - `safeHoldCode = "LATE_CAPTURE_AFTER_FAILURE"` (granular hold reason code replacing legacy generic ADMIN_HOLD)
      - `discrepancyCategory = "STATUS_MISMATCH"` (discrepancy category)
      - `captureStatus = "CAPTURE_CAPTURED"`
    - The event is durably recorded in `PaymentLifecycleEvent` with `conflictFlag: "LATE_CAPTURE_AFTER_FAILURE"`.
-5. **Multiple Payment Attempts for Same Order:**
+6. **Multiple Payment Attempts for Same Order:**
    When a customer makes multiple payment attempts for a single order (e.g. Attempt 1 fails, Attempt 2 succeeds), each attempt is keyed by its unique `gatewayPaymentId`. Attempt 1 remains `FAILED`, Attempt 2 records `CAPTURED`, and `PaymentCase` resolves to `captureStatus: "CAPTURE_CAPTURED"`. Neither attempt overwrites or corrupts the other.
 
 ---
 
 ## 6. Correlation, Tenant Isolation & Quarantining
 
-- **Authoritative Tenant Derivation:**
-  1. `payload.payment.entity.notes.tenantId`
-  2. Matching `MerchantOrder.tenantId` (correlated via `order_id`)
-  3. Matching `GatewayPayment.tenantId` (correlated via `gatewayPaymentId`)
-- **Cross-Tenant Injection Defense:**
-  If `notes.tenantId` claims Tenant A, but the referenced `merchantOrderId` belongs to Tenant B, an `ACCESS_DENIED_ALERT` audit entry is created. The event is quarantined with `status: "QUARANTINED"`, reason: `CROSS_TENANT_MISMATCH`. Tenant B's order is never exposed or modified.
-- **Unmatched Tenant:** Quarantined with `QUARANTINED_UNRESOLVED_TENANT`.
+- **Server-Side Tenant Derivation ONLY (Item b):**
+  `tenantId` is resolved exclusively from our authoritative server-side datastore:
+  1. Matching `GatewayPayment.tenantId` (correlated via `gatewayPaymentId`)
+  2. Matching `MerchantOrder.tenantId` (correlated via provider `order_id` mapping)
+  Payload claims `notes.tenantId` / `notes.tenant_id` are untrusted client assertions and are **never** used to choose, adopt, or infer a tenant.
+- **Cross-Tenant Claim Discrepancy Defense:**
+  If payload `notes.tenantId` is present and disagrees with the authoritative server-side record, an `ACCESS_DENIED_ALERT` audit entry is created. The event is quarantined with `status: "QUARANTINED"`, reason: `CROSS_TENANT_MISMATCH`. The server order and payment state remain unmutated.
+- **Unmapped Tenant Safe Quarantine:**
+  If NO server-side mapping exists (no `GatewayPayment` and no `MerchantOrder` found), the event is quarantined with `status: "QUARANTINED"`, reason: `UNMAPPED_TENANT`. No `PaymentCase` or `GatewayPayment` is created, no order is mutated, an audit event is logged, and HTTP 200 is returned so that the provider does not retry indefinitely.
+- **Colliding Order References:**
+  If two tenants share colliding order identifiers without an unambiguous server mapping, the event is quarantined with reason `COLLIDING_ORDER_REFERENCES`.
 - **Unsupported Event Types:** Quarantined with `QUARANTINED_UNSUPPORTED_EVENT_TYPE`.
 
 ---

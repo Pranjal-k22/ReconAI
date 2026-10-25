@@ -13,7 +13,8 @@ import {
 } from "../../src/services/monitoring/paymentMonitoringService.js";
 import {
   claimDueMonitoringTask,
-  sweepDueMonitoringTasks
+  sweepDueMonitoringTasks,
+  runMonitoringWorkerCycle
 } from "../../src/services/monitoring/monitoringWorker.js";
 import { RazorpayProviderError, RAZORPAY_ERROR_CODES } from "../../src/services/razorpay/razorpayClient.js";
 
@@ -459,7 +460,67 @@ describe("ReconAI 2.0 - Payment Monitoring Real MongoDB Persistence & Concurrenc
     // 2. PaymentCase placed on CASE_SAFE_HOLD for human inspection
     const checkCase = await PaymentCase.findOne({ caseId, tenantId }).lean();
     expect(checkCase.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
-    expect(checkCase.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(checkCase.safeHoldCode).toBe("MONITORING_RETRY_EXHAUSTED");
     expect(checkCase.isSafeHold).toBe(true);
+  });
+
+  it("8. ITEM h: pending payment with no task gets a task after one worker cycle and is not duplicated by a second cycle", async () => {
+    const tenantId = "tenant_worker_enqueue_1";
+    const paymentId = "pay_unmonitored_pending_801";
+
+    // Seed an unmonitored created/pending payment in real MongoDB with NO monitoring task
+    await GatewayPayment.create({
+      gatewayPaymentId: paymentId,
+      tenantId,
+      merchantOrderId: "order_unmonitored_801",
+      amountPaise: 25000,
+      currency: "INR",
+      status: "CREATED",
+      method: "UPI",
+      source: "SYNTHETIC"
+    });
+
+    // Verify initially zero monitoring tasks exist for this payment
+    const initialTasks = await PaymentMonitoringTask.find({ tenantId, gatewayPaymentId: paymentId }).lean();
+    expect(initialTasks).toHaveLength(0);
+
+    // Mock fetch that returns pending status so task remains after sweep
+    const mockFetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: paymentId,
+        status: "created",
+        amount: 25000,
+        currency: "INR"
+      })
+    });
+
+    // Worker Cycle 1: Enqueues unmonitored pending payment
+    const cycle1 = await runMonitoringWorkerCycle({
+      tenantId,
+      customFetch: mockFetch,
+      runEnqueue: true
+    });
+    expect(cycle1.enqueueSummary.enqueuedCount).toBe(1);
+
+    // Verify task now exists in MongoDB
+    const tasksAfterCycle1 = await PaymentMonitoringTask.find({ tenantId, gatewayPaymentId: paymentId }).lean();
+    expect(tasksAfterCycle1).toHaveLength(1);
+    expect(tasksAfterCycle1[0].gatewayPaymentId).toBe(paymentId);
+
+    // Worker Cycle 2: Should NOT duplicate the task ($setOnInsert idempotency)
+    const cycle2 = await runMonitoringWorkerCycle({
+      tenantId,
+      customFetch: mockFetch,
+      runEnqueue: true
+    });
+    expect(cycle2.enqueueSummary.enqueuedCount).toBe(0);
+    expect(cycle2.enqueueSummary.skippedCount).toBe(1);
+
+    // Verify exactly one task remains in MongoDB
+    const tasksAfterCycle2 = await PaymentMonitoringTask.find({ tenantId, gatewayPaymentId: paymentId }).lean();
+    expect(tasksAfterCycle2).toHaveLength(1);
+    expect(tasksAfterCycle2[0].taskId).toBe(tasksAfterCycle1[0].taskId);
   });
 });

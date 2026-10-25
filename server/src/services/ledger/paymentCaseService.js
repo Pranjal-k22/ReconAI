@@ -183,7 +183,7 @@ export async function updatePaymentCaseSafeHold({
   caseId,
   tenantId,
   isSafeHold,
-  safeHoldCode = "ADMIN_HOLD",
+  safeHoldCode = "GENERAL_SAFE_HOLD",
   safeHoldReason,
   actorId = "system-safe-hold-service"
 }) {

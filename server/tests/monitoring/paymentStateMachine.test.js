@@ -77,8 +77,10 @@ describe("Payment State Machine - Deterministic Canonical Transitions", () => {
     it("applies standard verified capture transition", () => {
       const evaluation = evaluateCanonicalTransition({
         existingGateway: { status: "CREATED" },
-        existingOrder: { status: "CREATED" },
+        existingOrder: { status: "CREATED", amountPaise: 50000, currency: "INR" },
         newPaymentStatus: "CAPTURED",
+        capturedAmountPaise: 50000,
+        currency: "INR",
         tenantId: "tenant_1"
       });
 
@@ -107,8 +109,10 @@ describe("Payment State Machine - Deterministic Canonical Transitions", () => {
     it("safely handles late capture after reported failure under safe-hold", () => {
       const evaluation = evaluateCanonicalTransition({
         existingGateway: { status: "FAILED" },
-        existingOrder: { status: "CREATED" },
+        existingOrder: { status: "CREATED", amountPaise: 50000, currency: "INR" },
         newPaymentStatus: "CAPTURED",
+        capturedAmountPaise: 50000,
+        currency: "INR",
         tenantId: "tenant_1"
       });
 
@@ -117,7 +121,7 @@ describe("Payment State Machine - Deterministic Canonical Transitions", () => {
       expect(evaluation.gatewayUpdates.status).toBe("CAPTURED");
       expect(evaluation.gatewayUpdates.isLateCapture).toBe(true);
       expect(evaluation.caseUpdates.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
-      expect(evaluation.caseUpdates.safeHoldCode).toBe("ADMIN_HOLD");
+      expect(evaluation.caseUpdates.safeHoldCode).toBe("LATE_CAPTURE_AFTER_FAILURE");
       expect(evaluation.caseUpdates.isSafeHold).toBe(true);
     });
 
@@ -158,15 +162,17 @@ describe("Payment State Machine - Deterministic Canonical Transitions", () => {
     it("keeps multiple payment attempts for same order isolated", () => {
       const attempt1 = evaluateCanonicalTransition({
         existingGateway: { status: "FAILED" },
-        existingOrder: { status: "CREATED" },
+        existingOrder: { status: "CREATED", amountPaise: 50000, currency: "INR" },
         newPaymentStatus: "FAILED",
         tenantId: "tenant_1"
       });
 
       const attempt2 = evaluateCanonicalTransition({
         existingGateway: { status: "CREATED" },
-        existingOrder: { status: "CREATED" },
+        existingOrder: { status: "CREATED", amountPaise: 50000, currency: "INR" },
         newPaymentStatus: "CAPTURED",
+        capturedAmountPaise: 50000,
+        currency: "INR",
         tenantId: "tenant_1"
       });
 
@@ -177,6 +183,92 @@ describe("Payment State Machine - Deterministic Canonical Transitions", () => {
       expect(attempt2.allowed).toBe(true);
       expect(attempt2.gatewayUpdates.status).toBe("CAPTURED");
       expect(attempt2.orderUpdates.status).toBe("PAID");
+    });
+
+    describe("ITEM g — PAID Only After Amount and Currency Match", () => {
+      it("exact match: marks order PAID when captured amount and currency match exactly", () => {
+        const evaluation = evaluateCanonicalTransition({
+          existingGateway: { status: "CREATED" },
+          existingOrder: { status: "CREATED", amountPaise: 10000, currency: "INR" },
+          newPaymentStatus: "CAPTURED",
+          capturedAmountPaise: 10000,
+          currency: "INR",
+          tenantId: "tenant_1"
+        });
+
+        expect(evaluation.allowed).toBe(true);
+        expect(evaluation.orderUpdates).toEqual({ status: "PAID" });
+        expect(evaluation.caseUpdates.orderStatus).toBe("ORDER_PAID");
+        expect(evaluation.caseUpdates.isSafeHold).toBeFalsy();
+      });
+
+      it("1 paise off: does NOT mutate order, safe-holds case with AMOUNT_CURRENCY_MISMATCH", () => {
+        const evaluation = evaluateCanonicalTransition({
+          existingGateway: { status: "CREATED" },
+          existingOrder: { status: "CREATED", amountPaise: 10000, currency: "INR" },
+          newPaymentStatus: "CAPTURED",
+          capturedAmountPaise: 10001,
+          currency: "INR",
+          tenantId: "tenant_1"
+        });
+
+        expect(evaluation.allowed).toBe(true);
+        expect(evaluation.orderUpdates).toBeNull();
+        expect(evaluation.caseUpdates.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+        expect(evaluation.caseUpdates.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
+        expect(evaluation.caseUpdates.isSafeHold).toBe(true);
+      });
+
+      it("currency mismatch: does NOT mutate order, safe-holds case with AMOUNT_CURRENCY_MISMATCH", () => {
+        const evaluation = evaluateCanonicalTransition({
+          existingGateway: { status: "CREATED" },
+          existingOrder: { status: "CREATED", amountPaise: 10000, currency: "INR" },
+          newPaymentStatus: "CAPTURED",
+          capturedAmountPaise: 10000,
+          currency: "USD",
+          tenantId: "tenant_1"
+        });
+
+        expect(evaluation.allowed).toBe(true);
+        expect(evaluation.orderUpdates).toBeNull();
+        expect(evaluation.caseUpdates.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+        expect(evaluation.caseUpdates.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
+        expect(evaluation.caseUpdates.isSafeHold).toBe(true);
+      });
+
+      it("missing captured amount: does NOT mutate order, safe-holds with INSUFFICIENT_EVIDENCE", () => {
+        const evaluation = evaluateCanonicalTransition({
+          existingGateway: { status: "CREATED" },
+          existingOrder: { status: "CREATED", amountPaise: 10000, currency: "INR" },
+          newPaymentStatus: "CAPTURED",
+          capturedAmountPaise: null,
+          currency: "INR",
+          tenantId: "tenant_1"
+        });
+
+        expect(evaluation.allowed).toBe(true);
+        expect(evaluation.orderUpdates).toBeNull();
+        expect(evaluation.caseUpdates.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+        expect(evaluation.caseUpdates.safeHoldCode).toBe("INSUFFICIENT_EVIDENCE");
+        expect(evaluation.caseUpdates.isSafeHold).toBe(true);
+      });
+
+      it("partial capture: does NOT mutate order, safe-holds case with AMOUNT_CURRENCY_MISMATCH", () => {
+        const evaluation = evaluateCanonicalTransition({
+          existingGateway: { status: "CREATED" },
+          existingOrder: { status: "CREATED", amountPaise: 10000, currency: "INR" },
+          newPaymentStatus: "CAPTURED",
+          capturedAmountPaise: 6000,
+          currency: "INR",
+          tenantId: "tenant_1"
+        });
+
+        expect(evaluation.allowed).toBe(true);
+        expect(evaluation.orderUpdates).toBeNull();
+        expect(evaluation.caseUpdates.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+        expect(evaluation.caseUpdates.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
+        expect(evaluation.caseUpdates.isSafeHold).toBe(true);
+      });
     });
   });
 });

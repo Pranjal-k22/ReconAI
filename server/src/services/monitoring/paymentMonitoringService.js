@@ -310,7 +310,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
           {
             $set: {
               resolutionCaseStatus: "CASE_SAFE_HOLD",
-              safeHoldCode: "ADMIN_HOLD",
+              safeHoldCode: "MONITORING_RETRY_EXHAUSTED",
               safeHoldReason: "Provider status check retry policy exhausted without definitive outcome.",
               isSafeHold: true
             }
@@ -336,7 +336,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
         reason: "RETRY_EXHAUSTED_TIMEOUT_OR_ERROR",
         lastError: providerFetchError.message
       }
-    }).catch(() => {});
+    });
 
     return {
       success: true,
@@ -363,11 +363,19 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
     }
   }
 
+  const capturedAmountPaise =
+    mappedStatus === "CAPTURED" && typeof providerData?.amount === "number"
+      ? providerData.amount
+      : null;
+  const paymentCurrency = (providerData?.currency || "INR").toUpperCase();
+
   const transitionEval = evaluateCanonicalTransition({
     existingGateway,
     existingOrder,
     existingCase,
     newPaymentStatus: mappedStatus,
+    capturedAmountPaise,
+    currency: paymentCurrency,
     tenantId
   });
 
@@ -387,7 +395,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
         );
       }
 
-      // B. Merchant Order Update
+      // B. Merchant Order Update (only mutated if amount and currency match per Item g)
       if (transitionEval.orderUpdates && task.merchantOrderId) {
         await MerchantOrder.updateOne(
           { merchantOrderId: task.merchantOrderId, tenantId },
@@ -401,6 +409,24 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
           { caseId: task.caseId, tenantId },
           { $set: transitionEval.caseUpdates }
         );
+
+        if (transitionEval.caseUpdates.isSafeHold) {
+          await createAuditEvent({
+            actorType: "SYSTEM",
+            actorId: workerId,
+            action: "SAFE_HOLD_APPLIED",
+            tenantId,
+            entityType: "PaymentCase",
+            entityId: task.caseId,
+            metadata: {
+              gatewayPaymentId,
+              caseId: task.caseId,
+              safeHoldCode: transitionEval.caseUpdates.safeHoldCode,
+              reason: transitionEval.caseUpdates.safeHoldReason,
+              discrepancyCategory: transitionEval.caseUpdates.discrepancyCategory
+            }
+          });
+        }
       }
 
       // D. Immutable Append-Only Lifecycle Event
@@ -467,7 +493,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
         outcome: "TERMINAL_CONFIRMED",
         conflictFlag: transitionEval.conflictFlag
       }
-    }).catch(() => {});
+    });
 
     return {
       success: true,
@@ -520,7 +546,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
         nextRunAt: nextRunAt.toISOString(),
         attemptCount: task.attemptCount
       }
-    }).catch(() => {});
+    });
 
     return {
       success: true,
@@ -551,7 +577,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
         {
           $set: {
             resolutionCaseStatus: "CASE_SAFE_HOLD",
-            safeHoldCode: "ADMIN_HOLD",
+            safeHoldCode: "MONITORING_RETRY_EXHAUSTED",
             safeHoldReason: "Payment remains pending after retry ceiling reached. Awaiting manual review.",
             isSafeHold: true
           }
@@ -577,7 +603,7 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
       observedStatus: mappedStatus,
       attemptCount: task.attemptCount
     }
-  }).catch(() => {});
+  });
 
   return {
     success: true,
@@ -607,40 +633,82 @@ export async function enqueueUnmonitoredPendingPayments({
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
   if (!isMongoConnected) return { enqueuedCount: 0, skippedCount: 0 };
 
-  const query = {
-    status: { $in: ["CREATED", "AUTHORIZED", "PENDING"] }
-  };
-  if (tenantId) {
-    query.tenantId = tenantId;
-  }
-
-  const pendingPayments = await GatewayPayment.find(query)
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
-
   let enqueuedCount = 0;
   let skippedCount = 0;
 
-  for (const pay of pendingPayments) {
-    if (!pay.tenantId || !pay.gatewayPaymentId) continue;
+  if (tenantId) {
+    const pendingPayments = await GatewayPayment.find({
+      tenantId,
+      status: { $in: ["CREATED", "AUTHORIZED", "PENDING"] }
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
 
-    const existingTask = await PaymentMonitoringTask.findOne({
-      tenantId: pay.tenantId,
-      gatewayPaymentId: pay.gatewayPaymentId
-    }).lean();
+    for (const pay of pendingPayments) {
+      if (!pay.tenantId || !pay.gatewayPaymentId) continue;
 
-    if (!existingTask) {
-      await schedulePaymentMonitoring({
+      const existingTask = await PaymentMonitoringTask.findOne({
         tenantId: pay.tenantId,
-        gatewayPaymentId: pay.gatewayPaymentId,
-        merchantOrderId: pay.merchantOrderId,
-        initialDelaySeconds,
-        asOfTime
-      });
-      enqueuedCount++;
-    } else {
-      skippedCount++;
+        gatewayPaymentId: pay.gatewayPaymentId
+      }).lean();
+
+      if (!existingTask) {
+        await schedulePaymentMonitoring({
+          tenantId: pay.tenantId,
+          gatewayPaymentId: pay.gatewayPaymentId,
+          merchantOrderId: pay.merchantOrderId,
+          initialDelaySeconds,
+          asOfTime
+        });
+        enqueuedCount++;
+      } else {
+        skippedCount++;
+      }
+    }
+  } else {
+    // Tenant-safe iteration: discover distinct tenantIds from pending records
+    const distinctTenants = await GatewayPayment.distinct("tenantId", {
+      status: { $in: ["CREATED", "AUTHORIZED", "PENDING"] }
+    });
+
+    const activeTenants = distinctTenants.filter(
+      (t) => typeof t === "string" && t.trim().length > 0
+    );
+
+    const maxTenantsToInspect = 50;
+    const perTenantLimit = Math.max(1, Math.floor(limit / Math.max(1, activeTenants.length)));
+
+    for (const tId of activeTenants.slice(0, maxTenantsToInspect)) {
+      const pendingPayments = await GatewayPayment.find({
+        tenantId: tId,
+        status: { $in: ["CREATED", "AUTHORIZED", "PENDING"] }
+      })
+        .sort({ createdAt: -1 })
+        .limit(perTenantLimit)
+        .lean();
+
+      for (const pay of pendingPayments) {
+        if (!pay.tenantId || !pay.gatewayPaymentId) continue;
+
+        const existingTask = await PaymentMonitoringTask.findOne({
+          tenantId: pay.tenantId,
+          gatewayPaymentId: pay.gatewayPaymentId
+        }).lean();
+
+        if (!existingTask) {
+          await schedulePaymentMonitoring({
+            tenantId: pay.tenantId,
+            gatewayPaymentId: pay.gatewayPaymentId,
+            merchantOrderId: pay.merchantOrderId,
+            initialDelaySeconds,
+            asOfTime
+          });
+          enqueuedCount++;
+        } else {
+          skippedCount++;
+        }
+      }
     }
   }
 

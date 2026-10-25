@@ -628,7 +628,7 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("PARTIAL_CAPTURE");
     expect(finding.ruleId).toBe("RULE_CASE_8_PARTIAL_CAPTURE");
     expect(finding.safeHold).toBe(true);
-    expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(finding.safeHoldCode).toBe("PARTIAL_CAPTURE");
     expect(finding.recommendation).toBe("IMMEDIATE_SAFE_HOLD");
   });
 
@@ -755,7 +755,7 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("REFUND_FAILED");
     expect(finding.ruleId).toBe("RULE_CASE_12_REFUND_FAILED");
     expect(finding.safeHold).toBe(true);
-    expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(finding.safeHoldCode).toBe("REFUND_FAILED");
     expect(finding.recommendation).toBe("IMMEDIATE_SAFE_HOLD");
   });
 
@@ -913,7 +913,7 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("CONFLICTING_PROVIDER_MERCHANT_RECORDS");
     expect(finding.ruleId).toBe("RULE_CASE_18_CONFLICTING_RECORDS");
     expect(finding.safeHold).toBe(true);
-    expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(finding.safeHoldCode).toBe("CONFLICTING_PROVIDER_MERCHANT_RECORDS");
     expect(finding.recommendation).toBe("IMMEDIATE_SAFE_HOLD");
   });
 
@@ -943,7 +943,7 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("AMOUNT_CURRENCY_MISMATCH");
     expect(finding.ruleId).toBe("RULE_CASE_19_AMOUNT_CURRENCY_MISMATCH");
     expect(finding.safeHold).toBe(true);
-    expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(finding.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
     expect(finding.recommendation).toBe("IMMEDIATE_SAFE_HOLD");
   });
 
@@ -1002,7 +1002,7 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("MISSING_SETTLEMENT_RECORD");
     expect(finding.ruleId).toBe("RULE_CASE_21_MISSING_SETTLEMENT");
     expect(finding.safeHold).toBe(true);
-    expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(finding.safeHoldCode).toBe("MISSING_SETTLEMENT");
     expect(finding.recommendation).toBe("ESCALATE_TO_GATEWAY_SUPPORT");
     expect(finding.suggestedNextStep).toBe("ADVISORY_ESCALATE_TO_GATEWAY_SUPPORT");
     expect(finding.actionEligibility).toBeUndefined();
@@ -1287,7 +1287,7 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
     expect(finding.reasonCode).toBe("UNRESOLVED_UNCERTAINTY");
     expect(finding.ruleId).toBe("RULE_UNKNOWN_UNCERTAINTY");
     expect(finding.safeHold).toBe(true);
-    expect(finding.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(finding.safeHoldCode).toBe("UNRESOLVED_UNCERTAINTY");
     expect(finding.recommendation).toBe("UNKNOWN_OUTCOME_MONITOR");
     expect(finding.confidence).toBe(0.0);
   });

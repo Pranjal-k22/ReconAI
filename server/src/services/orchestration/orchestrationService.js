@@ -207,7 +207,7 @@ export async function queueOrchestrationTask({
       idempotencyKey: cleanIdempotencyKey,
       triggerSource
     }
-  }).catch(() => {});
+  });
 
   return taskDoc;
 }
@@ -513,6 +513,20 @@ export async function transitionTaskState(
     }
     Object.assign(task, extraFields);
 
+    await createAuditEvent({
+      actorType: "WORKER",
+      actorId: effectiveWorkerId || "orchestrator",
+      action: "ORCHESTRATION_TASK_TRANSITIONED",
+      tenantId: task.tenantId || updated.tenantId,
+      entityType: "OrchestrationTask",
+      entityId: task.taskId,
+      metadata: {
+        fromState,
+        toState,
+        reason
+      }
+    });
+
     return updated;
   }
 
@@ -537,6 +551,21 @@ export async function transitionTaskState(
     task.stateHistory.push(historyEntry);
   }
   Object.assign(task, extraFields);
+
+  await createAuditEvent({
+    actorType: "WORKER",
+    actorId: effectiveWorkerId || "orchestrator",
+    action: "ORCHESTRATION_TASK_TRANSITIONED",
+    tenantId: task.tenantId || null,
+    entityType: "OrchestrationTask",
+    entityId: task.taskId,
+    metadata: {
+      fromState,
+      toState,
+      reason
+    }
+  });
+
   return task;
 }
 

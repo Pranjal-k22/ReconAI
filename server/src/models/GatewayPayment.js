@@ -117,6 +117,15 @@ const gatewayPaymentSchema = new mongoose.Schema(
       type: String,
       default: null
     },
+    lastProviderEventAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
+    refundStatus: {
+      type: String,
+      default: null
+    },
     importBatchId: {
       type: String,
       trim: true,

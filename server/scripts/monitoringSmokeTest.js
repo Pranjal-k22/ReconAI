@@ -101,7 +101,7 @@ const { PaymentLifecycleEvent } = await import("../src/models/PaymentLifecycleEv
 const { AuditLog } = await import("../src/models/AuditLog.js");
 const { schedulePaymentMonitoring } = await import("../src/services/monitoring/paymentMonitoringService.js");
 
-const testTenantId = "tenant_smoke_prod_001";
+const testTenantId = "tenant_smoke_test_001";
 const testPaymentId = "pay_smoke_001";
 const testOrderId = "order_smoke_001";
 const testCaseId = "case_smoke_001";
@@ -180,7 +180,7 @@ async function runProductionStartupSmokeTest() {
   await MerchantOrder.create({
     merchantOrderId: testOrderId,
     tenantId: testTenantId,
-    orderNumber: "ORD-SMOKE-PROD-001",
+    orderNumber: "ORD-SMOKE-TEST-001",
     amountPaise: 99900,
     currency: "INR",
     status: "CREATED"
@@ -232,6 +232,7 @@ async function runProductionStartupSmokeTest() {
         id: testPaymentId,
         status: "captured",
         amount: 99900,
+        amount_captured: 99900,
         currency: "INR",
         created_at: 1770000000
       })

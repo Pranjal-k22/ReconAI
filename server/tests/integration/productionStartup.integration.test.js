@@ -158,15 +158,21 @@ describe("Production Startup Entrypoint & Provider-Read Isolation Integration", 
     expect(startupResult.monitoringWorker).toBeDefined();
     expect(getMonitoringWorker()).not.toBeNull();
 
-    // Wait for worker loop sweep
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Wait for worker loop sweep to complete the task
+    const startTime = Date.now();
+    let taskInDb = null;
+    while (Date.now() - startTime < 8000) {
+      taskInDb = await PaymentMonitoringTask.findOne({ taskId: scheduled.taskId }).lean();
+      if (taskInDb && taskInDb.status === "COMPLETED") break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
 
     // Invariant: Provider read was isolated and deterministic
     expect(networkLeakAttempted).toBe(false);
     expect(stubCalled).toBeGreaterThanOrEqual(1);
 
     // Invariant: Result was persisted in MongoDB
-    const taskInDb = await PaymentMonitoringTask.findOne({ taskId: scheduled.taskId }).lean();
+    expect(taskInDb).not.toBeNull();
     expect(taskInDb.status).toBe("COMPLETED");
     expect(taskInDb.lastObservedStatus).toBe("CAPTURED");
 

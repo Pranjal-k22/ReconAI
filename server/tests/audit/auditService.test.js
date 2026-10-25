@@ -70,4 +70,48 @@ describe("auditService & Secret Sanitization", () => {
     expect(res[0].eventId).toMatch(/^AUD-/);
     expect(res[1].eventId).toMatch(/^AUD-/);
   });
+
+  it("fails closed in NODE_ENV=production: throws typed AuditUnavailableError (503) when DB is disconnected", async () => {
+    const originalEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = "production";
+      await expect(
+        createAuditEvent({
+          action: "WEBHOOK_INGESTED",
+          entityType: "PaymentLifecycleEvent",
+          entityId: "evt_123"
+        })
+      ).rejects.toThrow("Audit persistence unavailable");
+
+      await expect(
+        createAuditEventsBulk([
+          { action: "BATCH_ACTION", entityType: "PaymentCase", entityId: "case_123" }
+        ])
+      ).rejects.toThrow("Audit persistence unavailable for bulk write");
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
+
+  it("preserves test-mode behavior in NODE_ENV=test: returns mock audit event without throwing when DB disconnected", async () => {
+    const originalEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = "test";
+      const result = await createAuditEvent({
+        action: "TEST_ACTION",
+        entityType: "TestEntity",
+        entityId: "test_123"
+      });
+      expect(result.eventId).toMatch(/^AUD-/);
+      expect(result.action).toBe("TEST_ACTION");
+
+      const bulkResult = await createAuditEventsBulk([
+        { action: "TEST_BULK", entityType: "TestEntity", entityId: "test_456" }
+      ]);
+      expect(bulkResult).toHaveLength(1);
+      expect(bulkResult[0].action).toBe("TEST_BULK");
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
 });

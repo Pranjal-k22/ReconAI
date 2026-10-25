@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 import crypto from "crypto";
 import app from "../../src/app.js";
-import { verifyRazorpaySignature } from "../../src/services/webhook/webhookService.js";
+import { verifyRazorpaySignature, seedInMemoryPayment } from "../../src/services/webhook/webhookService.js";
 
 const TEST_WEBHOOK_SECRET = "test_webhook_secret_key_32_chars_ok!";
 
@@ -148,6 +148,15 @@ describe("Razorpay Webhook Signature Verification Suite", () => {
     });
 
     it("invalid signature cannot reserve deduplication key or poison legitimate later ingestion", async () => {
+      seedInMemoryPayment({
+        tenantId: "sh_poison_test",
+        gatewayPaymentId: "pay_poison_01",
+        merchantOrderId: "order_poison_01",
+        status: "AUTHORIZED",
+        amountPaise: 5000,
+        currency: "INR"
+      });
+
       const eventId = "evt_poison_attempt_01";
       const validPayload = JSON.stringify({
         entity: "event",

@@ -14,7 +14,7 @@
  *
  * INVARIANTS:
  * - Terminal states (CAPTURED, REFUNDED) cannot regress to earlier or failed states.
- * - Late capture after failure preserves capture evidence under safe-hold (ADMIN_HOLD).
+ * - Late capture after failure preserves capture evidence under safe-hold (LATE_CAPTURE_AFTER_FAILURE).
  * - Late capture on cancelled orders preserves CANCELLED status under safe-hold (LATE_CAPTURE_CANCELLED_ORDER).
  * - Timeouts leave outcomes UNKNOWN or PENDING; timeouts do NOT infer FAILED or debit.
  * - Transitions are strictly evidence-backed and tenant-isolated.
@@ -112,6 +112,8 @@ export function mapProviderPaymentStatus(rawStatus) {
  * @param {Object|null} params.existingOrder - Current MerchantOrder record
  * @param {Object|null} params.existingCase - Current PaymentCase record
  * @param {string} params.newPaymentStatus - Proposed new payment status
+ * @param {number|null} [params.capturedAmountPaise] - Authoritative captured amount evidence
+ * @param {string|null} [params.currency] - Payment currency code
  * @param {string} [params.tenantId] - Authoritative tenant ID
  * @param {string|null} [params.claimedTenantId] - Tenant ID claimed in payload notes
  * @returns {Object} Evaluation outcome with permitted status, conflict flags, and record updates
@@ -121,6 +123,8 @@ export function evaluateCanonicalTransition({
   existingOrder = null,
   existingCase = null,
   newPaymentStatus,
+  capturedAmountPaise = null,
+  currency = null,
   tenantId = null,
   claimedTenantId = null
 }) {
@@ -193,6 +197,28 @@ export function evaluateCanonicalTransition({
 
   // 5. Edge Case: Late capture after apparent FAILURE
   if (newPaymentStatus === "CAPTURED" && isCurrentlyFailed) {
+    let orderUpdates = null;
+    let safeHoldCode = "LATE_CAPTURE_AFTER_FAILURE";
+    let safeHoldReason = "Conflicting late capture arrived after payment failure was recorded.";
+    let discrepancyCategory = "STATUS_MISMATCH";
+
+    if (existingOrder && !isOrderCancelled) {
+      const paymentCurr = (currency || existingGateway?.currency || "INR").toUpperCase();
+      const orderCurr = (existingOrder.currency || "INR").toUpperCase();
+
+      if (capturedAmountPaise === null || capturedAmountPaise === undefined) {
+        safeHoldCode = "INSUFFICIENT_EVIDENCE";
+        safeHoldReason = "Payment captured amount evidence is missing; order cannot be marked PAID.";
+        discrepancyCategory = "AMOUNT_CURRENCY_MISMATCH";
+      } else if (capturedAmountPaise !== existingOrder.amountPaise || paymentCurr !== orderCurr) {
+        safeHoldCode = "AMOUNT_CURRENCY_MISMATCH";
+        safeHoldReason = `Captured amount (${capturedAmountPaise}) or currency (${paymentCurr}) does not match order amount (${existingOrder.amountPaise}) or currency (${orderCurr}).`;
+        discrepancyCategory = "AMOUNT_CURRENCY_MISMATCH";
+      } else {
+        orderUpdates = { status: "PAID" };
+      }
+    }
+
     return {
       allowed: true,
       reason: "LATE_CAPTURE_AFTER_FAILURE: Initial failure overturned by late provider capture",
@@ -202,34 +228,64 @@ export function evaluateCanonicalTransition({
         isLateCapture: true,
         previousStatus: "FAILED"
       },
-      orderUpdates: existingOrder && existingOrder.status !== "CANCELLED" ? { status: "PAID" } : null,
+      orderUpdates,
       caseUpdates: {
         captureStatus: "CAPTURE_CAPTURED",
         resolutionCaseStatus: "CASE_SAFE_HOLD",
-        safeHoldCode: "ADMIN_HOLD",
-        safeHoldReason: "Conflicting late capture arrived after payment failure was recorded.",
-        discrepancyCategory: "STATUS_MISMATCH",
-        isSafeHold: true
+        safeHoldCode,
+        safeHoldReason,
+        discrepancyCategory,
+        isSafeHold: true,
+        ...(orderUpdates ? { orderStatus: "ORDER_PAID" } : {})
       }
     };
   }
 
   // 6. Standard Capture Progression
   if (newPaymentStatus === "CAPTURED") {
-    const shouldUpdateOrder = existingOrder && existingOrder.status !== "CANCELLED";
+    let orderUpdates = null;
+    let caseUpdates = {
+      captureStatus: "CAPTURE_CAPTURED",
+      settlementStatus: "SETTLEMENT_PENDING"
+    };
+
+    if (existingOrder && !isOrderCancelled) {
+      const paymentCurr = (currency || existingGateway?.currency || "INR").toUpperCase();
+      const orderCurr = (existingOrder.currency || "INR").toUpperCase();
+
+      if (capturedAmountPaise === null || capturedAmountPaise === undefined) {
+        caseUpdates = {
+          ...caseUpdates,
+          resolutionCaseStatus: "CASE_SAFE_HOLD",
+          isSafeHold: true,
+          safeHoldCode: "INSUFFICIENT_EVIDENCE",
+          safeHoldReason: "Payment captured amount evidence is missing; order cannot be marked PAID.",
+          discrepancyCategory: "AMOUNT_CURRENCY_MISMATCH"
+        };
+      } else if (capturedAmountPaise !== existingOrder.amountPaise || paymentCurr !== orderCurr) {
+        caseUpdates = {
+          ...caseUpdates,
+          resolutionCaseStatus: "CASE_SAFE_HOLD",
+          isSafeHold: true,
+          safeHoldCode: "AMOUNT_CURRENCY_MISMATCH",
+          safeHoldReason: `Captured amount (${capturedAmountPaise}) or currency (${paymentCurr}) does not match order amount (${existingOrder.amountPaise}) or currency (${orderCurr}).`,
+          discrepancyCategory: "AMOUNT_CURRENCY_MISMATCH"
+        };
+      } else {
+        orderUpdates = { status: "PAID" };
+        caseUpdates.orderStatus = "ORDER_PAID";
+      }
+    }
+
     return {
       allowed: true,
       reason: "PAYMENT_CAPTURED: Standard successful capture transition",
-      conflictFlag: null,
+      conflictFlag: caseUpdates.isSafeHold ? caseUpdates.safeHoldCode : null,
       gatewayUpdates: {
         status: "CAPTURED"
       },
-      orderUpdates: shouldUpdateOrder ? { status: "PAID" } : null,
-      caseUpdates: {
-        captureStatus: "CAPTURE_CAPTURED",
-        settlementStatus: "SETTLEMENT_PENDING",
-        ...(shouldUpdateOrder ? { orderStatus: "ORDER_PAID" } : {})
-      }
+      orderUpdates,
+      caseUpdates
     };
   }
 

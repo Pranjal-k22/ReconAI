@@ -20,6 +20,21 @@ import {
   getServiceAuthorizationState
 } from "../../src/services/auth/serviceRegistry.js";
 import { ROLES } from "../../src/services/auth/tokenService.js";
+import jwt from "jsonwebtoken";
+import { RevokedToken } from "../../src/models/RevokedToken.js";
+import { UserAccount } from "../../src/models/UserAccount.js";
+import {
+  signUserToken,
+  signServiceToken,
+  revokeToken,
+  clearRevocationList
+} from "../../src/services/auth/tokenService.js";
+import {
+  provisionUserAccount,
+  updateUserAuthorization,
+  clearInMemoryAccounts
+} from "../../src/services/auth/accountService.js";
+import { authenticate } from "../../src/middleware/authMiddleware.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,24 +110,6 @@ const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_service_persist
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);
 const SANITIZED_TEST_URI = sanitizeMongoUri(TEST_DB_URI);
 
-// Probe connection availability
-let isMongoAvailable = false;
-let mongoSkipReason = "";
-
-try {
-  await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 2500 });
-  if (mongoose.connection.readyState === 1) {
-    isMongoAvailable = true;
-  }
-} catch (err) {
-  isMongoAvailable = false;
-  mongoSkipReason = `MongoDB connection failed at ${SANITIZED_TEST_URI}: ${err.message}`;
-} finally {
-  if (mongoose.connection.readyState !== 0) {
-    await mongoose.disconnect();
-  }
-}
-
 describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Integration", { timeout: 30000 }, () => {
   const trackedServiceIds = new Set();
 
@@ -123,47 +120,48 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
   }
 
   beforeAll(async () => {
-    if (!isMongoAvailable) {
-      console.warn(`\n⚠️  [INTEGRATION TEST SKIPPED] ${mongoSkipReason}\nPersistence integration tests require a live isolated MongoDB instance. In-memory substitution is disabled.`);
-      return;
+    try {
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.disconnect();
+      }
+      await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 3000 });
+    } catch (err) {
+      throw new Error(
+        `[CRITICAL INTEGRATION FAILURE] MongoDB is unreachable at ${SANITIZED_TEST_URI}: ${err.message}. Real MongoDB is required for integration tests.`
+      );
     }
-
-    // Connect to isolated test database
-    await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
     clearInMemoryServices();
     await initDefaultServices();
   });
 
   afterAll(async () => {
-    if (isMongoAvailable) {
-      if (mongoose.connection.readyState !== 1) {
-        try {
-          await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
-        } catch {}
-      }
-
-      // Restore default svc_shop_ai if modified during test
+    if (mongoose.connection.readyState !== 1) {
       try {
-        await ServicePrincipal.updateOne(
-          { serviceId: "svc_shop_ai" },
-          { $set: { isActive: true } }
-        );
+        await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
       } catch {}
+    }
 
-      // Clean up ONLY tracked test records created by this suite
-      if (trackedServiceIds.size > 0) {
-        await ServicePrincipal.deleteMany({
-          serviceId: { $in: Array.from(trackedServiceIds) }
-        });
-      }
+    // Restore default svc_shop_ai if modified during test
+    try {
+      await ServicePrincipal.updateOne(
+        { serviceId: "svc_shop_ai" },
+        { $set: { isActive: true } }
+      );
+    } catch {}
 
-      if (mongoose.connection.readyState !== 0) {
-        await mongoose.disconnect();
-      }
+    // Clean up ONLY tracked test records created by this suite
+    if (trackedServiceIds.size > 0) {
+      await ServicePrincipal.deleteMany({
+        serviceId: { $in: Array.from(trackedServiceIds) }
+      });
+    }
+
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect();
     }
   });
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "1. creates a service principal in MongoDB and verifies authentication with timing-safe validation",
     async () => {
       const serviceId = generateTestServiceId("auth");
@@ -209,7 +207,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "2. disables the principal, closes DB connection, reconnects, and verifies it remains disabled",
     async () => {
       const serviceId = generateTestServiceId("disable");
@@ -252,7 +250,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "3. rotates the credential, reconnects DB, and verifies old credential is rejected while new works",
     async () => {
       const serviceId = generateTestServiceId("rotate");
@@ -298,7 +296,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "4. removes a service scope, reconnects DB, and verifies the permission stays removed",
     async () => {
       const serviceId = generateTestServiceId("scope");
@@ -332,7 +330,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "5. reassigns tenant/customer scope, reconnects DB, and verifies previous binding is not restored",
     async () => {
       const serviceId = generateTestServiceId("tenant");
@@ -366,7 +364,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "6. verifies default service bootstrapping does not reactivate a disabled service or overwrite rotated credentials",
     async () => {
       // Disable default service svc_shop_ai
@@ -393,7 +391,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "7. initializes a separate registry instance via a genuine separate Node.js OS process and reads authoritative DB state",
     async () => {
       const serviceId = generateTestServiceId("multiprocess");
@@ -461,7 +459,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "8. verifies production requests fail closed (503) when the authoritative persistent datastore is unavailable",
     async () => {
       const prevEnv = process.env.NODE_ENV;
@@ -489,7 +487,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "9. verifies plaintext service secrets are never stored or logged in MongoDB records",
     async () => {
       const serviceId = generateTestServiceId("plaintext");
@@ -522,7 +520,7 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
     }
   );
 
-  it.skipIf(!isMongoAvailable)(
+  it(
     "10. cleans up only test records created by this suite and leaves other principals intact",
     async () => {
       const cleanupId = generateTestServiceId("cleanup");
@@ -552,4 +550,197 @@ describe("ReconAI 2.0 - ServicePrincipal & Registry Real MongoDB Persistence Int
       expect(defaultDoc).not.toBeNull();
     }
   );
+
+  it("11. RevokedToken persists across disconnect and reconnect and a revoked jti is rejected by authMiddleware", async () => {
+    const userId = "usr_integ_revoked_" + Date.now();
+    const token = signUserToken({
+      userId,
+      role: ROLES.SHOP,
+      tenantId: "tenant_revoked_test"
+    });
+
+    const decoded = jwt.decode(token);
+    const jti = decoded.jti;
+    expect(jti).toBeDefined();
+
+    // Persist revocation to MongoDB
+    await revokeToken(jti, { reason: "TEST_REVOCATION" });
+
+    // Confirm persisted in Mongo
+    const revokedDoc = await RevokedToken.findOne({ jti }).lean();
+    expect(revokedDoc).not.toBeNull();
+    expect(revokedDoc.jti).toBe(jti);
+
+    // Disconnect and reconnect to simulate restart/loss of memory
+    await mongoose.disconnect();
+    expect(mongoose.connection.readyState).toBe(0);
+
+    // Clear in-memory revocation list while disconnected so memory cache is empty
+    await clearRevocationList();
+
+    // Reconnect to MongoDB
+    await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+    expect(mongoose.connection.readyState).toBe(1);
+
+    // Verify revoked record still exists in MongoDB
+    const persistedAfterReconnect = await RevokedToken.findOne({ jti }).lean();
+    expect(persistedAfterReconnect).not.toBeNull();
+
+    // Call authMiddleware.authenticate
+    const req = {
+      headers: { authorization: `Bearer ${token}` },
+      path: "/api/test",
+      method: "GET",
+      ip: "127.0.0.1"
+    };
+    let capturedErr = null;
+    await authenticate(req, {}, (err) => {
+      capturedErr = err;
+    });
+
+    expect(capturedErr).not.toBeNull();
+    expect(capturedErr.statusCode).toBe(401);
+    expect(capturedErr.message).toMatch(/Token has been revoked/i);
+    expect(req.user).toBeUndefined();
+
+    // Clean up
+    await RevokedToken.deleteOne({ jti });
+  });
+
+  it("12. a service token issued before credential rotation is rejected by authMiddleware after reconnect and registry reinit", async () => {
+    const serviceId = generateTestServiceId("rot_test");
+    await registerServicePrincipal({
+      serviceId,
+      secret: "InitialSecret_12345!",
+      role: ROLES.SHOP_AI,
+      tenantId: "tenant_rot_test"
+    });
+
+    // Token issued with credentialVersion 1
+    const tokenBeforeRotation = signServiceToken({
+      serviceId,
+      role: ROLES.SHOP_AI,
+      tenantId: "tenant_rot_test",
+      credentialVersion: 1
+    });
+
+    // Verify token accepted prior to rotation
+    const req1 = {
+      headers: { "x-service-token": tokenBeforeRotation },
+      path: "/api/test",
+      method: "GET",
+      ip: "127.0.0.1"
+    };
+    let err1 = null;
+    await authenticate(req1, {}, (err) => {
+      if (err) err1 = err;
+    });
+    expect(err1).toBeNull();
+    expect(req1.user.serviceId).toBe(serviceId);
+
+    // Rotate credential in MongoDB (bumps credentialVersion to 2)
+    const rotated = await rotateServiceCredential(
+      serviceId,
+      "NewRotatedSecret_67890!"
+    );
+    expect(rotated.credentialVersion).toBe(2);
+
+    // Disconnect and reconnect to simulate process restart
+    await mongoose.disconnect();
+    expect(mongoose.connection.readyState).toBe(0);
+
+    // Clear in-memory services
+    clearInMemoryServices();
+
+    // Reconnect to MongoDB
+    await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+    expect(mongoose.connection.readyState).toBe(1);
+
+    // Reinitialize registry from MongoDB
+    await reinitializeServiceRegistry();
+
+    // Now test that old token (credentialVersion 1) is rejected by authMiddleware
+    const req2 = {
+      headers: { "x-service-token": tokenBeforeRotation },
+      path: "/api/test",
+      method: "GET",
+      ip: "127.0.0.1"
+    };
+    let err2 = null;
+    await authenticate(req2, {}, (err) => {
+      if (err) err2 = err;
+    });
+
+    expect(err2).not.toBeNull();
+    expect(err2.statusCode).toBe(401);
+    expect(err2.message).toMatch(/rotated|re-authentication required/i);
+    expect(req2.user).toBeUndefined();
+  });
+
+  it("13. human token rejected after authVersion bump after reconnect", async () => {
+    const userId = "usr_integ_authver_" + Date.now();
+    await provisionUserAccount({
+      userId,
+      email: `${userId}@example.com`,
+      password: "HumanPassword123!",
+      role: ROLES.SHOP,
+      tenantId: "tenant_authver_test"
+    });
+
+    // Token issued with authVersion 1
+    const humanToken = signUserToken({
+      userId,
+      role: ROLES.SHOP,
+      tenantId: "tenant_authver_test",
+      authVersion: 1
+    });
+
+    // Verify token accepted prior to bump
+    const req1 = {
+      headers: { authorization: `Bearer ${humanToken}` },
+      path: "/api/test",
+      method: "GET",
+      ip: "127.0.0.1"
+    };
+    let err1 = null;
+    await authenticate(req1, {}, (err) => {
+      if (err) err1 = err;
+    });
+    expect(err1).toBeNull();
+    expect(req1.user.sub).toBe(userId);
+
+    // Invalidate sessions / bump authVersion in MongoDB
+    await updateUserAuthorization(userId, { invalidateSessions: true });
+
+    // Disconnect and reconnect to simulate process restart
+    await mongoose.disconnect();
+    expect(mongoose.connection.readyState).toBe(0);
+
+    // Clear in-memory account cache
+    clearInMemoryAccounts();
+
+    // Reconnect to MongoDB
+    await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+    expect(mongoose.connection.readyState).toBe(1);
+
+    // Verify token with old authVersion (1) is rejected by authMiddleware
+    const req2 = {
+      headers: { authorization: `Bearer ${humanToken}` },
+      path: "/api/test",
+      method: "GET",
+      ip: "127.0.0.1"
+    };
+    let err2 = null;
+    await authenticate(req2, {}, (err) => {
+      err2 = err;
+    });
+
+    expect(err2).not.toBeNull();
+    expect(err2.statusCode).toBe(401);
+    expect(err2.message).toMatch(/Authorization state has changed|re-authentication required/i);
+    expect(req2.user).toBeUndefined();
+
+    // Cleanup
+    await UserAccount.deleteOne({ userId });
+  });
 });

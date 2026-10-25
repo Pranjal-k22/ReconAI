@@ -74,23 +74,6 @@ const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_webhook_persist
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);
 const SANITIZED_TEST_URI = sanitizeMongoUri(TEST_DB_URI);
 
-let isMongoAvailable = false;
-let mongoSkipReason = "";
-
-try {
-  await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 2500 });
-  if (mongoose.connection.readyState === 1) {
-    isMongoAvailable = true;
-  }
-} catch (err) {
-  isMongoAvailable = false;
-  mongoSkipReason = `MongoDB connection failed at ${SANITIZED_TEST_URI}: ${err.message}`;
-} finally {
-  if (mongoose.connection.readyState !== 0) {
-    await mongoose.disconnect();
-  }
-}
-
 const TEST_SECRET = "persistent_test_webhook_secret_key_32_bytes_ok!";
 
 function signBody(bodyStr, secret = TEST_SECRET) {
@@ -105,17 +88,18 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   const trackedCaseIds = new Set();
 
   beforeAll(async () => {
-    if (!isMongoAvailable) {
-      console.warn(
-        `\n⚠️  [INTEGRATION TEST SKIPPED] ${mongoSkipReason}\nPersistence integration tests require a live isolated MongoDB instance. In-memory substitution is disabled.`
+    try {
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.disconnect();
+      }
+      await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 3000 });
+    } catch (err) {
+      throw new Error(
+        `[CRITICAL INTEGRATION FAILURE] MongoDB is unreachable at ${SANITIZED_TEST_URI}: ${err.message}. Real MongoDB is required for integration tests.`
       );
-      return;
     }
 
     process.env.RAZORPAY_WEBHOOK_SECRET = TEST_SECRET;
-
-    // Connect to isolated test database
-    await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
 
     // Ensure model indexes are created in MongoDB
     await PaymentLifecycleEvent.syncIndexes();
@@ -125,49 +109,43 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   afterAll(async () => {
-    if (isMongoAvailable) {
-      if (mongoose.connection.readyState !== 1) {
-        try {
-          await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
-        } catch {}
-      }
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+      } catch {}
+    }
 
-      // Clean up tracked test records
-      if (trackedDeduplicationKeys.size > 0) {
-        await PaymentLifecycleEvent.deleteMany({
-          deduplicationKey: { $in: Array.from(trackedDeduplicationKeys) }
-        });
-      }
+    // Clean up tracked test records
+    if (trackedDeduplicationKeys.size > 0) {
+      await PaymentLifecycleEvent.deleteMany({
+        deduplicationKey: { $in: Array.from(trackedDeduplicationKeys) }
+      });
+    }
 
-      if (trackedPaymentIds.size > 0) {
-        await GatewayPayment.deleteMany({
-          gatewayPaymentId: { $in: Array.from(trackedPaymentIds) }
-        });
-      }
+    if (trackedPaymentIds.size > 0) {
+      await GatewayPayment.deleteMany({
+        gatewayPaymentId: { $in: Array.from(trackedPaymentIds) }
+      });
+    }
 
-      if (trackedOrderIds.size > 0) {
-        await MerchantOrder.deleteMany({
-          merchantOrderId: { $in: Array.from(trackedOrderIds) }
-        });
-      }
+    if (trackedOrderIds.size > 0) {
+      await MerchantOrder.deleteMany({
+        merchantOrderId: { $in: Array.from(trackedOrderIds) }
+      });
+    }
 
-      if (trackedCaseIds.size > 0) {
-        await PaymentCase.deleteMany({
-          caseId: { $in: Array.from(trackedCaseIds) }
-        });
-      }
+    if (trackedCaseIds.size > 0) {
+      await PaymentCase.deleteMany({
+        caseId: { $in: Array.from(trackedCaseIds) }
+      });
+    }
 
-      if (mongoose.connection.readyState !== 0) {
-        await mongoose.disconnect();
-      }
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect();
     }
   });
 
   it("1. durable event persistence in real MongoDB with schema validation and sanitization", async () => {
-    if (!isMongoAvailable) {
-      console.warn("Skipping real DB test: MongoDB not available");
-      return;
-    }
 
     const testEventId = `evt_integ_${Date.now()}_01`;
     const paymentId = `pay_integ_${Date.now()}_01`;
@@ -177,6 +155,17 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     trackedDeduplicationKeys.add(deduplicationKey);
     trackedPaymentIds.add(paymentId);
+
+    // Pre-seed GatewayPayment for server-side tenant mapping
+    await GatewayPayment.create({
+      tenantId,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: "order_test_01",
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 25000,
+      currency: "INR"
+    });
 
     const rawBody = JSON.stringify({
       entity: "event",
@@ -234,7 +223,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("2. durable deduplication: duplicate delivery returns DUPLICATE_ACKNOWLEDGED without duplicate DB rows", async () => {
-    if (!isMongoAvailable) return;
 
     const testEventId = `evt_integ_${Date.now()}_dup`;
     const paymentId = `pay_integ_${Date.now()}_dup`;
@@ -243,6 +231,17 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     trackedDeduplicationKeys.add(deduplicationKey);
     trackedPaymentIds.add(paymentId);
+
+    // Pre-seed GatewayPayment for server-side tenant mapping
+    await GatewayPayment.create({
+      tenantId: "sh_integ_merchant",
+      gatewayPaymentId: paymentId,
+      merchantOrderId: "order_dup_01",
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 15000,
+      currency: "INR"
+    });
 
     const rawBody = JSON.stringify({
       entity: "event",
@@ -294,7 +293,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("3. concurrent duplicate deliveries against real MongoDB are handled idempotently via E11000", async () => {
-    if (!isMongoAvailable) return;
 
     const testEventId = `evt_integ_concurrent_${Date.now()}`;
     const paymentId = `pay_integ_concurrent_${Date.now()}`;
@@ -303,6 +301,17 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     trackedDeduplicationKeys.add(deduplicationKey);
     trackedPaymentIds.add(paymentId);
+
+    // Pre-seed GatewayPayment for server-side tenant mapping
+    await GatewayPayment.create({
+      tenantId: "sh_integ_merchant",
+      gatewayPaymentId: paymentId,
+      merchantOrderId: "order_concurrent_01",
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 50000,
+      currency: "INR"
+    });
 
     const rawBody = JSON.stringify({
       entity: "event",
@@ -353,7 +362,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("4. deduplication survives database disconnect and reconnect", async () => {
-    if (!isMongoAvailable) return;
 
     const testEventId = `evt_integ_reconnect_${Date.now()}`;
     const paymentId = `pay_integ_reconnect_${Date.now()}`;
@@ -362,6 +370,17 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     trackedDeduplicationKeys.add(deduplicationKey);
     trackedPaymentIds.add(paymentId);
+
+    // Pre-seed GatewayPayment for server-side tenant mapping
+    await GatewayPayment.create({
+      tenantId: "sh_integ_merchant",
+      gatewayPaymentId: paymentId,
+      merchantOrderId: "order_reconnect_01",
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 30000,
+      currency: "INR"
+    });
 
     const rawBody = JSON.stringify({
       entity: "event",
@@ -416,7 +435,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("5. out-of-order deliveries against real MongoDB cannot regress CAPTURED to FAILED", async () => {
-    if (!isMongoAvailable) return;
 
     const paymentId = `pay_ooo_${Date.now()}`;
     const tenantId = "sh_integ_ooo";
@@ -474,7 +492,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("6. replay with changed event-ID header is acknowledged as duplicate via MongoDB accountBodyHash unique index", async () => {
-    if (!isMongoAvailable) return;
 
     const testEventId1 = `evt_integ_hdr1_${Date.now()}`;
     const testEventId2 = `evt_integ_hdr2_${Date.now()}`;
@@ -484,6 +501,17 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     trackedDeduplicationKeys.add(`RAZORPAY:${accountId}:${testEventId1}`);
     trackedDeduplicationKeys.add(`RAZORPAY:${accountId}:${testEventId2}`);
     trackedPaymentIds.add(paymentId);
+
+    // Pre-seed GatewayPayment for server-side tenant mapping
+    await GatewayPayment.create({
+      tenantId: "sh_integ_merchant",
+      gatewayPaymentId: paymentId,
+      merchantOrderId: "order_hdr_01",
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 42000,
+      currency: "INR"
+    });
 
     const rawBody = JSON.stringify({
       entity: "event",
@@ -534,11 +562,23 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("7. event ID with different signed body is quarantined in real MongoDB (EVENT_ID_PAYLOAD_MISMATCH)", async () => {
-    if (!isMongoAvailable) return;
 
     const eventId = `evt_integ_mismatch_${Date.now()}`;
     const accountId = "acc_integ_mismatch";
+    const legitPaymentId = `pay_legit_${Date.now()}`;
     trackedDeduplicationKeys.add(`RAZORPAY:${accountId}:${eventId}`);
+    trackedPaymentIds.add(legitPaymentId);
+
+    // Pre-seed GatewayPayment for server-side tenant mapping
+    await GatewayPayment.create({
+      tenantId: "sh_integ_merchant",
+      gatewayPaymentId: legitPaymentId,
+      merchantOrderId: "order_legit_01",
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 5000,
+      currency: "INR"
+    });
 
     const body1 = JSON.stringify({
       entity: "event",
@@ -547,7 +587,7 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       payload: {
         payment: {
           entity: {
-            id: `pay_legit_${Date.now()}`,
+            id: legitPaymentId,
             amount: 5000,
             currency: "INR",
             notes: { tenantId: "sh_integ_merchant" }
@@ -596,7 +636,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("8. late capture on CANCELLED order against real MongoDB preserves CANCELLED status and flags SAFE_HOLD in PaymentCase", async () => {
-    if (!isMongoAvailable) return;
 
     const orderId = `order_integ_canc_${Date.now()}`;
     const paymentId = `pay_integ_canc_${Date.now()}`;
@@ -677,7 +716,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("9. verify accountBodyHash partial unique index: multiple documents with omitted, null, and empty-string accountBodyHash coexist without collision, while duplicate string hashes are rejected", async () => {
-    if (!isMongoAvailable) return;
 
     // Inspect actual MongoDB index definition
     const indexes = await PaymentLifecycleEvent.collection.indexes();
@@ -875,8 +913,7 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     trackedEventIds.add(doc3.eventId);
   });
 
-  it("10. conflicting late capture after failure against real MongoDB persists GatewayPayment CAPTURED with isLateCapture and flags PaymentCase with resolutionCaseStatus CASE_SAFE_HOLD and safeHoldCode ADMIN_HOLD", async () => {
-    if (!isMongoAvailable) return;
+  it("10. conflicting late capture after failure against real MongoDB persists GatewayPayment CAPTURED with isLateCapture and flags PaymentCase with resolutionCaseStatus CASE_SAFE_HOLD and safeHoldCode LATE_CAPTURE_AFTER_FAILURE", async () => {
 
     const paymentId = `pay_integ_late_fail_${Date.now()}`;
     const orderId = `order_integ_late_fail_${Date.now()}`;
@@ -955,12 +992,11 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     const caseInDb = await PaymentCase.findOne({ caseId }).lean();
     expect(caseInDb.captureStatus).toBe("CAPTURE_CAPTURED");
     expect(caseInDb.discrepancyCategory).toBe("STATUS_MISMATCH");
-    expect(caseInDb.safeHoldCode).toBe("ADMIN_HOLD");
+    expect(caseInDb.safeHoldCode).toBe("LATE_CAPTURE_AFTER_FAILURE");
     expect(caseInDb.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
   });
 
   it("11. confirm the application never treats an empty string as a valid replay-protection hash", async () => {
-    if (!isMongoAvailable) return;
 
     // Direct unit helper verification
     expect(isValidReplayHash("")).toBe(false);
@@ -1020,7 +1056,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("12. verify gapless index migration activates replacement partial unique index before retiring legacy index with zero uniqueness gap", async () => {
-    if (!isMongoAvailable) return;
 
     // Use a disposable collection in the test database to safely demonstrate migration
     const db = mongoose.connection.db;
@@ -1106,7 +1141,6 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
   });
 
   it("13. verify migration precondition fails closed when duplicate valid hashes exist and preserves previous index", async () => {
-    if (!isMongoAvailable) return;
 
     const db = mongoose.connection.db;
     const testColName = `disposable_precondition_fail_${Date.now()}`;
@@ -1151,6 +1185,106 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       expect(replacementIdx).toBeUndefined();
     } finally {
       await testCol.drop().catch(() => {});
+    }
+  });
+
+  it("14. disconnect during a mutation path -> mutation not reported successful, no partial state (audit fails closed)", async () => {
+    const testEventId = `evt_integ_${Date.now()}_audit_fail`;
+    const paymentId = `pay_integ_${Date.now()}_audit_fail`;
+    const orderId = `order_integ_${Date.now()}_audit_fail`;
+    const tenantId = "sh_integ_merchant";
+
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+
+    // Pre-seed order and gateway payment in Mongo
+    await MerchantOrder.create({
+      tenantId,
+      merchantOrderId: orderId,
+      amountPaise: 50000,
+      currency: "INR",
+      status: "PENDING"
+    });
+
+    await GatewayPayment.create({
+      tenantId,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 50000,
+      currency: "INR"
+    });
+
+    // Simulate production environment where audit failure must fail-closed
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+
+    try {
+      // Disconnect Mongo right before webhook processing
+      await mongoose.disconnect();
+      expect(mongoose.connection.readyState).toBe(0);
+
+      const payload = {
+        entity: "event",
+        account_id: "acc_integ_test_01",
+        event: "payment.captured",
+        contains: ["payment"],
+        payload: {
+          payment: {
+            entity: {
+              id: paymentId,
+              order_id: `order_rzp_${Date.now()}`,
+              amount: 50000,
+              currency: "INR",
+              status: "captured",
+              captured: true,
+              amount_refunded: 0
+            }
+          }
+        },
+        created_at: Math.floor(Date.now() / 1000)
+      };
+
+      const rawBody = JSON.stringify(payload);
+      const signature = signBody(rawBody);
+
+      let caughtErr = null;
+      let result = null;
+      try {
+        result = await ingestRazorpayWebhook({
+          eventId: testEventId,
+          signature,
+          rawBody,
+          parsedBody: payload
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      // Either caught error (AuditUnavailableError / 5xx) or result indicates failure (not SUCCESS)
+      const failed = caughtErr !== null || (result && result.status !== "SUCCESS");
+      expect(failed).toBe(true);
+
+      // Reconnect to verify state integrity
+      await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+
+      // MerchantOrder must NOT have transitioned to PAID
+      const persistedOrder = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+      expect(persistedOrder.status).not.toBe("PAID");
+      expect(persistedOrder.status).toBe("PENDING");
+
+      // GatewayPayment must NOT have transitioned to CAPTURED
+      const persistedPayment = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+      expect(persistedPayment.status).not.toBe("CAPTURED");
+      expect(persistedPayment.status).toBe("AUTHORIZED");
+    } finally {
+      process.env.NODE_ENV = prevEnv;
+      if (mongoose.connection.readyState !== 1) {
+        try {
+          await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+        } catch {}
+      }
     }
   });
 });

@@ -780,3 +780,45 @@ ReconAI/
   - Missing approved refund limits fail closed.
   - Case 22 remains unconditionally in `SAFE_HOLD`.
   - Phase 10 final lease-lifecycle verification complete. Stopped for review. Phase 11 remains locked.
+
+### Entry 14: Stage 2 Data-Integrity Hardening (Ledger Items a, b, d, e, f, g, h, i)
+
+- **Audits and Hardening Implementations**:
+  - **Item a — Audit Must Fail Closed**:
+    - Guarded `auditService.js` so that disconnected/failed audit writes skip ONLY when `NODE_ENV === "test"`. In every other environment, throws a typed `AuditUnavailableError` (`statusCode: 503`, `code: AUDIT_UNAVAILABLE`).
+    - Webhook ingestion, payment monitoring, and orchestration mutation paths let audit failure propagate without reporting mutation success or creating partial state.
+    - Verified with unit tests (`NODE_ENV=production` disconnected -> throws, `NODE_ENV=test` keeps test behavior) and real-Mongo disconnect test in `webhookPersistence.integration.test.js`.
+  - **Item b — Webhook Tenant from Server-Side Mapping ONLY**:
+    - Tenant resolution derives strictly from authoritative server-side datastore: `GatewayPayment` by `gatewayPaymentId`, or `MerchantOrder` by provider `order_id` mapping.
+    - Untrusted payload claims `notes.tenantId` / `notes.tenant_id` are never used to choose a tenant.
+    - If `notes.tenantId` disagrees with server record -> quarantined as `CROSS_TENANT_MISMATCH` with `ACCESS_DENIED_ALERT` audit event.
+    - If no server mapping exists -> safely quarantined as `UNMAPPED_TENANT` with HTTP 200 (no `PaymentCase`, no `GatewayPayment`, no order mutation, `WEBHOOK_QUARANTINED` audit event).
+    - If multiple tenants collide on order reference -> quarantined as `COLLIDING_ORDER_REFERENCES`.
+  - **Item d — Order Events by Provider Timestamp & Refund Terminality**:
+    - Persisted envelope `created_at` as `providerEventAt` on `PaymentLifecycleEvent` and tracked `lastProviderEventAt` on `GatewayPayment`.
+    - Same-rank events applied only when `providerEventAt` is strictly newer than `lastProviderEventAt`; older or equal timestamps drop mutation and emit `STALE_EVENT_DROPPED` audit. Missing timestamps fall back to `ingestedAt` with audit flag.
+    - Refund ordering explicitly defined: `created < pending < processed / failed`. Terminal states (`processed` and `failed`) are terminal and immutable; they never overwrite each other.
+  - **Item g — PAID Only After Amount and Currency Match**:
+    - Before marking `MerchantOrder` `PAID` (in webhook path and monitoring path), enforces `capturedAmountPaise === order.amountPaise` (integer paise match) AND currency match.
+    - Mismatch or missing evidence prevents order mutation and transitions case to `CASE_SAFE_HOLD` under `AMOUNT_CURRENCY_MISMATCH` or `INSUFFICIENT_EVIDENCE`.
+  - **Item h — Background Enqueue of Unmonitored Pending Payments**:
+    - Monitoring worker calls `enqueueUnmonitoredPendingPayments` at worker start and every N sweeps (configurable, default 10). Bounded (`limit: 50`), idempotent (`$setOnInsert`), and tenant-safe (iterates distinct tenants from pending records). Real-Mongo test added and verified.
+  - **Item i — No More ADMIN_HOLD Writes**:
+    - Replaced all 18 occurrences of `ADMIN_HOLD` writes across `src` with granular safe-hold codes (`LATE_CAPTURE_AFTER_FAILURE`, `MONITORING_RETRY_EXHAUSTED`, `PARTIAL_CAPTURE`, `REFUND_FAILED`, `CONFLICTING_RECORDS`, `AMOUNT_CURRENCY_MISMATCH`, `INSUFFICIENT_EVIDENCE`, `CUSTOMER_DISPUTE_CLAIM`, `GENERAL_SAFE_HOLD`).
+    - `ADMIN_HOLD` retained in schema enum purely for legacy document loading (deprecated). Added automated code scan test `noAdminHoldWriters.test.js`.
+  - **Items e & f — Test Gaps & Fail-Loud Integration Suite**:
+    - Added 3 real-Mongo tests in `servicePersistence.integration.test.js`: (1) `RevokedToken` persists across disconnect and reconnect and is rejected by `authMiddleware` (401); (2) Service token issued before credential rotation is rejected by `authMiddleware` after reconnect and registry reinit (401); (3) Human token rejected after `authVersion` bump after reconnect (401).
+    - Integration suite fails loudly when Mongo is unreachable (`[CRITICAL INTEGRATION FAILURE]`). Verified by executing suite pointing at closed port 27999 (all 9 suites failed with clear ECONNREFUSED message).
+    - Smoke test tenant ID renamed from `tenant_smoke_prod_001` to `tenant_smoke_test_001`.
+- **Full Verification Summary**:
+  1. Unit Test Suite (`npm test --prefix server`): 619/619 passed (69 test files, +21 tests from Stage 1)
+  2. Integration Test Suite (`npm run test:integration --prefix server`): 82/82 passed (9 test files, +5 tests from Stage 1)
+  3. Closed-Port Verification: All 9 test files failed loudly when MongoDB was unreachable
+  4. 120-Scenario Benchmark (`tests/reconciliation/benchmarkCompatibility.test.js`): 120/120 passed (100.00% match rate)
+  5. Monitoring Smoke Test (`node server/scripts/monitoringSmokeTest.js`): All 7 gates passed (exit code 0)
+  6. Frontend Production Build (`npm run build --prefix client`): 2,400 modules, 0 errors
+  7. Code Cleanliness (`git diff --check`): Clean, 0 whitespace/conflict errors
+- **Stopping Invariants Confirmed**:
+  - Stage 3 has not been started.
+  - No provider dispatch route changes, no refund reservation changes, no live keys, no provider write APIs.
+  - Stage 2 data-integrity fixes complete. Stopped and awaiting review.

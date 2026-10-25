@@ -25,6 +25,57 @@ describe("Razorpay Webhook Ingestion, Deduplication, & Safety Suite", () => {
     vi.restoreAllMocks();
     process.env.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
     resetInMemoryWebhookStore();
+
+    // Pre-seed server records for deduplication test fixtures per Item b
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_dup_test_123",
+      tenantId: "sh_merchant_alpha",
+      amountPaise: 10000,
+      currency: "INR",
+      status: "CREATED"
+    });
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_replay_diff_header",
+      tenantId: "sh_merchant_beta",
+      amountPaise: 15000,
+      currency: "INR",
+      status: "CREATED"
+    });
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_legit_101",
+      tenantId: "sh_merchant_gamma",
+      amountPaise: 1000,
+      currency: "INR",
+      status: "CREATED"
+    });
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_concurrent_99",
+      tenantId: "sh_merchant_alpha",
+      amountPaise: 7500,
+      currency: "INR",
+      status: "CREATED"
+    });
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_no_header_id_1",
+      tenantId: "sh_merchant_alpha",
+      amountPaise: 4500,
+      currency: "INR",
+      status: "CREATED"
+    });
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_older_retry_88",
+      tenantId: "sh_merchant_alpha",
+      amountPaise: 2500,
+      currency: "INR",
+      status: "CREATED"
+    });
+    seedInMemoryPayment({
+      gatewayPaymentId: "pay_retry_historical",
+      tenantId: "sh_merchant_alpha",
+      amountPaise: 2000,
+      currency: "INR",
+      status: "CREATED"
+    });
   });
 
   describe("1. Deduplication & Idempotency", () => {
@@ -642,7 +693,7 @@ describe("Razorpay Webhook Ingestion, Deduplication, & Safety Suite", () => {
       const caseAfter = getInMemoryCase("CASE-LATE-777");
       expect(caseAfter.captureStatus).toBe("CAPTURE_CAPTURED");
       expect(caseAfter.discrepancyCategory).toBe("STATUS_MISMATCH");
-      expect(caseAfter.safeHoldCode).toBe("ADMIN_HOLD");
+      expect(caseAfter.safeHoldCode).toBe("LATE_CAPTURE_AFTER_FAILURE");
       expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
     });
   });
@@ -823,6 +874,598 @@ describe("Razorpay Webhook Ingestion, Deduplication, & Safety Suite", () => {
       const c = getInMemoryCase("CASE-STABLE-001");
       expect(c.captureStatus).toBe("CAPTURE_NONE");
       expect(c.orderStatus).toBe("ORDER_PENDING");
+    });
+  });
+
+  describe("5. ITEM b — Webhook Tenant from Server-Side Mapping Only", () => {
+    it("forged notes tenant for a mapped payment is quarantined with CROSS_TENANT_MISMATCH", async () => {
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_b_forged",
+        tenantId: "tenant_real",
+        amountPaise: 5000,
+        currency: "INR",
+        status: "CREATED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_b_forged",
+              amount: 5000,
+              currency: "INR",
+              notes: { tenantId: "tenant_forged_attacker" }
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_b_forged_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("QUARANTINED");
+      expect(res.body.data.reason).toBe("CROSS_TENANT_MISMATCH");
+
+      const paymentInStore = getInMemoryPayment("pay_b_forged");
+      expect(paymentInStore.status).toBe("CREATED");
+    });
+
+    it("unmapped payment is quarantined with UNMAPPED_TENANT (no payment or case created)", async () => {
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_b_unmapped",
+              amount: 5000,
+              currency: "INR",
+              notes: { tenantId: "tenant_claimed_only" }
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_b_unmapped_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("QUARANTINED_UNRESOLVED_TENANT");
+      expect(res.body.data.reason).toBe("UNMAPPED_TENANT");
+
+      expect(getInMemoryPayment("pay_b_unmapped")).toBeUndefined();
+    });
+
+    it("notes absent resolves tenant cleanly from server mapping and mutates state", async () => {
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_b_no_notes",
+        tenantId: "tenant_real",
+        amountPaise: 5000,
+        currency: "INR",
+        status: "CREATED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_b_no_notes",
+              amount: 5000,
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_b_no_notes_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("ACCEPTED");
+
+      const paymentInStore = getInMemoryPayment("pay_b_no_notes");
+      expect(paymentInStore.status).toBe("CAPTURED");
+      expect(paymentInStore.tenantId).toBe("tenant_real");
+    });
+
+    it("two tenants with colliding order references are quarantined with COLLIDING_ORDER_REFERENCES", async () => {
+      seedInMemoryOrder({
+        merchantOrderId: "order_b_colliding",
+        tenantId: "tenant_alpha"
+      });
+      // In-memory store array simulation for collision
+      const memOrdersMap = [
+        { merchantOrderId: "order_b_colliding", tenantId: "tenant_alpha" },
+        { merchantOrderId: "order_b_colliding", tenantId: "tenant_beta" }
+      ];
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_b_colliding",
+        merchantOrderId: "order_b_colliding",
+        tenantId: "tenant_alpha",
+        status: "CREATED"
+      });
+      // Cross-record collision between payment tenant and order tenant
+      seedInMemoryOrder({
+        merchantOrderId: "order_b_colliding",
+        tenantId: "tenant_beta"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_b_colliding",
+              order_id: "order_b_colliding",
+              amount: 5000,
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_b_collide_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("QUARANTINED_UNRESOLVED_TENANT");
+      expect(res.body.data.reason).toBe("COLLIDING_ORDER_REFERENCES");
+    });
+  });
+
+  describe("6. ITEM d — Order Events by Provider Timestamp & Refund Ordering", () => {
+    it("older same-rank event after newer is dropped with STALE_EVENT_DROPPED without mutating payment", async () => {
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_d_older",
+        tenantId: "tenant_d",
+        amountPaise: 5000,
+        currency: "INR",
+        status: "CAPTURED",
+        lastProviderEventAt: new Date(1700000100 * 1000)
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        created_at: 1700000050, // Older than 1700000100
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_d_older",
+              amount: 5000,
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_d_older_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("STALE_EVENT_DROPPED");
+
+      const paymentInStore = getInMemoryPayment("pay_d_older");
+      expect(paymentInStore.lastProviderEventAt).toEqual(new Date(1700000100 * 1000));
+    });
+
+    it("equal provider timestamp same-rank event is dropped with STALE_EVENT_DROPPED", async () => {
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_d_equal",
+        tenantId: "tenant_d",
+        amountPaise: 5000,
+        currency: "INR",
+        status: "CAPTURED",
+        lastProviderEventAt: new Date(1700000100 * 1000)
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        created_at: 1700000100, // Equal timestamp
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_d_equal",
+              amount: 5000,
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_d_equal_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("STALE_EVENT_DROPPED");
+    });
+
+    it("refund created arriving after processed is dropped and does not overwrite terminal processed status", async () => {
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_d_ref_proc",
+        tenantId: "tenant_d",
+        amountPaise: 5000,
+        currency: "INR",
+        status: "CAPTURED",
+        refundStatus: "processed",
+        lastProviderEventAt: new Date(1700000100 * 1000)
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "refund.created",
+        created_at: 1700000200,
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_d_ref_proc",
+              amount: 5000,
+              currency: "INR"
+            }
+          },
+          refund: {
+            entity: {
+              id: "rfnd_001",
+              status: "created"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_d_ref_created_late")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("STALE_EVENT_DROPPED");
+
+      const paymentInStore = getInMemoryPayment("pay_d_ref_proc");
+      expect(paymentInStore.refundStatus).toBe("processed");
+    });
+
+    it("refund failed arriving after processed is dropped and never overwrites terminal processed refund", async () => {
+      seedInMemoryPayment({
+        gatewayPaymentId: "pay_d_ref_term",
+        tenantId: "tenant_d",
+        amountPaise: 5000,
+        currency: "INR",
+        status: "CAPTURED",
+        refundStatus: "processed",
+        lastProviderEventAt: new Date(1700000100 * 1000)
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "refund.failed",
+        created_at: 1700000200,
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_d_ref_term",
+              amount: 5000,
+              currency: "INR"
+            }
+          },
+          refund: {
+            entity: {
+              id: "rfnd_002",
+              status: "failed"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_d_ref_failed_late")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe("STALE_EVENT_DROPPED");
+
+      const paymentInStore = getInMemoryPayment("pay_d_ref_term");
+      expect(paymentInStore.refundStatus).toBe("processed");
+    });
+  });
+
+  describe("7. ITEM g — PAID Only After Amount and Currency Match", () => {
+    it("exact match mutates order to PAID and sets case to ORDER_PAID", async () => {
+      seedInMemoryOrder({
+        merchantOrderId: "order_g_exact",
+        tenantId: "tenant_g",
+        amountPaise: 50000,
+        currency: "INR",
+        status: "CREATED"
+      });
+      seedInMemoryCase({
+        caseId: "CASE_G_EXACT",
+        tenantId: "tenant_g",
+        merchantOrderId: "order_g_exact",
+        gatewayPaymentId: "pay_g_exact",
+        captureStatus: "CAPTURE_NONE",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_g_exact",
+              order_id: "order_g_exact",
+              amount: 50000,
+              amount_captured: 50000,
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_g_exact_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+
+      const orderAfter = getInMemoryOrder("order_g_exact");
+      expect(orderAfter.status).toBe("PAID");
+
+      const caseAfter = getInMemoryCase("CASE_G_EXACT");
+      expect(caseAfter.orderStatus).toBe("ORDER_PAID");
+      expect(caseAfter.resolutionCaseStatus).not.toBe("CASE_SAFE_HOLD");
+    });
+
+    it("1 paise off does NOT mutate order, safe-holds case with AMOUNT_CURRENCY_MISMATCH", async () => {
+      seedInMemoryOrder({
+        merchantOrderId: "order_g_1off",
+        tenantId: "tenant_g",
+        amountPaise: 50000,
+        currency: "INR",
+        status: "CREATED"
+      });
+      seedInMemoryCase({
+        caseId: "CASE_G_1OFF",
+        tenantId: "tenant_g",
+        merchantOrderId: "order_g_1off",
+        gatewayPaymentId: "pay_g_1off",
+        captureStatus: "CAPTURE_NONE",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_g_1off",
+              order_id: "order_g_1off",
+              amount: 50001,
+              amount_captured: 50001, // 1 paise off
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_g_1off_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+
+      const orderAfter = getInMemoryOrder("order_g_1off");
+      expect(orderAfter.status).toBe("CREATED"); // Unmutated!
+
+      const caseAfter = getInMemoryCase("CASE_G_1OFF");
+      expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+      expect(caseAfter.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
+    });
+
+    it("currency mismatch does NOT mutate order, safe-holds case with AMOUNT_CURRENCY_MISMATCH", async () => {
+      seedInMemoryOrder({
+        merchantOrderId: "order_g_curr",
+        tenantId: "tenant_g",
+        amountPaise: 50000,
+        currency: "INR",
+        status: "CREATED"
+      });
+      seedInMemoryCase({
+        caseId: "CASE_G_CURR",
+        tenantId: "tenant_g",
+        merchantOrderId: "order_g_curr",
+        gatewayPaymentId: "pay_g_curr",
+        captureStatus: "CAPTURE_NONE",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_g_curr",
+              order_id: "order_g_curr",
+              amount: 50000,
+              amount_captured: 50000,
+              currency: "USD" // Currency mismatch!
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_g_curr_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+
+      const orderAfter = getInMemoryOrder("order_g_curr");
+      expect(orderAfter.status).toBe("CREATED"); // Unmutated!
+
+      const caseAfter = getInMemoryCase("CASE_G_CURR");
+      expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+      expect(caseAfter.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
+    });
+
+    it("missing captured amount does NOT mutate order, safe-holds case with INSUFFICIENT_EVIDENCE", async () => {
+      seedInMemoryOrder({
+        merchantOrderId: "order_g_missing",
+        tenantId: "tenant_g",
+        amountPaise: 50000,
+        currency: "INR",
+        status: "CREATED"
+      });
+      seedInMemoryCase({
+        caseId: "CASE_G_MISSING",
+        tenantId: "tenant_g",
+        merchantOrderId: "order_g_missing",
+        gatewayPaymentId: "pay_g_missing",
+        captureStatus: "CAPTURE_NONE",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_g_missing",
+              order_id: "order_g_missing",
+              amount: 50000,
+              // amount_captured intentionally absent: nominal amount must not be assumed!
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_g_missing_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+
+      const orderAfter = getInMemoryOrder("order_g_missing");
+      expect(orderAfter.status).toBe("CREATED"); // Unmutated!
+
+      const caseAfter = getInMemoryCase("CASE_G_MISSING");
+      expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+      expect(caseAfter.safeHoldCode).toBe("INSUFFICIENT_EVIDENCE");
+    });
+
+    it("partial capture does NOT mark order PAID, safe-holds case with AMOUNT_CURRENCY_MISMATCH", async () => {
+      seedInMemoryOrder({
+        merchantOrderId: "order_g_partial",
+        tenantId: "tenant_g",
+        amountPaise: 50000,
+        currency: "INR",
+        status: "CREATED"
+      });
+      seedInMemoryCase({
+        caseId: "CASE_G_PARTIAL",
+        tenantId: "tenant_g",
+        merchantOrderId: "order_g_partial",
+        gatewayPaymentId: "pay_g_partial",
+        captureStatus: "CAPTURE_NONE",
+        resolutionCaseStatus: "CASE_DETECTED"
+      });
+
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: "acc_rzp",
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: "pay_g_partial",
+              order_id: "order_g_partial",
+              amount: 50000,
+              amount_captured: 30000, // Partial capture!
+              currency: "INR"
+            }
+          }
+        }
+      });
+
+      const res = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signPayload(rawBody))
+        .set("X-Razorpay-Event-Id", "evt_g_partial_01")
+        .send(rawBody);
+
+      expect(res.status).toBe(200);
+
+      const orderAfter = getInMemoryOrder("order_g_partial");
+      expect(orderAfter.status).toBe("CREATED"); // Unmutated!
+
+      const caseAfter = getInMemoryCase("CASE_G_PARTIAL");
+      expect(caseAfter.resolutionCaseStatus).toBe("CASE_SAFE_HOLD");
+      expect(caseAfter.safeHoldCode).toBe("AMOUNT_CURRENCY_MISMATCH");
     });
   });
 });

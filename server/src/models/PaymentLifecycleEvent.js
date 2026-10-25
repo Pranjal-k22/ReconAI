@@ -143,6 +143,11 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    providerEventAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
     sourceObservedAt: {
       type: Date,
       default: null

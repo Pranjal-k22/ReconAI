@@ -223,13 +223,28 @@ To guarantee data integrity, the state machine strictly enforces **Monotonic Pro
 | `resolutionCaseState: CASE_ACTION_IN_PROGRESS` | `CASE_VERIFYING_OUTCOME`, `CASE_SAFE_HOLD` | Provider acknowledges action dispatch OR network error occurs. |
 | `resolutionCaseState: CASE_VERIFYING_OUTCOME` | `CASE_RESOLVED`, `CASE_SAFE_HOLD` | Provider authoritative verification completes. |
 
-### 4.2 Strictly Prohibited Transitions (Anti-Patterns)
-The following state regressions are rejected with a `StateTransitionInvariantError`:
-1. **Regressing Final Capture**: `CAPTURE_CAPTURED` $\rightarrow$ `CAPTURE_FAILED` or `CAPTURE_NONE` is strictly forbidden. Once captured, only refunds or chargebacks can alter fund balances.
-2. **Regressing Final Settlement**: `SETTLEMENT_SETTLED` $\rightarrow$ `SETTLEMENT_PENDING` is strictly forbidden.
-3. **Reverting Confirmed Refund**: `REFUND_CONFIRMED` $\rightarrow$ `REFUND_PENDING` or `REFUND_NONE` on arrival of stale or delayed webhooks.
-4. **Premature Resolution**: `resolutionCaseState` transitioning to `CASE_RESOLVED` while any sub-state is in `REFUND_INITIATED`, `AUTH_PENDING`, or `SETTLEMENT_PENDING` without verified closure.
-5. **Direct LLM Transition**: No state transition may occur without a cryptographic webhook event, server GET verification response, or policy engine signed execution token.
+### 4.2 Strictly Prohibited Transitions & Terminality Rules
+1. **FAILED is NOT Terminal for GatewayPayment**: While `CAPTURE_CAPTURED` is non-regressible, `CAPTURE_FAILED` is non-terminal. In asynchronous payment networks, delayed bank capture confirmations can legitimately overturn an apparent initial failure. Arrival of late capture transitions the payment to `CAPTURED`, marks `isLateCapture: true`, and places the case into `CASE_SAFE_HOLD` under `safeHoldCode: "LATE_CAPTURE_AFTER_FAILURE"`.
+2. **Regressing Final Capture**: `CAPTURE_CAPTURED` $\rightarrow$ `CAPTURE_FAILED` or `CAPTURE_NONE` is strictly forbidden. Once captured, only refunds or chargebacks can alter fund balances.
+3. **Regressing Final Settlement**: `SETTLEMENT_SETTLED` $\rightarrow$ `SETTLEMENT_PENDING` is strictly forbidden.
+4. **Reverting Terminal Refund**: `REFUND_CONFIRMED` or `REFUND_FAILED` $\rightarrow$ `REFUND_PENDING`, `REFUND_INITIATED`, or `REFUND_NONE` is strictly forbidden. Both `processed` and `failed` refund states are terminal and never overwrite each other.
+5. **Premature Resolution**: `resolutionCaseState` transitioning to `CASE_RESOLVED` while any sub-state is in `REFUND_INITIATED`, `AUTH_PENDING`, or `SETTLEMENT_PENDING` without verified closure.
+6. **Direct LLM Transition**: No state transition may occur without a cryptographic webhook event, server GET verification response, or policy engine signed execution token.
+7. **Order Mutation Guard (Item g)**: An order is marked `PAID` ONLY when `capturedAmountPaise === order.amountPaise` (exact integer paise match) AND currency matches. If captured amount evidence is missing or mismatched, the order is NOT mutated, and the case enters `CASE_SAFE_HOLD` with `INSUFFICIENT_EVIDENCE` or `AMOUNT_CURRENCY_MISMATCH`.
+
+### 4.3 Granular Safe-Hold Codes (Eliminating Generic ADMIN_HOLD Writes)
+All safe-hold writes require explicit, specific categorization to ensure deterministic auditability:
+- `LATE_CAPTURE_CANCELLED_ORDER`: Captured payment arrived for an already cancelled order.
+- `LATE_CAPTURE_AFTER_FAILURE`: Captured payment arrived after initial failure was recorded.
+- `MONITORING_RETRY_EXHAUSTED`: Background poll retries reached terminal ceiling without definitive resolution.
+- `PARTIAL_CAPTURE`: Captured amount is less than nominal order total.
+- `REFUND_FAILED`: Provider refund was rejected by bank or gateway.
+- `CONFLICTING_RECORDS`: Divergence between multiple provider data points or ledgers.
+- `AMOUNT_CURRENCY_MISMATCH`: Captured amount or currency differs from merchant order.
+- `INSUFFICIENT_EVIDENCE`: Payment captured evidence missing amount data.
+- `CUSTOMER_DISPUTE_CLAIM`: Customer reported debit discrepancy.
+- `GENERAL_SAFE_HOLD`: General fallback safe hold where no narrower category applies.
+*(Note: `ADMIN_HOLD` is strictly deprecated and retained in schema enums purely for reading legacy records).*
 
 ---
 
@@ -237,24 +252,13 @@ The following state regressions are rejected with a `StateTransitionInvariantErr
 
 In internet payment architectures, webhooks often arrive out of order (e.g., `refund.processed` arrives before `refund.created`, or a delayed `payment.authorized` arrives after `payment.captured`).
 
-```text
-Incoming Webhook Event
-         ↓
-Check IngestedWebhookEvent (Duplicate ID?)
-    ├── YES → Return HTTP 200 (Acknowledge & Drop)
-    └── NO  → Record Event ID in MongoDB
-         ↓
-Evaluate State Monotonicity & Event Timestamp:
-    ├── If Event Timestamp < Last Applied State Timestamp:
-    │     Drop stale event payload, log WARN audit event.
-    └── If Event indicates advanced state (e.g. CAPTURED when current is NONE):
-          Query Server-Side Authoritative GET /v1/payments/:id
-          Reconstruct full chronological history from provider truth.
-          Apply state transitions monotonically.
-```
-
-### Deterministic Event Precedence Rules:
-1. **Cryptographic Gateway Webhook** > Client-side Redirect Payload.
-2. **Server-Side GET Query** > Asynchronous Webhook Stream.
-3. **Bank UTR Settlement Record** > Estimated Settlement Schedule.
-4. **Older Timestamps Never Overwrite Newer Timestamps**.
+### Deterministic Event Precedence & Ordering Rules:
+1. **Same-Rank Provider Timestamp Ordering (Item d)**:
+   For events with the same status rank, the transition is applied ONLY when the event's `providerEventAt` is strictly newer than the gateway record's `lastProviderEventAt`. If `providerEventAt <= lastProviderEventAt`, the event is recorded as immutable evidence but dropped from mutating state, emitting a `STALE_EVENT_DROPPED` audit entry.
+2. **Deterministic Refund State Ordering**:
+   `created (rank 1) < pending (rank 2) < processed (rank 3) / failed (rank 3)`.
+   Terminal states `processed` and `failed` never overwrite each other. Any earlier-rank event arriving after a higher or terminal rank is dropped with `STALE_EVENT_DROPPED`.
+3. **Cryptographic Gateway Webhook** > Client-side Redirect Payload.
+4. **Server-Side GET Query** > Asynchronous Webhook Stream.
+5. **Bank UTR Settlement Record** > Estimated Settlement Schedule.
+6. **Older Timestamps Never Overwrite Newer Timestamps**.

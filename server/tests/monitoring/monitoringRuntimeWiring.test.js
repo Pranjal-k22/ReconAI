@@ -7,7 +7,7 @@ import {
   enqueueUnmonitoredPendingPayments,
   resetInMemoryMonitoringStore
 } from "../../src/services/monitoring/paymentMonitoringService.js";
-import { ingestRazorpayWebhook } from "../../src/services/webhook/webhookService.js";
+import { ingestRazorpayWebhook, seedInMemoryPayment } from "../../src/services/webhook/webhookService.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { PaymentMonitoringTask } from "../../src/models/PaymentMonitoringTask.js";
 
@@ -83,6 +83,15 @@ describe("Payment Monitoring Runtime Wiring & Task Lifecycle", () => {
 
     it("creates durable monitoring task upon receiving non-terminal payment.authorized event", async () => {
       const paymentId = `pay_auth_${Date.now()}`;
+      seedInMemoryPayment({
+        tenantId: "tenant_wiring_1",
+        gatewayPaymentId: paymentId,
+        merchantOrderId: `order_${paymentId}`,
+        status: "AUTHORIZED",
+        amountPaise: 50000,
+        currency: "INR"
+      });
+
       const payload = {
         entity: "event",
         account_id: "acc_wiring_1",
@@ -120,6 +129,15 @@ describe("Payment Monitoring Runtime Wiring & Task Lifecycle", () => {
 
     it("completes active monitoring task when terminal payment.captured event arrives", async () => {
       const paymentId = `pay_term_${Date.now()}`;
+      seedInMemoryPayment({
+        tenantId: "tenant_wiring_2",
+        gatewayPaymentId: paymentId,
+        merchantOrderId: `order_${paymentId}`,
+        status: "AUTHORIZED",
+        amountPaise: 75000,
+        currency: "INR"
+      });
+
       const payload = {
         entity: "event",
         account_id: "acc_wiring_2",
