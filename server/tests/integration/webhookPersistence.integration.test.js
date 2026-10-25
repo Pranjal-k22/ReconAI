@@ -8,7 +8,11 @@ import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { AuditLog } from "../../src/models/AuditLog.js";
-import { ingestRazorpayWebhook, isValidReplayHash } from "../../src/services/webhook/webhookService.js";
+import {
+  ingestRazorpayWebhook,
+  isValidReplayHash,
+  reprocessQuarantinedWebhookEvents
+} from "../../src/services/webhook/webhookService.js";
 import { migratePaymentLifecycleIndexes } from "../../scripts/migrateIndexes.js";
 
 /**
@@ -1286,5 +1290,271 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
         } catch {}
       }
     }
+  });
+
+  it("15. audit failure mid-webhook returns 503, provider retry applies mutation once, further retry is duplicate, no partial state", async () => {
+    const tenantId = "sh_integ_audit_fail";
+    const paymentId = `pay_integ_audit_fail_${Date.now()}`;
+    const orderId = `order_integ_audit_fail_${Date.now()}`;
+    const testEventId = `evt_integ_audit_fail_${Date.now()}`;
+    const accountId = "acc_integ_audit_01";
+    const deduplicationKey = `RAZORPAY:${accountId}:${testEventId}`;
+
+    trackedDeduplicationKeys.add(deduplicationKey);
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+
+    // Pre-seed order and gateway payment in Mongo
+    await MerchantOrder.create({
+      tenantId,
+      merchantOrderId: orderId,
+      amountPaise: 65000,
+      currency: "INR",
+      status: "PENDING"
+    });
+
+    await GatewayPayment.create({
+      tenantId,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 65000,
+      currency: "INR"
+    });
+
+    const payload = {
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 65000,
+            currency: "INR",
+            status: "captured",
+            captured: true,
+            amount_refunded: 0
+          }
+        }
+      },
+      created_at: Math.floor(Date.now() / 1000)
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const signature = signBody(rawBody);
+
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+
+    // Force an audit failure mid-webhook by having AuditLog.create throw
+    const originalAuditCreate = AuditLog.create;
+    AuditLog.create = async () => {
+      const err = new Error("Database disk full / audit collection write rejected");
+      err.code = "AUDIT_WRITE_FAILED";
+      throw err;
+    };
+
+    try {
+      // Step 1: Send webhook during audit failure -> Expect 503 Service Unavailable
+      const res1 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", testEventId)
+        .send(rawBody);
+
+      expect(res1.status).toBe(503);
+
+      // Verify no partial state in MongoDB
+      const storedEvent = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+      expect(storedEvent).toBeTruthy();
+      expect(storedEvent.processingStatus).toBe("RECEIVED"); // NOT PROCESSED!
+
+      const orderAfterFail = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+      expect(orderAfterFail.status).toBe("PENDING"); // NOT PAID!
+
+      const paymentAfterFail = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+      expect(paymentAfterFail.status).toBe("AUTHORIZED"); // NOT CAPTURED!
+
+      // Step 2: Restore audit logging and NODE_ENV
+      AuditLog.create = originalAuditCreate;
+      process.env.NODE_ENV = prevEnv;
+
+      // Wait beyond the SHORT_TIMEOUT_MS (500ms) so stored RECEIVED event qualifies for retry
+      await new Promise((resolve) => setTimeout(resolve, 550));
+
+      // Provider retry with the exact same event
+      const res2 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", testEventId)
+        .send(rawBody);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.status).toBe("ACCEPTED");
+
+      // Verify mutations applied exactly once
+      const orderAfterRetry = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+      expect(orderAfterRetry.status).toBe("PAID");
+
+      const paymentAfterRetry = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+      expect(paymentAfterRetry.status).toBe("CAPTURED");
+
+      const eventAfterRetry = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+      expect(eventAfterRetry.processingStatus).toBe("PROCESSED");
+
+      const auditEntry = await AuditLog.findOne({
+        action: "WEBHOOK_INGESTED",
+        "metadata.deduplicationKey": deduplicationKey
+      }).lean();
+      expect(auditEntry).toBeTruthy();
+
+      // Step 3: A further retry is a no-op duplicate
+      const res3 = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", testEventId)
+        .send(rawBody);
+
+      expect(res3.status).toBe(200);
+      expect(res3.body.data.status).toBe("DUPLICATE_ACKNOWLEDGED");
+      expect(res3.body.data.isDuplicate).toBe(true);
+
+      // Verify still exactly 1 event and order remains PAID
+      const finalCount = await PaymentLifecycleEvent.countDocuments({ deduplicationKey });
+      expect(finalCount).toBe(1);
+      const finalOrder = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+      expect(finalOrder.status).toBe("PAID");
+    } finally {
+      AuditLog.create = originalAuditCreate;
+      process.env.NODE_ENV = prevEnv;
+    }
+  });
+
+  it("16. unmapped event arrives before payment record, mapping appears, event is applied exactly once without payload notes", async () => {
+    const paymentId = `pay_integ_unmapped_${Date.now()}`;
+    const orderId = `order_integ_unmapped_${Date.now()}`;
+    const testEventId = `evt_integ_unmapped_${Date.now()}`;
+    const accountId = "acc_integ_unmapped_01";
+    const deduplicationKey = `RAZORPAY:${accountId}:${testEventId}`;
+    const authoritativeTenant = "sh_authoritative_merchant_001";
+    const maliciousNotesTenant = "sh_attacker_spoofed_tenant_999";
+
+    trackedDeduplicationKeys.add(deduplicationKey);
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+
+    // Event arrives for payment not yet in DB; payload notes claim attacker tenant
+    const payload = {
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 72000,
+            currency: "INR",
+            status: "captured",
+            captured: true,
+            amount_refunded: 0,
+            notes: { tenantId: maliciousNotesTenant }
+          }
+        }
+      },
+      created_at: Math.floor(Date.now() / 1000)
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const signature = signBody(rawBody);
+
+    // Ingest event before any DB record exists
+    const res1 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    expect(res1.status).toBe(200);
+    expect(res1.body.data.status).toBe("QUARANTINED_UNRESOLVED_TENANT");
+    expect(res1.body.data.reason).toBe("UNMAPPED_TENANT");
+
+    // Verify stored event in Mongo is quarantined with unassigned tenant, NEVER attacker tenant
+    const quarantinedDoc = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+    expect(quarantinedDoc).toBeTruthy();
+    expect(quarantinedDoc.processingStatus).toBe("QUARANTINED");
+    expect(quarantinedDoc.tenantId).toBe("unassigned_provider_quarantine");
+    expect(quarantinedDoc.tenantId).not.toBe(maliciousNotesTenant);
+
+    // Now server-side mapping appears (e.g. checkout order sync or backoffice creation)
+    await GatewayPayment.create({
+      tenantId: authoritativeTenant,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 72000,
+      currency: "INR"
+    });
+
+    await MerchantOrder.create({
+      tenantId: authoritativeTenant,
+      merchantOrderId: orderId,
+      amountPaise: 72000,
+      currency: "INR",
+      status: "PENDING"
+    });
+
+    // Trigger quarantined event recovery using authoritative server tenant
+    const recoveryResult = await reprocessQuarantinedWebhookEvents({
+      tenantId: authoritativeTenant,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId
+    });
+
+    expect(recoveryResult.reprocessedCount).toBe(1);
+    expect(recoveryResult.results[0].status).toBe("REPROCESSED");
+    expect(recoveryResult.results[0].tenantId).toBe(authoritativeTenant);
+
+    // Verify event is now PROCESSED and bound to authoritative tenant
+    const processedEvent = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+    expect(processedEvent.processingStatus).toBe("PROCESSED");
+    expect(processedEvent.tenantId).toBe(authoritativeTenant);
+
+    // Verify order and payment mutations applied under authoritative tenant
+    const updatedPayment = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(updatedPayment.status).toBe("CAPTURED");
+    expect(updatedPayment.tenantId).toBe(authoritativeTenant);
+
+    const updatedOrder = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+    expect(updatedOrder.status).toBe("PAID");
+    expect(updatedOrder.tenantId).toBe(authoritativeTenant);
+
+    // Provider retry of webhook after mapping and recovery -> DUPLICATE_ACKNOWLEDGED
+    const res2 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    expect(res2.status).toBe(200);
+    expect(res2.body.data.status).toBe("DUPLICATE_ACKNOWLEDGED");
+    expect(res2.body.data.isDuplicate).toBe(true);
+
+    // Assert that no records were ever created or mutated under maliciousNotesTenant
+    const attackerOrder = await MerchantOrder.findOne({ tenantId: maliciousNotesTenant }).lean();
+    expect(attackerOrder).toBeNull();
+    const attackerPayment = await GatewayPayment.findOne({ tenantId: maliciousNotesTenant }).lean();
+    expect(attackerPayment).toBeNull();
   });
 });

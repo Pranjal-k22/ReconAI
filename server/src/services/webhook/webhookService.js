@@ -266,6 +266,8 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
   }
 
   // 6. Durable Deduplication & Anomaly Detection (Event-ID + Raw Body Hash)
+  let existingReceivedEvent = null;
+
   if (isMongoConnected) {
     // Check A: Has this exact event ID been ingested?
     const existingByEventId = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
@@ -294,51 +296,82 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
         };
       }
 
-      // Legitimate identical retry: duplicate acknowledged
-      await createAuditEvent({
-        actorType: "RAZORPAY_ADAPTER",
-        actorId: "webhook-ingress",
-        action: "WEBHOOK_DUPLICATE_SKIPPED",
-        entityType: "PaymentLifecycleEvent",
-        entityId: existingByEventId.eventId,
-        metadata: { deduplicationKey, sourceEventId }
-      }).catch(() => {});
+      const isProcessed =
+        existingByEventId.processingStatus === "PROCESSED" ||
+        existingByEventId.provenance?.processingStatus === "PROCESSED" ||
+        existingByEventId.provenance?.processingStatus === "ACCEPTED";
 
-      return {
-        success: true,
-        status: "DUPLICATE_ACKNOWLEDGED",
-        isDuplicate: true,
-        eventId: existingByEventId.eventId
-      };
-    }
-
-    // Check B: Has this exact raw body hash already been processed for this provider account?
-    // (Protects against replays with modified/different event-ID headers)
-    if (isValidReplayHash(accountBodyHash)) {
-      const existingByBody = await PaymentLifecycleEvent.findOne({
-        accountBodyHash: accountBodyHash.trim()
-      }).lean();
-      if (existingByBody) {
+      if (isProcessed) {
+        // Legitimate identical retry: duplicate acknowledged
         await createAuditEvent({
           actorType: "RAZORPAY_ADAPTER",
           actorId: "webhook-ingress",
           action: "WEBHOOK_DUPLICATE_SKIPPED",
           entityType: "PaymentLifecycleEvent",
-          entityId: existingByBody.eventId,
-          metadata: {
-            reason: "RAW_BODY_REPLAY_DIFFERENT_EVENT_ID",
-            originalEventId: existingByBody.sourceEventId,
-            replayEventId: sourceEventId,
-            accountBodyHash
-          }
+          entityId: existingByEventId.eventId,
+          metadata: { deduplicationKey, sourceEventId }
         }).catch(() => {});
 
         return {
           success: true,
           status: "DUPLICATE_ACKNOWLEDGED",
           isDuplicate: true,
-          eventId: existingByBody.eventId
+          eventId: existingByEventId.eventId
         };
+      }
+
+      // If stored event is in RECEIVED state:
+      const eventAgeMs = Date.now() - new Date(existingByEventId.ingestedAt || existingByEventId.createdAt || 0).getTime();
+      const SHORT_TIMEOUT_MS = 500;
+      if (eventAgeMs >= SHORT_TIMEOUT_MS) {
+        existingReceivedEvent = existingByEventId;
+      } else {
+        throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
+      }
+    }
+
+    // Check B: Has this exact raw body hash already been processed for this provider account?
+    // (Protects against replays with modified/different event-ID headers)
+    if (!existingReceivedEvent && isValidReplayHash(accountBodyHash)) {
+      const existingByBody = await PaymentLifecycleEvent.findOne({
+        accountBodyHash: accountBodyHash.trim()
+      }).lean();
+      if (existingByBody) {
+        const isProcessed =
+          existingByBody.processingStatus === "PROCESSED" ||
+          existingByBody.provenance?.processingStatus === "PROCESSED" ||
+          existingByBody.provenance?.processingStatus === "ACCEPTED";
+
+        if (isProcessed) {
+          await createAuditEvent({
+            actorType: "RAZORPAY_ADAPTER",
+            actorId: "webhook-ingress",
+            action: "WEBHOOK_DUPLICATE_SKIPPED",
+            entityType: "PaymentLifecycleEvent",
+            entityId: existingByBody.eventId,
+            metadata: {
+              reason: "RAW_BODY_REPLAY_DIFFERENT_EVENT_ID",
+              originalEventId: existingByBody.sourceEventId,
+              replayEventId: sourceEventId,
+              accountBodyHash
+            }
+          }).catch(() => {});
+
+          return {
+            success: true,
+            status: "DUPLICATE_ACKNOWLEDGED",
+            isDuplicate: true,
+            eventId: existingByBody.eventId
+          };
+        }
+
+        const eventAgeMs = Date.now() - new Date(existingByBody.ingestedAt || existingByBody.createdAt || 0).getTime();
+        const SHORT_TIMEOUT_MS = 500;
+        if (eventAgeMs >= SHORT_TIMEOUT_MS) {
+          existingReceivedEvent = existingByBody;
+        } else {
+          throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
+        }
       }
     }
   } else {
@@ -487,6 +520,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       providerOccurredAt,
       sourceObservedAt: providerOccurredAt,
       ingestedAt: new Date(),
+      processingStatus: "QUARANTINED",
       normalizedPayload: sanitizeWebhookPayload(eventEnvelope.payload),
       payloadFingerprint,
       provenance: {
@@ -548,6 +582,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       providerOccurredAt,
       sourceObservedAt: providerOccurredAt,
       ingestedAt: new Date(),
+      processingStatus: "QUARANTINED",
       normalizedPayload: sanitizeWebhookPayload(eventEnvelope.payload),
       payloadFingerprint,
       provenance: {
@@ -610,6 +645,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       providerOccurredAt,
       sourceObservedAt: providerOccurredAt,
       ingestedAt: new Date(),
+      processingStatus: "QUARANTINED",
       normalizedPayload: sanitizeWebhookPayload(eventEnvelope.payload),
       payloadFingerprint,
       provenance: {
@@ -676,6 +712,7 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     providerOccurredAt,
     sourceObservedAt: providerOccurredAt,
     ingestedAt: new Date(),
+    processingStatus: "RECEIVED",
     normalizedPayload: sanitizeWebhookPayload(eventEnvelope.payload),
     payloadFingerprint,
     schemaVersion: "1.0.0",
@@ -685,13 +722,15 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       deliveryAttempt: headers["x-razorpay-delivery-attempt"] || 1,
       signatureVerified: true,
       hasHeaderEventId: !!headerEventId,
-      processingStatus: processingOutcome,
+      processingStatus: "RECEIVED",
       conflictFlag
     }
   };
 
   let lifecycleEvent = null;
-  if (isMongoConnected) {
+  if (existingReceivedEvent) {
+    lifecycleEvent = existingReceivedEvent;
+  } else if (isMongoConnected) {
     try {
       lifecycleEvent = await PaymentLifecycleEvent.create(eventDoc);
     } catch (err) {
@@ -700,9 +739,9 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
         if (isValidReplayHash(accountBodyHash)) {
           queryOr.push({ accountBodyHash: accountBodyHash.trim() });
         }
-        const existing = await PaymentLifecycleEvent.findOne({
+        let existing = await PaymentLifecycleEvent.findOne({
           $or: queryOr
-        }).lean();
+        });
 
         if (existing && existing.payloadFingerprint !== payloadFingerprint) {
           await createAuditEvent({
@@ -727,33 +766,133 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
           };
         }
 
-        await createAuditEvent({
-          actorType: "RAZORPAY_ADAPTER",
-          actorId: "webhook-ingress",
-          action: "WEBHOOK_DUPLICATE_SKIPPED",
-          entityType: "PaymentLifecycleEvent",
-          entityId: existing?.eventId || deduplicationKey,
-          metadata: { deduplicationKey, sourceEventId, accountBodyHash }
-        }).catch(() => {});
+        let isProcessed =
+          existing?.processingStatus === "PROCESSED" ||
+          existing?.provenance?.processingStatus === "PROCESSED" ||
+          existing?.provenance?.processingStatus === "ACCEPTED";
 
+        if (!isProcessed) {
+          // If in RECEIVED, wait briefly up to short timeout for concurrent in-flight winner to complete
+          const pollStart = Date.now();
+          while (Date.now() - pollStart < 800) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            const recheck = await PaymentLifecycleEvent.findOne({ $or: queryOr }).lean();
+            if (
+              recheck?.processingStatus === "PROCESSED" ||
+              recheck?.provenance?.processingStatus === "PROCESSED" ||
+              recheck?.provenance?.processingStatus === "ACCEPTED"
+            ) {
+              existing = recheck;
+              isProcessed = true;
+              break;
+            }
+          }
+        }
+
+        if (isProcessed) {
+          await createAuditEvent({
+            actorType: "RAZORPAY_ADAPTER",
+            actorId: "webhook-ingress",
+            action: "WEBHOOK_DUPLICATE_SKIPPED",
+            entityType: "PaymentLifecycleEvent",
+            entityId: existing?.eventId || deduplicationKey,
+            metadata: { deduplicationKey, sourceEventId, accountBodyHash }
+          }).catch(() => {});
+
+          return {
+            success: true,
+            status: "DUPLICATE_ACKNOWLEDGED",
+            isDuplicate: true,
+            eventId: existing?.eventId || null
+          };
+        }
+
+        // Stored event in RECEIVED: check timeout (older than short timeout is re-processed exactly once)
+        const eventAgeMs = Date.now() - new Date(existing?.ingestedAt || existing?.createdAt || 0).getTime();
+        const SHORT_TIMEOUT_MS = 500;
+        if (eventAgeMs >= SHORT_TIMEOUT_MS) {
+          lifecycleEvent = existing;
+        } else {
+          throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
+        }
+      } else {
+        throw err;
+      }
+    }
+  } else if (existingReceivedEvent) {
+    lifecycleEvent = existingReceivedEvent;
+  } else {
+    let existing = inMemoryEvents.get(deduplicationKey) || (isValidReplayHash(accountBodyHash) ? inMemoryEvents.get(inMemoryBodyHashes.get(accountBodyHash.trim())) : null);
+    if (existing) {
+      if (existing.payloadFingerprint !== payloadFingerprint) {
+        return {
+          success: true,
+          status: "QUARANTINED",
+          reason: "EVENT_ID_PAYLOAD_MISMATCH",
+          eventId: existing.eventId
+        };
+      }
+      const isProcessed =
+        existing.processingStatus === "PROCESSED" ||
+        existing.provenance?.processingStatus === "PROCESSED" ||
+        existing.provenance?.processingStatus === "ACCEPTED";
+
+      if (isProcessed) {
         return {
           success: true,
           status: "DUPLICATE_ACKNOWLEDGED",
           isDuplicate: true,
-          eventId: existing?.eventId || null
+          eventId: existing.eventId
         };
       }
-      throw err;
+
+      const eventAgeMs = Date.now() - new Date(existing.ingestedAt || 0).getTime();
+      if (eventAgeMs >= 500) {
+        lifecycleEvent = existing;
+      } else {
+        throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
+      }
+    } else {
+      inMemoryEvents.set(deduplicationKey, eventDoc);
+      if (isValidReplayHash(accountBodyHash)) {
+        inMemoryBodyHashes.set(accountBodyHash.trim(), deduplicationKey);
+      }
+      lifecycleEvent = eventDoc;
     }
-  } else {
-    inMemoryEvents.set(deduplicationKey, eventDoc);
-    if (isValidReplayHash(accountBodyHash)) {
-      inMemoryBodyHashes.set(accountBodyHash.trim(), deduplicationKey);
-    }
-    lifecycleEvent = eventDoc;
   }
 
-  // 9. Canonical State Progression & Out-of-Order Safety
+  // 9. Ingest Audit Trail (Fail closed: must succeed before mutating state; unhandled errors throw 503)
+  try {
+    await createAuditEvent({
+      actorType: "RAZORPAY_ADAPTER",
+      actorId: "webhook-ingress",
+      action: isUnmatchedTenant || isUnsupportedEventType ? "WEBHOOK_QUARANTINED" : "WEBHOOK_INGESTED",
+      entityType: "PaymentLifecycleEvent",
+      entityId: lifecycleEvent.eventId,
+      metadata: {
+        eventName,
+        normalizedEventType,
+        deduplicationKey,
+        accountBodyHash,
+        tenantId: resolvedTenantId,
+        gatewayPaymentId,
+        merchantOrderId,
+        processingOutcome,
+        conflictFlag,
+        fallbackProviderEventAt: isMissingProviderEventAt
+      }
+    });
+  } catch (auditErr) {
+    if (isMongoConnected && lifecycleEvent?._id) {
+      await PaymentLifecycleEvent.updateOne(
+        { _id: lifecycleEvent._id },
+        { $set: { processingStatus: "RECEIVED", "provenance.processingStatus": "RECEIVED" } }
+      ).catch(() => {});
+    }
+    throw AppError.serviceUnavailable(`Webhook audit logging failed: ${auditErr.message}`, 503);
+  }
+
+  // 10. Canonical State Progression & Out-of-Order Safety
   if (!isUnmatchedTenant && !isUnsupportedEventType) {
     const isRefundEvent = eventName.startsWith("refund.");
     const newRefundStatus = isRefundEvent
@@ -972,6 +1111,8 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       let capturedAmountEvidence = null;
       if (typeof paymentEntity.amount_captured === "number") {
         capturedAmountEvidence = paymentEntity.amount_captured;
+      } else if (paymentEntity.captured === true && typeof paymentEntity.amount === "number") {
+        capturedAmountEvidence = paymentEntity.amount;
       } else if (typeof eventEnvelope.payload?.order?.entity?.amount_paid === "number") {
         capturedAmountEvidence = eventEnvelope.payload.order.entity.amount_paid;
       }
@@ -1147,26 +1288,23 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     }
   }
 
-  // 10. Audit Event Logging (Fail closed per Item a: unhandled errors propagate to return 5xx)
-  await createAuditEvent({
-    actorType: "RAZORPAY_ADAPTER",
-    actorId: "webhook-ingress",
-    action: isUnmatchedTenant || isUnsupportedEventType ? "WEBHOOK_QUARANTINED" : "WEBHOOK_INGESTED",
-    entityType: "PaymentLifecycleEvent",
-    entityId: lifecycleEvent.eventId,
-    metadata: {
-      eventName,
-      normalizedEventType,
-      deduplicationKey,
-      accountBodyHash,
-      tenantId: resolvedTenantId,
-      gatewayPaymentId,
-      merchantOrderId,
-      processingOutcome,
-      conflictFlag,
-      fallbackProviderEventAt: isMissingProviderEventAt
+  // Mark event as PROCESSED
+  if (isMongoConnected && lifecycleEvent?._id) {
+    await PaymentLifecycleEvent.updateOne(
+      { _id: lifecycleEvent._id },
+      {
+        $set: {
+          processingStatus: "PROCESSED",
+          "provenance.processingStatus": "PROCESSED"
+        }
+      }
+    );
+  } else if (lifecycleEvent) {
+    lifecycleEvent.processingStatus = "PROCESSED";
+    if (lifecycleEvent.provenance) {
+      lifecycleEvent.provenance.processingStatus = "PROCESSED";
     }
-  });
+  }
 
   return {
     success: true,
@@ -1174,5 +1312,158 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     isDuplicate: false,
     conflictFlag,
     eventId: lifecycleEvent.eventId
+  };
+}
+
+/**
+ * Reprocesses quarantined webhook events once a server-side tenant mapping appears.
+ * Strictly derives the authoritative tenant from the server-side GatewayPayment or MerchantOrder record.
+ * Never chooses the tenant from payload notes.
+ *
+ * @param {Object} params
+ * @param {string} params.tenantId - Authoritative server-side tenant ID
+ * @param {string} [params.gatewayPaymentId] - Gateway payment ID
+ * @param {string} [params.merchantOrderId] - Merchant order ID
+ * @returns {Promise<{ reprocessedCount: number, results: Array }>}
+ */
+export async function reprocessQuarantinedWebhookEvents({
+  tenantId,
+  gatewayPaymentId = null,
+  merchantOrderId = null
+} = {}) {
+  if (!tenantId || typeof tenantId !== "string" || tenantId.trim().length === 0) {
+    throw AppError.badRequest("Authoritative tenantId is required to reprocess quarantined events");
+  }
+  if (!gatewayPaymentId && !merchantOrderId) {
+    throw AppError.badRequest("gatewayPaymentId or merchantOrderId is required to reprocess quarantined events");
+  }
+
+  const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
+  const cleanTenantId = tenantId.trim();
+
+  const queryConditions = [];
+  if (gatewayPaymentId) queryConditions.push({ gatewayPaymentId });
+  if (merchantOrderId) queryConditions.push({ merchantOrderId });
+
+  let quarantinedEvents = [];
+  if (isMongoConnected) {
+    quarantinedEvents = await PaymentLifecycleEvent.find({
+      tenantId: "unassigned_provider_quarantine",
+      processingStatus: "QUARANTINED",
+      $or: queryConditions
+    });
+  } else {
+    quarantinedEvents = Array.from(inMemoryEvents.values()).filter(
+      (e) =>
+        e.tenantId === "unassigned_provider_quarantine" &&
+        (e.processingStatus === "QUARANTINED" || e.provenance?.status === "QUARANTINED_UNMAPPED_TENANT") &&
+        ((gatewayPaymentId && e.gatewayPaymentId === gatewayPaymentId) ||
+          (merchantOrderId && e.merchantOrderId === merchantOrderId))
+    );
+  }
+
+  if (quarantinedEvents.length === 0) {
+    return { reprocessedCount: 0, results: [] };
+  }
+
+  const results = [];
+  for (const event of quarantinedEvents) {
+    const payload = event.normalizedPayload || {};
+    const paymentEntity = payload.payment?.entity || payload.payment || {};
+    const eventName = payload.event || event.provenance?.eventName || (
+      event.normalizedEventType === "PAYMENT_CAPTURED" ? "payment.captured" :
+      event.normalizedEventType === "PAYMENT_FAILED" ? "payment.failed" :
+      event.normalizedEventType === "PAYMENT_AUTHORIZED" ? "payment.authorized" :
+      "payment.captured"
+    );
+
+    const paymentStatus = mapToGatewayPaymentStatus(eventName);
+
+    // Apply updates to GatewayPayment and MerchantOrder
+    if (gatewayPaymentId) {
+      if (isMongoConnected) {
+        await GatewayPayment.updateOne(
+          { gatewayPaymentId, tenantId: cleanTenantId },
+          {
+            $set: {
+              status: paymentStatus,
+              lastProviderEventAt: event.providerEventAt || new Date(),
+              rawData: sanitizeWebhookPayload(paymentEntity)
+            }
+          }
+        );
+      } else {
+        const memPayment = inMemoryPayments.get(gatewayPaymentId);
+        if (memPayment && memPayment.tenantId === cleanTenantId) {
+          memPayment.status = paymentStatus;
+          memPayment.lastProviderEventAt = event.providerEventAt || new Date();
+        }
+      }
+    }
+
+    if (merchantOrderId && (eventName === "payment.captured" || eventName === "order.paid")) {
+      if (isMongoConnected) {
+        await MerchantOrder.updateOne(
+          { merchantOrderId, tenantId: cleanTenantId },
+          { $set: { status: "PAID" } }
+        );
+      } else {
+        const memOrder = inMemoryOrders.get(merchantOrderId);
+        if (memOrder && memOrder.tenantId === cleanTenantId) {
+          memOrder.status = "PAID";
+        }
+      }
+    }
+
+    // Update event record to belong to authoritative tenant and mark as PROCESSED
+    if (isMongoConnected) {
+      await PaymentLifecycleEvent.updateOne(
+        { _id: event._id },
+        {
+          $set: {
+            tenantId: cleanTenantId,
+            processingStatus: "PROCESSED",
+            "provenance.processingStatus": "PROCESSED",
+            "provenance.reprocessedAt": new Date(),
+            "provenance.reprocessedTenant": cleanTenantId
+          }
+        }
+      );
+    } else {
+      event.tenantId = cleanTenantId;
+      event.processingStatus = "PROCESSED";
+      if (event.provenance) {
+        event.provenance.processingStatus = "PROCESSED";
+        event.provenance.reprocessedAt = new Date();
+      }
+    }
+
+    // Emit audit log for quarantined recovery
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: "quarantine-recovery-service",
+      action: "QUARANTINED_EVENT_REPROCESSED",
+      tenantId: cleanTenantId,
+      entityType: "PaymentLifecycleEvent",
+      entityId: event.eventId,
+      metadata: {
+        eventId: event.eventId,
+        gatewayPaymentId: event.gatewayPaymentId,
+        merchantOrderId: event.merchantOrderId,
+        authoritativeTenantId: cleanTenantId,
+        reprocessedAt: new Date().toISOString()
+      }
+    }).catch(() => {});
+
+    results.push({
+      eventId: event.eventId,
+      status: "REPROCESSED",
+      tenantId: cleanTenantId
+    });
+  }
+
+  return {
+    reprocessedCount: results.length,
+    results
   };
 }

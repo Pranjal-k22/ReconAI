@@ -654,7 +654,7 @@ export function classifyPaymentScenario({
       contradictions,
       missingEvidence: ["Intended order cross-reference authority"],
       safeHold: true,
-      safeHoldCode: "CONFLICTING_PROVIDER_MERCHANT_RECORDS",
+      safeHoldCode: "CONFLICTING_RECORDS",
       safeHoldReason: "Conflicting order identifiers between gateway payment and merchant order.",
       recommendation: "IMMEDIATE_SAFE_HOLD",
       suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",

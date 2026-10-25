@@ -818,7 +818,9 @@ ReconAI/
   5. Monitoring Smoke Test (`node server/scripts/monitoringSmokeTest.js`): All 7 gates passed (exit code 0)
   6. Frontend Production Build (`npm run build --prefix client`): 2,400 modules, 0 errors
   7. Code Cleanliness (`git diff --check`): Clean, 0 whitespace/conflict errors
-- **Stopping Invariants Confirmed**:
+- **Stopping Invariants & Scope Corrections Confirmed**:
   - Stage 3 has not been started.
+  - Case 22 (LATE_CAPTURE_CANCELLED_ORDER) remains unconditionally in SAFE_HOLD (safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER"); no request field or client approval flag can enable a cancelled-order refund exception.
+  - Policy-limits config storage and client UI remain strictly out of scope / deferred from Stage 3; production limits fail closed (null resolution).
   - No provider dispatch route changes, no refund reservation changes, no live keys, no provider write APIs.
   - Stage 2 data-integrity fixes complete. Stopped and awaiting review.

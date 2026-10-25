@@ -58,6 +58,12 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
       trim: true,
       index: true
     },
+    processingStatus: {
+      type: String,
+      enum: ["RECEIVED", "PROCESSED", "QUARANTINED", "FAILED"],
+      default: "RECEIVED",
+      index: true
+    },
     caseId: {
       type: String,
       trim: true,
