@@ -637,5 +637,125 @@ describe("Autonomous Orchestration Worker - Real MongoDB Integration", { timeout
       expect(inDb.lockedUntil).toBeNull();
       expect(inDb.lockedBy).toBeNull();
     });
+
+    it("P0-02 Real MongoDB: Worker A loses lease to Worker B and cannot transition afterward", async () => {
+      const caseId = "CASE-LEASE-LOSS-REAL";
+      const idempotencyKey = `idem_loss_${Date.now()}`;
+
+      await PaymentCase.create({
+        caseId,
+        tenantId: TENANT_A,
+        discrepancyCategory: "STATUS_MISMATCH"
+      });
+
+      const task = await queueOrchestrationTask({
+        tenantId: TENANT_A,
+        caseId,
+        idempotencyKey
+      });
+
+      // Worker A claims task with a short real lease of 200ms
+      const claimedA = await claimDueOrchestrationTask({
+        workerId: "worker-A",
+        leaseDurationMs: 200
+      });
+      expect(claimedA).not.toBeNull();
+      expect(claimedA.lockedBy).toBe("worker-A");
+
+      // Wait 300ms for Worker A's lease to expire in real MongoDB
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Worker B legitimately claims the expired task
+      const claimedB = await claimDueOrchestrationTask({
+        workerId: "worker-B",
+        leaseDurationMs: 30000
+      });
+      expect(claimedB).not.toBeNull();
+      expect(claimedB.lockedBy).toBe("worker-B");
+
+      // Negative check 1: Missing or null workerId is rejected before query
+      await expect(
+        transitionTaskState(claimedA, "EVIDENCE_COLLECTION", {})
+      ).rejects.toThrow(/workerId is required/i);
+
+      await expect(
+        transitionTaskState(claimedA, "EVIDENCE_COLLECTION", { workerId: null })
+      ).rejects.toThrow(/workerId is required/i);
+
+      // Negative check 2: Worker A attempts to transition after losing lease to Worker B
+      await expect(
+        transitionTaskState(claimedA, "EVIDENCE_COLLECTION", { workerId: "worker-A" })
+      ).rejects.toThrow(/lease lost or expired/i);
+
+      // Verify in MongoDB that Worker B remains the sole owner and Worker A made no mutation
+      const docInDb = await OrchestrationTask.findOne({ taskId: task.taskId }).lean();
+      expect(docInDb.lockedBy).toBe("worker-B");
+      expect(docInDb.state).toBe("CLAIMED");
+
+      // Positive check: Worker B can legitimately transition the owned task
+      const transitionedB = await transitionTaskState(claimedB, "EVIDENCE_COLLECTION", {
+        workerId: "worker-B"
+      });
+      expect(transitionedB.state).toBe("EVIDENCE_COLLECTION");
+      expect(transitionedB.lockedBy).toBe("worker-B");
+    });
+
+    it("P0-03 Real MongoDB: short real lease with slow operation expires and cannot be extended by frozen timestamp", async () => {
+      const caseId = "CASE-REAL-CLOCK-BOUNDARY";
+      const idempotencyKey = `idem_clock_${Date.now()}`;
+      const originalEnv = process.env.NODE_ENV;
+
+      try {
+        // Enforce production mode: static Date injection must be ignored
+        process.env.NODE_ENV = "production";
+
+        await PaymentCase.create({
+          caseId,
+          tenantId: TENANT_A,
+          discrepancyCategory: "STATUS_MISMATCH"
+        });
+
+        const task = await queueOrchestrationTask({
+          tenantId: TENANT_A,
+          caseId,
+          idempotencyKey
+        });
+
+        // Worker claims task with a short real lease of 150ms
+        const claimed = await claimDueOrchestrationTask({
+          workerId: "worker-real-clock",
+          leaseDurationMs: 150
+        });
+        expect(claimed).not.toBeNull();
+        expect(claimed.lockedBy).toBe("worker-real-clock");
+
+        // Freeze timestamp from when lease was valid
+        const frozenTimestamp = new Date();
+
+        // Slow operation: sleep 250ms so real lease expires
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
+        // Attempt lease renewal with frozen timestamp
+        // Production lease check must read the real clock and ignore the frozen timestamp
+        const renewal = await renewOrchestrationTaskLease({
+          taskId: task.taskId,
+          workerId: "worker-real-clock",
+          leaseDurationMs: 30000,
+          asOfTime: frozenTimestamp
+        });
+        expect(renewal.renewed).toBe(false);
+        expect(renewal.reason).toBe("LEASE_LOST_OR_EXPIRED");
+
+        // Attempt state transition with frozen timestamp
+        await expect(
+          transitionTaskState(claimed, "EVIDENCE_COLLECTION", {
+            workerId: "worker-real-clock",
+            asOfTime: frozenTimestamp
+          })
+        ).rejects.toThrow(/lease lost or expired/i);
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
   });
 });

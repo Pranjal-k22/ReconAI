@@ -36,19 +36,38 @@ export function resetInMemoryOrchestrationStore() {
 }
 
 /**
+ * Resolves the effective clock time for orchestration operations.
+ *
+ * P0-03 CLOCK INJECTION BOUNDARY:
+ * Production lease checks must read the real clock.
+ * Restricts static Date injection (asOfTime) and clock functions strictly to NODE_ENV === "test".
+ * In production or development, static injection is ignored and new Date() is read.
+ */
+export function getEffectiveOrchestrationTime({ asOfTime = null, clock = null } = {}) {
+  if (process.env.NODE_ENV === "test") {
+    if (typeof clock === "function") return clock();
+    if (typeof asOfTime === "function") return asOfTime();
+    if (asOfTime instanceof Date) return asOfTime;
+  }
+  return new Date();
+}
+
+/**
  * Calculates exponential backoff according to the approved schedule:
  * [60s, 300s, 900s, 1800s]
  */
 export function calculateOrchestrationBackoffTime({
   attemptCount,
   backoffIntervalsSeconds = [60, 300, 900, 1800],
-  asOfTime = new Date(),
+  asOfTime = null,
+  clock = null,
   jitterSeconds = 0
 }) {
+  const currentTime = getEffectiveOrchestrationTime({ asOfTime, clock });
   const index = Math.min(attemptCount, backoffIntervalsSeconds.length - 1);
   const baseSeconds = backoffIntervalsSeconds[index] || 1800;
   const totalSeconds = Math.max(1, baseSeconds + jitterSeconds);
-  return new Date(asOfTime.getTime() + totalSeconds * 1000);
+  return new Date(currentTime.getTime() + totalSeconds * 1000);
 }
 
 /**
@@ -79,7 +98,7 @@ export async function queueOrchestrationTask({
   maxAttempts = 4,
   deadlineMinutes = 60,
   metadata = {},
-  asOfTime = new Date()
+  asOfTime = null
 }) {
   if (!tenantId || typeof tenantId !== "string" || tenantId.trim().length === 0) {
     throw AppError.badRequest("tenantId is required to queue an orchestration task");
@@ -95,7 +114,8 @@ export async function queueOrchestrationTask({
   const cleanCaseId = caseId.trim();
   const cleanIdempotencyKey = idempotencyKey.trim();
   const taskId = `orch_task_${crypto.randomUUID()}`;
-  const deadlineAt = new Date(asOfTime.getTime() + deadlineMinutes * 60 * 1000);
+  const effectiveTime = getEffectiveOrchestrationTime({ asOfTime });
+  const deadlineAt = new Date(effectiveTime.getTime() + deadlineMinutes * 60 * 1000);
 
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
   let taskDoc = null;
@@ -116,7 +136,7 @@ export async function queueOrchestrationTask({
             {
               fromState: null,
               toState: "QUEUED",
-              timestamp: asOfTime,
+              timestamp: effectiveTime,
               workerId: null,
               reason: `Task queued via ${triggerSource}`
             }
@@ -124,7 +144,7 @@ export async function queueOrchestrationTask({
           attemptCount: 0,
           maxAttempts,
           backoffIntervalsSeconds: [60, 300, 900, 1800],
-          nextRunAt: asOfTime,
+          nextRunAt: effectiveTime,
           deadlineAt,
           lockedUntil: null,
           lockedBy: null,
@@ -151,7 +171,7 @@ export async function queueOrchestrationTask({
           {
             fromState: null,
             toState: "QUEUED",
-            timestamp: asOfTime,
+            timestamp: effectiveTime,
             workerId: null,
             reason: `Task queued via ${triggerSource}`
           }
@@ -159,7 +179,7 @@ export async function queueOrchestrationTask({
         attemptCount: 0,
         maxAttempts,
         backoffIntervalsSeconds: [60, 300, 900, 1800],
-        nextRunAt: asOfTime,
+        nextRunAt: effectiveTime,
         deadlineAt,
         lockedUntil: null,
         lockedBy: null,
@@ -214,7 +234,7 @@ export async function claimDueOrchestrationTask({
     return null;
   }
 
-  const currentTime = typeof clock === "function" ? clock() : (asOfTime instanceof Date ? asOfTime : new Date());
+  const currentTime = getEffectiveOrchestrationTime({ asOfTime, clock });
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
   const lockExpiry = new Date(currentTime.getTime() + leaseDurationMs);
 
@@ -335,11 +355,12 @@ export async function renewOrchestrationTaskLease({
   asOfTime = null,
   clock = null
 }) {
-  if (!taskId || !workerId) {
+  const cleanWorkerId = typeof workerId === "string" ? workerId.trim() : null;
+  if (!taskId || !cleanWorkerId) {
     return { renewed: false, task: null, reason: "MISSING_PARAMETERS" };
   }
 
-  const currentTime = typeof clock === "function" ? clock() : (asOfTime instanceof Date ? asOfTime : new Date());
+  const currentTime = getEffectiveOrchestrationTime({ asOfTime, clock });
   const newLockUntil = new Date(currentTime.getTime() + leaseDurationMs);
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
 
@@ -347,7 +368,7 @@ export async function renewOrchestrationTaskLease({
     const updated = await OrchestrationTask.findOneAndUpdate(
       {
         taskId,
-        lockedBy: workerId,
+        lockedBy: cleanWorkerId,
         lockedUntil: { $gte: currentTime },
         state: { $in: ["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"] }
       },
@@ -366,7 +387,7 @@ export async function renewOrchestrationTaskLease({
 
     recordOrchestratorMetric("leaseLosses");
     logger.warn(
-      { taskId, workerId },
+      { taskId, workerId: cleanWorkerId },
       "Lease renewal rejected: task is either no longer owned by this worker, has expired, or is in non-renewable state"
     );
     return { renewed: false, task: null, reason: "LEASE_LOST_OR_EXPIRED" };
@@ -383,7 +404,7 @@ export async function renewOrchestrationTaskLease({
 
   if (foundTask) {
     if (
-      foundTask.lockedBy === workerId &&
+      foundTask.lockedBy === cleanWorkerId &&
       foundTask.lockedUntil &&
       foundTask.lockedUntil >= currentTime &&
       ["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"].includes(foundTask.state)
@@ -407,6 +428,11 @@ export async function renewOrchestrationTaskLease({
 /**
  * Transitions task state atomically and records in stateHistory.
  * Enforces atomic conditional lease ownership check in MongoDB when transitioning from a leased state.
+ *
+ * P0-02 MANDATORY WORKER OWNERSHIP:
+ * Requires a valid, non-empty workerId for every lease-owned transition (CLAIMED, EVIDENCE_COLLECTION, POLICY_EVALUATION).
+ * Rejects missing or null workerId immediately.
+ * Enforces conditional update on taskId + lockedBy + unexpired lock.
  */
 export async function transitionTaskState(
   task,
@@ -419,17 +445,35 @@ export async function transitionTaskState(
     clock = null
   } = {}
 ) {
+  if (!task || !task.taskId) {
+    throw AppError.badRequest("Task with taskId is required for transition");
+  }
+
   assertValidOrchestrationTransition(task.state, toState);
 
-  const currentTime = typeof clock === "function" ? clock() : (asOfTime instanceof Date ? asOfTime : new Date());
+  const currentTime = getEffectiveOrchestrationTime({ asOfTime, clock });
   const fromState = task.state;
-  task.state = toState;
+
+  const LEASE_OWNED_STATES = new Set(["CLAIMED", "EVIDENCE_COLLECTION", "POLICY_EVALUATION"]);
+  const isLeaseOwned = LEASE_OWNED_STATES.has(fromState) || Boolean(task.lockedBy);
+
+  const cleanWorkerId = typeof workerId === "string" ? workerId.trim() : null;
+
+  if (isLeaseOwned && (!cleanWorkerId || cleanWorkerId.length === 0)) {
+    const err = AppError.badRequest(
+      `Worker ownership violation: valid workerId is required for lease-owned transition from '${fromState}' to '${toState}'`
+    );
+    err.code = "WORKER_OWNERSHIP_REQUIRED";
+    throw err;
+  }
+
+  const effectiveWorkerId = cleanWorkerId || null;
 
   const historyEntry = {
     fromState,
     toState,
     timestamp: currentTime,
-    workerId,
+    workerId: effectiveWorkerId,
     reason
   };
 
@@ -437,8 +481,8 @@ export async function transitionTaskState(
 
   if (isMongoConnected) {
     const query = { taskId: task.taskId };
-    if (workerId) {
-      query.lockedBy = workerId;
+    if (isLeaseOwned || effectiveWorkerId) {
+      query.lockedBy = effectiveWorkerId;
       query.lockedUntil = { $gte: currentTime };
     }
 
@@ -457,30 +501,41 @@ export async function transitionTaskState(
     if (!updated) {
       recordOrchestratorMetric("leaseLosses");
       const conflictErr = AppError.conflict(
-        `Worker '${workerId}' cannot transition task '${task.taskId}' to '${toState}': lease lost or expired`
+        `Worker '${effectiveWorkerId}' cannot transition task '${task.taskId}' to '${toState}': lease lost or expired`
       );
       conflictErr.code = "LEASE_OWNERSHIP_LOST";
       throw conflictErr;
     }
+
+    task.state = toState;
+    if (task.stateHistory && Array.isArray(task.stateHistory)) {
+      task.stateHistory.push(historyEntry);
+    }
+    Object.assign(task, extraFields);
 
     return updated;
   }
 
   // In-memory update
-  if (workerId && task.lockedBy) {
-    const isOwner = task.lockedBy === workerId;
+  if (task.lockedBy) {
+    const isOwner = task.lockedBy === effectiveWorkerId;
     const isExpired = task.lockedUntil && task.lockedUntil < currentTime;
     if (!isOwner || isExpired) {
       recordOrchestratorMetric("leaseLosses");
       const conflictErr = AppError.conflict(
-        `Worker '${workerId}' cannot transition task '${task.taskId}' to '${toState}': lease lost or expired`
+        `Worker '${effectiveWorkerId}' cannot transition task '${task.taskId}' to '${toState}': lease lost or expired`
       );
       conflictErr.code = "LEASE_OWNERSHIP_LOST";
       throw conflictErr;
     }
+  } else if (isLeaseOwned) {
+    task.lockedBy = effectiveWorkerId;
   }
 
-  task.stateHistory.push(historyEntry);
+  task.state = toState;
+  if (task.stateHistory && Array.isArray(task.stateHistory)) {
+    task.stateHistory.push(historyEntry);
+  }
   Object.assign(task, extraFields);
   return task;
 }
@@ -513,12 +568,7 @@ export async function processOrchestrationTask(
     clock = null
   } = {}
 ) {
-  const resolveCurrentTime = () => {
-    if (typeof clock === "function") return clock();
-    if (typeof asOfTime === "function") return asOfTime();
-    if (asOfTime instanceof Date) return asOfTime;
-    return new Date();
-  };
+  const resolveCurrentTime = () => getEffectiveOrchestrationTime({ asOfTime, clock });
 
   try {
     // Gate check: if kill switch was engaged after claim, release task immediately

@@ -5,58 +5,152 @@
  * worker activation, deterministic provider-read isolation (zero network calls),
  * task discovery & canonical persistence, and clean graceful shutdown (SIGTERM).
  */
-import mongoose from "mongoose";
-import { connectDatabase, disconnectDatabase } from "../src/config/database.js";
-import { startServer, handleGracefulShutdown, getMonitoringWorker } from "../src/server.js";
-import { PaymentMonitoringTask } from "../src/models/PaymentMonitoringTask.js";
-import { GatewayPayment } from "../src/models/GatewayPayment.js";
-import { MerchantOrder } from "../src/models/MerchantOrder.js";
-import { PaymentCase } from "../src/models/PaymentCase.js";
-import { PaymentLifecycleEvent } from "../src/models/PaymentLifecycleEvent.js";
-import { AuditLog } from "../src/models/AuditLog.js";
-import { schedulePaymentMonitoring } from "../src/services/monitoring/paymentMonitoringService.js";
+
+// Step 0: Capture pre-exported environment variables BEFORE setting test environment
+const preExportedMongoUri = process.env.MONGODB_URI;
 
 /**
  * Validates the database URI to guarantee complete isolation.
  * Refuses unsafe database targets before resetting or deleting any data.
+ * Guard requirements:
+ * - Must be a non-empty string starting with mongodb:// or mongodb+srv://
+ * - Database name must contain 'test'
+ * - Database name must not contain 'prod'
+ * - Must differ from pre-exported MONGODB_URI
  */
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("Safety violation: MONGODB_URI must be provided as a non-empty string");
+function validateTestDatabaseUri(uri, initialMongoUri) {
+  if (!uri || typeof uri !== "string" || uri.trim().length === 0) {
+    throw new Error("Configuration safety violation: MONGODB_TEST_URI must be provided as a non-empty string");
   }
 
-  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
-    throw new Error("Safety violation: Invalid URI scheme, must start with mongodb:// or mongodb+srv://");
+  const trimmedUri = uri.trim();
+  if (!trimmedUri.startsWith("mongodb://") && !trimmedUri.startsWith("mongodb+srv://")) {
+    throw new Error("Configuration safety violation: Invalid URI scheme, must start with mongodb:// or mongodb+srv://");
   }
 
   let dbName = "";
   try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
+    const url = new URL(trimmedUri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
     dbName = url.pathname.replace(/^\//, "");
   } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
+    const match = trimmedUri.match(/\/([^/?]+)(\?|$)/);
     if (match) dbName = match[1];
   }
 
   if (!dbName) {
-    throw new Error("Safety violation: Database URI must explicitly specify a database name.");
+    throw new Error("Configuration safety violation: Database URI must explicitly specify a database name.");
   }
 
   const lowerName = dbName.toLowerCase();
   if (!lowerName.includes("test")) {
-    throw new Error(`Safety violation: Database name '${dbName}' must contain 'test' to guarantee isolation.`);
+    throw new Error(`Configuration safety violation: Database name '${dbName}' must contain 'test' to guarantee isolation.`);
   }
 
   if (lowerName.includes("prod")) {
-    throw new Error(`Safety violation: Database name '${dbName}' contains 'prod'. Execution refused.`);
+    throw new Error(`Configuration safety violation: Database name '${dbName}' contains 'prod'. Execution refused.`);
   }
 
-  return uri;
+  if (initialMongoUri && typeof initialMongoUri === "string" && initialMongoUri.trim().length > 0) {
+    const trimmedInitial = initialMongoUri.trim();
+    if (trimmedUri === trimmedInitial) {
+      throw new Error(
+        `Configuration safety violation: Test database URI ('${trimmedUri}') must differ from MONGODB_URI ('${trimmedInitial}').`
+      );
+    }
+
+    let initialDbName = "";
+    try {
+      const initialUrl = new URL(trimmedInitial.replace(/^mongodb(\+srv)?:\/\//, "http://"));
+      initialDbName = initialUrl.pathname.replace(/^\//, "");
+    } catch {
+      const match = trimmedInitial.match(/\/([^/?]+)(\?|$)/);
+      if (match) initialDbName = match[1];
+    }
+
+    if (initialDbName && initialDbName.toLowerCase() === lowerName) {
+      throw new Error(
+        `Configuration safety violation: Test database name '${dbName}' must differ from MONGODB_URI database name '${initialDbName}'.`
+      );
+    }
+  }
+
+  return trimmedUri;
 }
 
 const SMOKE_TEST_DB_URI = validateTestDatabaseUri(
-  process.env.MONGODB_TEST_URI || "mongodb://127.0.0.1:27017/reconai_test_monitoring_smoke"
+  process.env.MONGODB_TEST_URI || "mongodb://127.0.0.1:27017/reconai_test_monitoring_smoke",
+  preExportedMongoUri
 );
+
+// Configure isolated test environment variables BEFORE importing application modules
+process.env.NODE_ENV = "test";
+process.env.MONGODB_URI = SMOKE_TEST_DB_URI;
+process.env.PORT = process.env.PORT || "5099";
+process.env.MONITORING_WORKER_ENABLED = "true";
+process.env.MONITORING_INTERVAL_MS = "1000";
+
+// Dynamically import modules now that environment variables are fully configured
+const mongoose = (await import("mongoose")).default;
+const { connectDatabase, disconnectDatabase } = await import("../src/config/database.js");
+const { startServer, handleGracefulShutdown, getMonitoringWorker } = await import("../src/server.js");
+const { PaymentMonitoringTask } = await import("../src/models/PaymentMonitoringTask.js");
+const { GatewayPayment } = await import("../src/models/GatewayPayment.js");
+const { MerchantOrder } = await import("../src/models/MerchantOrder.js");
+const { PaymentCase } = await import("../src/models/PaymentCase.js");
+const { PaymentLifecycleEvent } = await import("../src/models/PaymentLifecycleEvent.js");
+const { AuditLog } = await import("../src/models/AuditLog.js");
+const { schedulePaymentMonitoring } = await import("../src/services/monitoring/paymentMonitoringService.js");
+
+const testTenantId = "tenant_smoke_prod_001";
+const testPaymentId = "pay_smoke_001";
+const testOrderId = "order_smoke_001";
+const testCaseId = "case_smoke_001";
+
+/**
+ * Clean up ONLY this smoke test's own records by explicit tenant/entity identifiers.
+ * Never drops the database or deletes untracked collections.
+ */
+async function cleanupSmokeTestRecords() {
+  await PaymentMonitoringTask.deleteMany({
+    $or: [
+      { tenantId: testTenantId },
+      { gatewayPaymentId: testPaymentId },
+      { caseId: testCaseId }
+    ]
+  });
+  await GatewayPayment.deleteMany({
+    $or: [
+      { tenantId: testTenantId },
+      { gatewayPaymentId: testPaymentId }
+    ]
+  });
+  await MerchantOrder.deleteMany({
+    $or: [
+      { tenantId: testTenantId },
+      { merchantOrderId: testOrderId }
+    ]
+  });
+  await PaymentCase.deleteMany({
+    $or: [
+      { tenantId: testTenantId },
+      { caseId: testCaseId }
+    ]
+  });
+  await PaymentLifecycleEvent.deleteMany({
+    $or: [
+      { tenantId: testTenantId },
+      { gatewayPaymentId: testPaymentId }
+    ]
+  });
+  await AuditLog.deleteMany({
+    $or: [
+      { tenantId: testTenantId },
+      { entityId: testPaymentId },
+      { entityId: testCaseId },
+      { "metadata.gatewayPaymentId": testPaymentId }
+    ]
+  });
+}
 
 async function runProductionStartupSmokeTest() {
   console.log("=================================================================");
@@ -65,29 +159,14 @@ async function runProductionStartupSmokeTest() {
 
   // 1. Validate and configure isolated test database
   console.log(`[1/7] Validating database target safety: ${SMOKE_TEST_DB_URI}...`);
-  process.env.MONGODB_URI = SMOKE_TEST_DB_URI;
-  process.env.PORT = "5099";
-  process.env.MONITORING_WORKER_ENABLED = "true";
-  process.env.MONITORING_INTERVAL_MS = "1000";
-  process.env.NODE_ENV = "test";
   console.log("✅ Target validated: isolated test database confirmed.");
 
   // Pre-seed setup connection
   await connectDatabase(SMOKE_TEST_DB_URI);
-  console.log("[2/7] Pre-cleaning isolated test database collections...");
-  await PaymentMonitoringTask.deleteMany({});
-  await GatewayPayment.deleteMany({});
-  await MerchantOrder.deleteMany({});
-  await PaymentCase.deleteMany({});
-  await PaymentLifecycleEvent.deleteMany({});
-  await AuditLog.deleteMany({});
+  console.log("[2/7] Pre-cleaning isolated test database records (scoped to test entities only)...");
+  await cleanupSmokeTestRecords();
 
   // 2. Seed test entities
-  const testTenantId = "tenant_smoke_prod_001";
-  const testPaymentId = "pay_smoke_001";
-  const testOrderId = "order_smoke_001";
-  const testCaseId = "case_smoke_001";
-
   console.log(`[3/7] Seeding test payment attempt (${testPaymentId}) and order (${testOrderId})...`);
   await GatewayPayment.create({
     gatewayPaymentId: testPaymentId,
@@ -210,9 +289,9 @@ async function runProductionStartupSmokeTest() {
   // Restore fetch
   globalThis.fetch = originalFetch;
 
-  // Clean test database
+  // Clean test database: remove only its own records (never drop database)
   await connectDatabase(SMOKE_TEST_DB_URI);
-  await mongoose.connection.db.dropDatabase();
+  await cleanupSmokeTestRecords();
   await disconnectDatabase();
 
   console.log("=================================================================");

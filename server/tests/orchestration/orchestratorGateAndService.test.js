@@ -11,10 +11,12 @@ import {
   queueOrchestrationTask,
   claimDueOrchestrationTask,
   renewOrchestrationTaskLease,
+  transitionTaskState,
   processOrchestrationTask,
   sweepDueOrchestrationTasks,
   resetInMemoryOrchestrationStore,
-  calculateOrchestrationBackoffTime
+  calculateOrchestrationBackoffTime,
+  getEffectiveOrchestrationTime
 } from "../../src/services/orchestration/orchestrationService.js";
 import { startOrchestrationWorker } from "../../src/services/orchestration/orchestrationWorker.js";
 
@@ -127,6 +129,84 @@ describe("Orchestrator Gate and Service Unit Tests", () => {
       });
       expect(expiredRenewal.renewed).toBe(false);
       process.env.ORCHESTRATOR_WORKER_ENABLED = "false";
+    });
+  });
+
+  describe("1.2 Mandatory Worker Ownership & Clock Injection Boundary (P0-02 & P0-03)", () => {
+    it("rejects transitionTaskState when workerId is missing on a leased task", async () => {
+      const task = {
+        taskId: "task_neg_1",
+        state: "CLAIMED",
+        lockedBy: "worker-A",
+        lockedUntil: new Date(Date.now() + 60000),
+        stateHistory: []
+      };
+
+      await expect(
+        transitionTaskState(task, "EVIDENCE_COLLECTION", {})
+      ).rejects.toThrow(/workerId is required/i);
+    });
+
+    it("rejects transitionTaskState when workerId is null on a leased task", async () => {
+      const task = {
+        taskId: "task_neg_2",
+        state: "EVIDENCE_COLLECTION",
+        lockedBy: "worker-A",
+        lockedUntil: new Date(Date.now() + 60000),
+        stateHistory: []
+      };
+
+      await expect(
+        transitionTaskState(task, "POLICY_EVALUATION", { workerId: null })
+      ).rejects.toThrow(/workerId is required/i);
+    });
+
+    it("rejects transitionTaskState when workerId is empty or whitespace", async () => {
+      const task = {
+        taskId: "task_neg_3",
+        state: "POLICY_EVALUATION",
+        lockedBy: "worker-A",
+        lockedUntil: new Date(Date.now() + 60000),
+        stateHistory: []
+      };
+
+      await expect(
+        transitionTaskState(task, "COMPLETED", { workerId: "   " })
+      ).rejects.toThrow(/workerId is required/i);
+    });
+
+    it("rejects transitionTaskState when worker does not own the lease (in-memory)", async () => {
+      const task = {
+        taskId: "task_neg_4",
+        state: "CLAIMED",
+        lockedBy: "worker-A",
+        lockedUntil: new Date(Date.now() + 60000),
+        stateHistory: []
+      };
+
+      await expect(
+        transitionTaskState(task, "EVIDENCE_COLLECTION", { workerId: "worker-B" })
+      ).rejects.toThrow(/lease lost or expired/i);
+    });
+
+    it("enforces clock injection boundary: static Date injection ignored when NODE_ENV != test", () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = "production";
+        const injectedPast = new Date(Date.now() - 1000000);
+        const resolved = getEffectiveOrchestrationTime({ asOfTime: injectedPast });
+        // In production, injected past Date must be ignored and real clock returned
+        expect(resolved.getTime()).toBeGreaterThan(injectedPast.getTime());
+        expect(Math.abs(resolved.getTime() - Date.now())).toBeLessThan(5000);
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    it("allows clock injection when NODE_ENV === test", () => {
+      const injected = new Date(1770000000000);
+      const resolved = getEffectiveOrchestrationTime({ asOfTime: injected });
+      expect(resolved.getTime()).toBe(injected.getTime());
     });
   });
 

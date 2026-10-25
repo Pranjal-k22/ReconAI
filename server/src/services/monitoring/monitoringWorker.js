@@ -16,6 +16,19 @@ import { executeMonitoringRecheck } from "./paymentMonitoringService.js";
  */
 
 /**
+ * Resolves the effective clock time for monitoring worker operations.
+ * Production lease checks must read the real clock.
+ * Restricts static Date injection strictly to NODE_ENV === "test".
+ */
+export function getEffectiveMonitoringTime(asOfTime) {
+  if (process.env.NODE_ENV === "test") {
+    if (typeof asOfTime === "function") return asOfTime();
+    if (asOfTime instanceof Date) return asOfTime;
+  }
+  return new Date();
+}
+
+/**
  * Atomically claims one due monitoring task.
  *
  * @param {Object} [options]
@@ -27,24 +40,25 @@ import { executeMonitoringRecheck } from "./paymentMonitoringService.js";
 export async function claimDueMonitoringTask({
   workerId = "worker-1",
   leaseDurationMs = 30000,
-  asOfTime = new Date()
+  asOfTime = null
 } = {}) {
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
 
   if (isMongoConnected) {
-    const lockExpiry = new Date(asOfTime.getTime() + leaseDurationMs);
+    const effectiveTime = getEffectiveMonitoringTime(asOfTime);
+    const lockExpiry = new Date(effectiveTime.getTime() + leaseDurationMs);
 
     return await PaymentMonitoringTask.findOneAndUpdate(
       {
         $or: [
           {
             status: "PENDING",
-            nextRunAt: { $lte: asOfTime },
-            $or: [{ lockedUntil: null }, { lockedUntil: { $lte: asOfTime } }]
+            nextRunAt: { $lte: effectiveTime },
+            $or: [{ lockedUntil: null }, { lockedUntil: { $lte: effectiveTime } }]
           },
           {
             status: "IN_PROGRESS",
-            lockedUntil: { $lte: asOfTime }
+            lockedUntil: { $lte: effectiveTime }
           }
         ]
       },
@@ -53,7 +67,7 @@ export async function claimDueMonitoringTask({
           status: "IN_PROGRESS",
           lockedUntil: lockExpiry,
           lockedBy: workerId,
-          lastRunAt: asOfTime
+          lastRunAt: effectiveTime
         },
         $inc: { attemptCount: 1 }
       },
@@ -78,7 +92,7 @@ export async function claimDueMonitoringTask({
  */
 export async function sweepDueMonitoringTasks({
   maxTasks = 5,
-  asOfTime = new Date(),
+  asOfTime = null,
   customFetch = null,
   workerId = "worker-1",
   leaseDurationMs = 30000
