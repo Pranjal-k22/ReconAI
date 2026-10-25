@@ -13,6 +13,7 @@ import {
   DEFAULT_POLICY_VERSION,
   SUPPORTED_POLICY_VERSIONS
 } from "./resolutionPolicyEvaluator.js";
+import { getActivePolicyConfig } from "./policyConfigService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
 
@@ -276,6 +277,13 @@ export async function evaluateAndSimulateResolution({
   }
 
   // 3. Deterministic Policy Evaluation (Pure Logic)
+  let activePolicyDoc = null;
+  let effectivePolicyConfig = policyConfig;
+  if (!effectivePolicyConfig) {
+    activePolicyDoc = await getActivePolicyConfig(tenantId.trim());
+    effectivePolicyConfig = activePolicyDoc ? activePolicyDoc.limits : null;
+  }
+
   const policyResult = evaluateResolutionPolicy({
     tenantId: tenantId.trim(),
     caseId: caseId.trim(),
@@ -287,7 +295,7 @@ export async function evaluateAndSimulateResolution({
     classificationFinding: authoritativeEvidence.evidenceRecord || null,
     authoritativeEvidence,
     advisoryAiSuggestion,
-    policyConfig,
+    policyConfig: effectivePolicyConfig,
     policyVersion: effectivePolicyVersion
   });
 
@@ -346,6 +354,8 @@ export async function evaluateAndSimulateResolution({
       idempotencyKey: idempotencyKey.trim(),
       inputHash,
       policyVersion: effectivePolicyVersion,
+      policyConfigVersion: activePolicyDoc?.configVersion || policyConfig?.configVersion || null,
+      contentHash: activePolicyDoc?.contentHash || policyConfig?.contentHash || null,
       proposedActionType,
       outcomeStatus: policyResult.outcomeStatus,
       appliedRuleIds: policyResult.appliedRuleIds,

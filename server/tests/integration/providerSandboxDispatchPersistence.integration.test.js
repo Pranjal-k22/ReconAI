@@ -10,6 +10,7 @@ import { MerchantOrder } from "../../src/models/MerchantOrder.js";
 import { PaymentAction } from "../../src/models/PaymentAction.js";
 import { RefundReservation } from "../../src/models/RefundReservation.js";
 import { PaymentLifecycleEvent } from "../../src/models/PaymentLifecycleEvent.js";
+import { PolicyConfigVersion, computePolicyConfigHash } from "../../src/models/PolicyConfigVersion.js";
 import {
   dispatchSandboxAction,
   recheckProviderOperationStatus,
@@ -54,6 +55,7 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     await PaymentAction.syncIndexes();
     await RefundReservation.syncIndexes();
     await PaymentLifecycleEvent.syncIndexes();
+    await PolicyConfigVersion.syncIndexes();
   });
 
   afterAll(async () => {
@@ -79,6 +81,39 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     await PaymentAction.deleteMany({});
     await RefundReservation.deleteMany({});
     await PaymentLifecycleEvent.deleteMany({});
+    await PolicyConfigVersion.deleteMany({});
+
+    // Seed Active Governed PolicyConfig for TENANT_A and TENANT_B
+    const seedLimits = {
+      currency: "INR",
+      maxSingleRefundPaise: 500000,
+      maxCumulativeRefundPaise: 2000000
+    };
+    await PolicyConfigVersion.create({
+      tenantId: TENANT_A,
+      configVersion: 1,
+      status: "ACTIVE",
+      limits: seedLimits,
+      contentHash: computePolicyConfigHash(seedLimits),
+      proposedBy: "admin-proposer",
+      approvedBy: "admin-approver",
+      proposalReason: "Initial approved refund limits for test tenant",
+      approvalReason: "Verified business justification for test limits",
+      activatedAt: new Date()
+    });
+
+    await PolicyConfigVersion.create({
+      tenantId: TENANT_B,
+      configVersion: 1,
+      status: "ACTIVE",
+      limits: seedLimits,
+      contentHash: computePolicyConfigHash(seedLimits),
+      proposedBy: "admin-proposer",
+      approvedBy: "admin-approver",
+      proposalReason: "Initial approved refund limits for test tenant B",
+      approvalReason: "Verified business justification for test limits",
+      activatedAt: new Date()
+    });
 
     // Seed Standard Test Case
     await PaymentCase.create({
@@ -245,6 +280,8 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
 
   describe("1. Fail-Closed Safety: Missing Refund Limits & Case 22", () => {
     it("fails closed before any provider call when server-side policyConfig is null (missing limits)", async () => {
+      // Clear all active policy configurations so tenant has no limits record
+      await PolicyConfigVersion.deleteMany({});
       const mockFetch = vi.fn();
 
       const result = await dispatchSandboxAction({
@@ -254,7 +291,6 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
         actorRole: "ADMIN",
         proposedActionType: "REQUEST_REFUND",
         idempotencyKey: "idem-missing-limits-01",
-        policyConfig: null, // missing limits
         customFetch: mockFetch
       });
 

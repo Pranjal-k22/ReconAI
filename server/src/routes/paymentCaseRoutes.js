@@ -249,11 +249,6 @@ router.post(
         );
       }
 
-      // Security: Ordinary API evaluation requests cannot supply or override effective refund limits.
-      // Caller-supplied policyConfig is strictly ignored; evaluation uses server-side approved configuration only.
-      // In the absence of an authorized server-side limits record, effectivePolicyConfig resolves to null (fail-closed).
-      const effectivePolicyConfig = null;
-
       const isGlobal =
         req.user.role === ROLES.ADMIN ||
         req.user.role === ROLES.PAYMENT_CONTROLLER;
@@ -262,6 +257,11 @@ router.post(
       if (!scopedTenantId) {
         throw AppError.badRequest("tenantId could not be determined for policy evaluation");
       }
+
+      // Security: Ordinary API evaluation requests cannot supply or override effective refund limits.
+      // Limits are loaded strictly from the active, two-person-approved PolicyConfigVersion record in DB inside evaluateAndSimulateResolution.
+      // Caller-supplied policyConfig is strictly ignored; route enforces server-controlled null config.
+      const effectivePolicyConfig = null;
 
       const result = await evaluateAndSimulateResolution({
         tenantId: scopedTenantId,

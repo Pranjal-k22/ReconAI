@@ -17,6 +17,9 @@
 - [ADR-08: Financial Idempotency, Action Leases, and Concurrency Locks](#adr-08-financial-idempotency-action-leases-and-concurrency-locks)
 - [ADR-09: Asynchronous Payment Monitoring Worker & Outbox Pipeline](#adr-09-asynchronous-payment-monitoring-worker--outbox-pipeline)
 - [ADR-10: Centralized Append-Only Audit Trail for Multi-Agent Actions](#adr-10-centralized-append-only-audit-trail-for-multi-agent-actions)
+- [ADR-11: Phase 3 Authentication, RBAC, and Row-Level Tenant Isolation Enforcement](#adr-11-phase-3-authentication-rbac-and-row-level-tenant-isolation-enforcement)
+- [ADR-12: Phase 3 Security Correction — Auditor Scope, Identity Provenance, Service Binding, and Persistent Revocation](#adr-12-phase-3-security-correction--auditor-scope-identity-provenance-service-binding-and-persistent-revocation)
+- [ADR-13: Governed Versioned Policy-Limits Configuration and Two-Person Approval Boundary](#adr-13-governed-versioned-policy-limits-configuration-and-two-person-approval-boundary)
 
 ---
 
@@ -204,7 +207,7 @@ We expand the existing `auditService.js` and `AuditLog` collection:
 
 ---
 
-## ADR-009: Phase 3 Authentication, RBAC, and Row-Level Tenant Isolation Enforcement
+## ADR-11: Phase 3 Authentication, RBAC, and Row-Level Tenant Isolation Enforcement
 
 ### Context
 ReconAI 2.0 requires robust multi-tenant boundaries, distinct machine/service principals (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`), and deny-by-default role authorization.
@@ -218,7 +221,7 @@ ReconAI 2.0 requires robust multi-tenant boundaries, distinct machine/service pr
 
 ---
 
-## ADR-010: Phase 3 Security Correction — Auditor Scope, Identity Provenance, Service Binding, and Persistent Revocation
+## ADR-12: Phase 3 Security Correction — Auditor Scope, Identity Provenance, Service Binding, and Persistent Revocation
 
 ### Context
 A focused security audit identified that:
@@ -236,3 +239,22 @@ A focused security audit identified that:
 5. **Durable Token Revocation:** Invalidated tokens (by JTI) are persisted to the database via the `RevokedToken` Mongoose collection with MongoDB TTL indexing (`expiresAt: 1`, `expireAfterSeconds: 0`). Middleware evaluates both in-memory cache and persistent datastore on every protected request. In production, datastore unavailability triggers fail-closed denial.
 6. **Immediate Authorization-Lifetime Validation:** `authMiddleware.authenticate` verifies live server-side authorization state on every protected request. Disabling an account or service immediately rejects active tokens (`HTTP 401 Unauthorized`). Privilege downgrades, scope removals (e.g. `GLOBAL_AUDIT`), and tenant changes immediately bind requests to current permissions, denying removed privileges (`HTTP 403 Forbidden`) with zero stale-privilege window. Service credential rotation invalidates previous tokens via `credentialVersion`. In production, datastore failures fail closed (`HTTP 503 Service Unavailable`).
 7. **Persistent Machine-Service Authorization & Restart-Safe Provisioning:** Mutable machine identity authorization state is persisted to the shared MongoDB datastore via `ServicePrincipal` with unique `serviceId` index, validated `serviceRole` enum (`CUSTOMER_AI`, `SHOP_AI`, `PAYMENT_CONTROLLER`), scrypt `credentialHash` and `credentialSalt`, monotonic `credentialVersion`, and `isActive` status. Plaintext machine secrets, bearer tokens, or signing keys are strictly prohibited from being persisted. Startup bootstrap is restart-safe: booting or restarting instances never reactivates disabled services, never reverts rotated credential versions, never restores revoked scopes, and never alters existing tenant/customer bindings. Every protected route validates live state from the persistent datastore. Multi-instance deployments immediately reflect emergency disablement, credential rotation, and scope reduction. In production, datastore unavailability triggers fail-closed denial (`HTTP 503 Service Unavailable`).
+
+---
+
+## ADR-13: Governed Versioned Policy-Limits Configuration and Two-Person Approval Boundary
+
+### Context
+Allowing arbitrary or default monetary refund limits in code or deployment configs creates grave financial loss risks and violates core banking separation-of-duties principles. If refund limits default to fallback values or can be unilaterally created or modified by a single person or autonomous machine identity, rogue actions or compromised keys can trigger unconstrained financial disbursements.
+
+### Decision
+1. **Zero Monetary Defaults:** No monetary limits ship with the repo. Limits exist ONLY as two-person-approved per-tenant records stored in the append-only `PolicyConfigVersion` collection. With no active configuration, all refund evaluations fail closed to `INSUFFICIENT_EVIDENCE`.
+2. **Two-Person Approval Rule:** A configuration proposed by an `ADMIN` can ONLY be activated when approved by a different authenticated `ADMIN` (`approvedBy !== proposedBy`). Proposers cannot approve their own configurations.
+3. **Append-Only & Immutable Records:** Once created, `limits`, `contentHash`, `tenantId`, and `configVersion` are strictly immutable at both Mongoose schema and service levels. Modifications via `PUT`, `PATCH`, or `DELETE` are permanently unavailable (HTTP 405 Method Not Allowed). Any change requires proposing a new version with incremented `configVersion`.
+4. **Single Active Record Guarantee:** MongoDB enforces a unique partial index on `{ tenantId: 1 }` where `{ status: "ACTIVE" }`. Activation atomically supersedes the existing active version before activating the pending version. Two active configs can never exist simultaneously for a tenant.
+5. **Fail-Closed Emergency Deactivation:** Any single `ADMIN` can immediately deactivate an active configuration, transitioning it to `DEACTIVATED`. This ensures emergency kill-switch operation is fast (one person needed to halt operations; two people needed to loosen/activate limits).
+6. **Strict RBAC & Tenant Scoping:** Full configuration access is restricted to `ADMIN`. Read-only access is permitted for `AUDITOR` (strictly tenant-scoped; global auditor access is audited via `GLOBAL_AUDIT_ACCESSED`). `SHOP`, `CUSTOMER`, and all machine identities/service principals are denied (HTTP 403 Forbidden).
+7. **Single Production Evaluation Path:** The dispatch engine and simulation routes read active limits solely from `getActivePolicyConfig(tenantId)`. Injected limits parameters are completely removed from production services.
+8. **Tamper-Evident Token & Execution Binding:** The dispatch service verifies that the active configuration has not changed between policy decision and dispatch; any mismatch aborts with HTTP 409 `POLICY_CONFIG_CHANGED`. `PolicyAuthorizationToken` cryptographically binds `policyConfigVersion` and `policyConfigHash`, verified by the adapter before execution.
+9. **Fail-Closed Audit Trail:** All state transitions (`POLICY_CONFIG_PROPOSED`, `_APPROVED`, `_REJECTED`, `_ACTIVATED`, `_DEACTIVATED`, `_CHANGE_BLOCKED`) are audited before the database mutation. If the audit persistence fails, the operation immediately aborts with HTTP 503 and zero state change.
+10. **No UI for Configuration Yet:** Policy configuration is strictly server-side API only in ReconAI 2.0 Stage 4.

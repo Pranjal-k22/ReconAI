@@ -147,3 +147,18 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
   - Razorpay Refund Idempotency Header: Uses `X-Refund-Idempotency` (minimum 10 characters, alphanumeric + hyphens/underscores).
   - Razorpay Auto-Refund Window: Authorized uncaptured payments auto-refund after 3 days per Razorpay official documentation (no direct void API exists in Razorpay). Normal refunds take 5-7 working days.
   - Safety Invariants: `RAZORPAY_SANDBOX_WRITES_ENABLED` is false by default. No live keys (`rzp_live_`). Autonomous worker refunds strictly prohibited.
+
+## ReconAI 2.0 Stage 4: Corrections & Governed Policy-Limits Configuration
+- **Stage 4A Provenance & Hardening**:
+  - Dispatch is strictly human `ADMIN` only: Service principals (including `PAYMENT_CONTROLLER`) and non-admin roles receive HTTP 403 Forbidden.
+  - Race assertions restored: Integration tests strictly verify exactly one applied mutation, exactly one audit set, no 500s across concurrent deliveries.
+  - Safe-hold codes strictly align with Phase 6 engine specification and pass Mongoose `validateSync` across all 30 scenarios.
+  - Case 8 (Partial Capture) and Case 1 marked RESERVED: not detectable from documented Razorpay fields without custom split-capture webhooks.
+- **Stage 4B Governed Versioned Policy-Limits Configuration**:
+  - Quote: "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
+  - Append-only model `PolicyConfigVersion` with compound index `{ tenantId, configVersion }` and partial unique index on `{ tenantId }` where `status: "ACTIVE"`.
+  - Immutable limits and contentHash; atomic supersession; fail-closed emergency deactivation.
+  - Two-person rule enforced: `approvedBy !== proposedBy` (proposer cannot approve own config).
+  - Single production path: `getActivePolicyConfig(tenantId)` reads database directly; removed test injection limits from production services.
+  - Decision binding: `PolicyDecision` stores `policyConfigVersion` and `contentHash`. Dispatch re-reads config and aborts with HTTP 409 `POLICY_CONFIG_CHANGED` on version or hash drift.
+  - `PolicyAuthorizationToken` cryptographically binds `policyConfigVersion` and `policyConfigHash`, verified by adapter before execution.

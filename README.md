@@ -225,6 +225,24 @@ npm run build
 - `GET /api/audit` — Query append-only audit trail
 - `GET /api/integrations/status` — Get safe integration status (Gemini, Razorpay, DB)
 - `POST /api/razorpay/sync/payments` — Sync Razorpay Test Mode payments (read-only)
+- `POST /api/policy-config` — Propose versioned policy limits (`ADMIN` only)
+- `GET /api/policy-config` — List tenant policy configuration versions (`ADMIN` / `AUDITOR`)
+- `GET /api/policy-config/active` — Get active policy configuration for tenant
+- `POST /api/policy-config/:id/approve` — Approve proposed policy configuration (Two-person rule: different `ADMIN`)
+- `POST /api/policy-config/:id/reject` — Reject proposed policy configuration (`ADMIN`)
+- `POST /api/policy-config/:id/deactivate` — Emergency deactivation of active configuration (`ADMIN`)
+
+---
+
+## Governed Versioned Policy-Limits Configuration (Stage 4B)
+
+> "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
+
+- **Zero Monetary Defaults**: No monetary limits ship with the repository. Refund limits exist exclusively as two-person-approved per-tenant records in `PolicyConfigVersion`.
+- **Two-Person Governance Boundary**: An `ADMIN` cannot approve their own proposed configuration (`approvedBy !== proposedBy`). Approval requires a second distinct authenticated platform administrator.
+- **Fail-Closed Guarantee**: In the absence of an active configuration or upon deactivation, refund policy evaluation unconditionally yields `INSUFFICIENT_EVIDENCE`. Zero preflight GETs, zero reservations, zero tokens, and zero provider HTTP requests are initiated.
+- **Decision Binding & Concurrency Safety**: Policy decisions persist `policyConfigVersion` and `contentHash`. Provider dispatch validates that the active configuration matches the decision state; any divergence aborts with `HTTP 409 POLICY_CONFIG_CHANGED`. `PolicyAuthorizationToken` cryptographically binds version and hash for execution verification.
+
 
 ---
 

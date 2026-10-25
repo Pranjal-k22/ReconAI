@@ -21,6 +21,7 @@ import integrationRoutes from "./routes/integrationRoutes.js";
 import financeRoutes from "./routes/financeRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import orchestrationRoutes from "./routes/orchestrationRoutes.js";
+import policyConfigRoutes from "./routes/policyConfigRoutes.js";
 
 const env = getEnv();
 const app = express();
@@ -82,6 +83,7 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api/payment-cases", paymentCaseRoutes);
 app.use("/api/payment-actions", paymentActionRoutes);
 app.use("/api/payment-events", paymentEventRoutes);
+app.use("/api/policy-config", policyConfigRoutes);
 
 // Protected Core Financial & Reconciliation Routes (Deny by default)
 app.use(

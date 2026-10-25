@@ -62,7 +62,7 @@ export async function collectDispatchEvidence({ tenantId, caseId }) {
       tenantId: cleanTenantId,
       caseId: cleanCaseId,
       actionType: { $in: ["REQUEST_REFUND", "SIMULATE_REFUND_CUSTOMER"] },
-      actionStatus: { $in: ["SIMULATED", "PROPOSED", "IN_FLIGHT"] }
+      actionStatus: { $in: ["PROPOSED", "IN_FLIGHT"] }
     }).lean(),
     ProviderOperation.find({
       tenantId: cleanTenantId,

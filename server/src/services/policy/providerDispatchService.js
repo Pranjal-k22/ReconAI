@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { ProviderOperation } from "../../models/ProviderOperation.js";
 import { PaymentCase } from "../../models/PaymentCase.js";
 import { GatewayPayment } from "../../models/GatewayPayment.js";
+import { PolicyDecision } from "../../models/PolicyDecision.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { collectDispatchEvidence } from "./dispatchEvidenceCollector.js";
 import { performProviderPreflight } from "./providerPreflightService.js";
@@ -20,6 +21,7 @@ import {
   DEFAULT_POLICY_VERSION,
   SUPPORTED_POLICY_VERSIONS
 } from "./resolutionPolicyEvaluator.js";
+import { getActivePolicyConfig } from "./policyConfigService.js";
 import {
   checkSandboxWriteGate,
   executeSandboxRefund,
@@ -100,20 +102,10 @@ export async function dispatchSandboxAction({
   proposedActionType = null,
   idempotencyKey = null,
   amountPaise = null,
-  injectedLimitsProvider = null,
-  policyConfig = null,
   customFetch = null,
   nowMs = null,
   customSecret = null
 }) {
-  const effectiveInjectedLimits = injectedLimitsProvider || policyConfig;
-
-  // -------------------------------------------------------------------------
-  // Invariant 0: Injected limits provider restricted strictly to test environment
-  // -------------------------------------------------------------------------
-  if (effectiveInjectedLimits !== null && process.env.NODE_ENV !== "test") {
-    throw AppError.badRequest("Injected limits provider is strictly prohibited outside test environment");
-  }
 
   if (!tenantId || typeof tenantId !== "string" || !tenantId.trim()) {
     throw AppError.badRequest("Authoritative tenantId is required");
@@ -183,17 +175,11 @@ export async function dispatchSandboxAction({
   const targetCurrency = (gatewayPayment.currency || "INR").toUpperCase();
 
   // -------------------------------------------------------------------------
-  // Step 2: Policy Decision Evaluation (B1)
+  // Step 2: Policy Decision Evaluation (B1/B4)
   // -------------------------------------------------------------------------
-  // In production, policyConfig is ALWAYS null (fail closed).
-  // In test mode only, injectedLimitsProvider is resolved.
-  let effectivePolicyConfig = null;
-  if (process.env.NODE_ENV === "test" && effectiveInjectedLimits) {
-    effectivePolicyConfig =
-      typeof effectiveInjectedLimits === "function"
-        ? effectiveInjectedLimits(cleanTenantId)
-        : effectiveInjectedLimits;
-  }
+  // Single production path: Authoritative limits come strictly from active PolicyConfigVersion in database.
+  const activePolicyConfigRecord = await getActivePolicyConfig(cleanTenantId);
+  const effectivePolicyConfig = activePolicyConfigRecord ? activePolicyConfigRecord.limits : null;
 
   const policyResult = evaluateResolutionPolicy({
     tenantId: cleanTenantId,
@@ -239,6 +225,44 @@ export async function dispatchSandboxAction({
       missingEvidence: policyResult.missingEvidence,
       conflicts: policyResult.conflicts
     };
+  }
+
+  // Verify configuration has not changed or deactivated since decision (B4)
+  const latestDecision = await PolicyDecision.findOne({
+    tenantId: cleanTenantId,
+    caseId: cleanCaseId
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  if (latestDecision && latestDecision.policyConfigVersion != null) {
+    if (
+      !activePolicyConfigRecord ||
+      activePolicyConfigRecord.configVersion !== latestDecision.policyConfigVersion ||
+      activePolicyConfigRecord.contentHash !== latestDecision.contentHash
+    ) {
+      await createAuditEvent({
+        actorType: "SYSTEM",
+        actorId: "provider-dispatch-service",
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: cleanTenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(latestDecision.policyConfigVersion),
+        metadata: {
+          caseId: cleanCaseId,
+          decisionVersion: latestDecision.policyConfigVersion,
+          decisionHash: latestDecision.contentHash,
+          currentVersion: activePolicyConfigRecord?.configVersion || null,
+          currentHash: activePolicyConfigRecord?.contentHash || null
+        }
+      }).catch(() => {});
+
+      throw new AppError(
+        `Active policy configuration changed or was deactivated after policy decision. Refusing dispatch. Decision config version: ${latestDecision.policyConfigVersion}, current active config version: ${activePolicyConfigRecord?.configVersion || "NONE"}`,
+        409,
+        "POLICY_CONFIG_CHANGED"
+      );
+    }
   }
 
   // Derive idempotencyKey server-side: policyDecisionId + actionType + gatewayPaymentId (B1)
@@ -504,6 +528,50 @@ export async function dispatchSandboxAction({
     throw err;
   }
 
+  // Re-read active policy config: must match version and contentHash evaluated at decision time (B4)
+  const freshConfigRecord = await getActivePolicyConfig(cleanTenantId);
+
+  // Check against latest persisted PolicyDecision for this case (if any)
+  const decisionVersion = latestDecision?.policyConfigVersion || activePolicyConfigRecord?.configVersion;
+  const decisionHash = latestDecision?.contentHash || activePolicyConfigRecord?.contentHash;
+
+  if (
+    !freshConfigRecord ||
+    freshConfigRecord.configVersion !== decisionVersion ||
+    freshConfigRecord.contentHash !== decisionHash ||
+    freshConfigRecord.configVersion !== activePolicyConfigRecord.configVersion ||
+    freshConfigRecord.contentHash !== activePolicyConfigRecord.contentHash
+  ) {
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: "provider-dispatch-service",
+      action: "POLICY_CONFIG_CHANGE_BLOCKED",
+      tenantId: cleanTenantId,
+      entityType: "PolicyConfigVersion",
+      entityId: String(decisionVersion || "none"),
+      metadata: {
+        caseId: cleanCaseId,
+        decisionVersion,
+        decisionHash,
+        currentVersion: freshConfigRecord?.configVersion || null,
+        currentHash: freshConfigRecord?.contentHash || null
+      }
+    }).catch(() => {});
+
+    await releaseRefundReservation({
+      tenantId: cleanTenantId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      idempotencyKey: serverIdempotencyKey,
+      reason: "POLICY_CONFIG_CHANGED"
+    }).catch(() => {});
+
+    throw new AppError(
+      "Active policy configuration changed or was deactivated after policy decision. Refusing dispatch.",
+      409,
+      "POLICY_CONFIG_CHANGED"
+    );
+  }
+
   // Issue signed PolicyAuthorizationToken
   const { token: authorizationToken, tokenId } = await issuePolicyAuthorizationToken({
     tenantId: cleanTenantId,
@@ -515,6 +583,8 @@ export async function dispatchSandboxAction({
     currency: targetCurrency,
     idempotencyKey: serverIdempotencyKey,
     policyVersion: policyResult.policyVersion || DEFAULT_POLICY_VERSION,
+    policyConfigVersion: activePolicyConfigRecord.configVersion,
+    policyConfigHash: activePolicyConfigRecord.contentHash,
     ttlSeconds: 120,
     nowMs,
     customSecret
@@ -533,6 +603,8 @@ export async function dispatchSandboxAction({
       expectedAmountPaise: targetAmountPaise,
       expectedCurrency: targetCurrency,
       expectedIdempotencyKey: serverIdempotencyKey,
+      expectedPolicyConfigVersion: activePolicyConfigRecord.configVersion,
+      expectedPolicyConfigHash: activePolicyConfigRecord.contentHash,
       nowMs,
       customSecret
     });
@@ -638,6 +710,8 @@ export async function dispatchSandboxAction({
       currency: targetCurrency,
       idempotencyKey: serverIdempotencyKey,
       providerIdempotencyKey: serverIdempotencyKey,
+      expectedPolicyConfigVersion: activePolicyConfigRecord.configVersion,
+      expectedPolicyConfigHash: activePolicyConfigRecord.contentHash,
       notes: {
         reconaiCaseId: cleanCaseId,
         tenantId: cleanTenantId,

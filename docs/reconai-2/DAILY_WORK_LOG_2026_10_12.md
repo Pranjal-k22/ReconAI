@@ -992,3 +992,43 @@ ReconAI/
   - Monitoring Smoke Test: 7/7 gates passed.
   - Client Build: Clean build (2,416 modules).
   - Code Cleanliness: 0 whitespace / conflict errors (`git diff --check`).
+
+### Entry 18: Stage 4B Governed Versioned Policy-Limits Configuration
+
+> "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
+
+- **B1. Model `PolicyConfigVersion` (Append-Only, Immutable Limits)**:
+  - Created `server/src/models/PolicyConfigVersion.js` with fields: `tenantId` (quarantine sentinel rejected), `configVersion` (monotonic integer), `status` (`PENDING_APPROVAL`, `ACTIVE`, `SUPERSEDED`, `REJECTED`, `DEACTIVATED`), `limits` (`currency: "INR"`, `maxSingleRefundPaise`, `maxCumulativeRefundPaise` with NO defaults), `contentHash` (sha256 of canonical limits), two-person fields (`proposedBy`, `approvedBy`, `proposalReason`, `approvalReason`, `activatedAt`, `supersededAt`), `sourceConfigVersion`.
+  - Unique compound index `{ tenantId: 1, configVersion: 1 }` and partial unique index on `{ tenantId: 1 }` where `{ status: "ACTIVE" }` (at most one active configuration per tenant).
+  - Schema-level pre-save and pre-update guards strictly prevent modification of `limits`, `contentHash`, `tenantId`, and `configVersion`.
+  - Evaluator semantics: `maxSingleRefundPaise` = single refund cap; `maxCumulativeRefundPaise` = cumulative cap on one payment (or daily velocity when `currentCumulativeDailyPaise` is provided). Evaluator semantics preserved without alteration.
+
+- **B2. Governed Policy Config Service**:
+  - Implemented `server/src/services/policy/policyConfigService.js` with strict rules:
+    - `proposePolicyConfig`: ADMIN only. Validates positive safe integers, `single <= cumulative`, currency `INR`, reason 10-500 chars (control characters stripped), tenant must exist and not be sentinel.
+    - `approvePolicyConfig`: ADMIN only. Enforces two-person rule: `approvedBy !== proposedBy`. Two-step atomic supersession and activation.
+    - `rejectPolicyConfig`: ADMIN only (including proposer withdrawal).
+    - `deactivatePolicyConfig`: Any single ADMIN for fast emergency kill-switch (`ACTIVE -> DEACTIVATED`). Loosening needs two; tightening needs one.
+    - `rollbackPolicyConfig`: Proposes a new version copying limits from earlier `sourceConfigVersion`, requiring a different approver.
+    - Permanent rejection of PUT, PATCH, DELETE (HTTP 405 Method Not Allowed).
+
+- **B3. Routes under `/api/policy-config`**:
+  - Implemented `server/src/routes/policyConfigRoutes.js` mounted at `/api/policy-config`.
+  - Strict Zod schemas (`.strict()`).
+  - RBAC: ADMIN all; AUDITOR GET only (tenant-scoped; `GLOBAL_AUDIT` audited); SHOP, CUSTOMER, machine services receive HTTP 403; unauthenticated receive HTTP 401.
+
+- **B4. Production Wiring & Execution Binding**:
+  - Updated `providerDispatchService.js`: replaced test injection limits with single production path reading `getActivePolicyConfig(cleanTenantId)`. Missing or deactivated config fails closed to `INSUFFICIENT_EVIDENCE` with zero preflight reads, zero reservations, zero tokens, zero provider calls.
+  - Decision binding: `PolicyDecision` persists `policyConfigVersion` and `contentHash`. Dispatch verifies active config against decision version/hash; drift immediately returns HTTP 409 `POLICY_CONFIG_CHANGED`.
+  - `PolicyAuthorizationToken` and `razorpaySandboxAdapter.js` cryptographically bind `policyConfigVersion` and `policyConfigHash`.
+
+- **B5. Audit Logging (Fail-Closed)**:
+  - Added audit actions: `POLICY_CONFIG_PROPOSED`, `POLICY_CONFIG_APPROVED`, `POLICY_CONFIG_REJECTED`, `POLICY_CONFIG_ACTIVATED`, `POLICY_CONFIG_DEACTIVATED`, `POLICY_CONFIG_CHANGE_BLOCKED`.
+  - Audit event is written BEFORE state transition; failure aborts with HTTP 503 and zero state mutation.
+
+- **B6. Verification & Test Suite**:
+  - Unit tests: `server/tests/policy/policyConfigValidation.test.js` (30 tests: negative, zero, float, string, NaN, MAX_SAFE_INTEGER, single > cumulative, wrong currency, missing/extra fields, sentinel tenant, unknown tenant, immutability).
+  - Route tests: `server/tests/routes/policyConfigRoutes.test.js` (16 tests: full role x endpoint matrix, strict Zod bodies, two-person rule, 405 method guards).
+  - Concurrency integration tests: `server/tests/integration/policyConfigConcurrency.integration.test.js` (7 tests: 10 parallel approvals yielding exactly one winner, atomic supersede, unique ACTIVE index, audit failure fail-closed, refund fail-closed).
+  - E2E lifecycle: `server/tests/integration/policyLimitsGovernedE2E.integration.test.js` (1 test: propose & approve -> decision records version -> dispatch succeeds with mocked fetch -> deactivate fails closed -> config change returns 409).
+  - Updated `providerSandboxDispatchPersistence.integration.test.js`: seeds active `PolicyConfigVersion` records for test tenants; verifies missing limits fail-closed.

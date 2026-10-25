@@ -71,6 +71,15 @@ const policyDecisionSchema = new mongoose.Schema(
       default: "2026-10-12.v1",
       trim: true
     },
+    policyConfigVersion: {
+      type: Number,
+      default: null
+    },
+    contentHash: {
+      type: String,
+      default: null,
+      trim: true
+    },
     proposedActionType: {
       type: String,
       required: [true, "proposedActionType is required"],

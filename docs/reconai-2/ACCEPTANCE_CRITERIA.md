@@ -86,3 +86,22 @@ ReconAI 2.0 defines explicit operational metrics for its autonomous payment cont
 - **Scope**: Live multi-agent interactions, webhook streams, out-of-order delivery, provider timeouts, and concurrency bursts.
 - **Metric**: Autonomous resolution rate, safe-hold accuracy, idempotency verification, and zero false actions.
 - **Purpose**: Validates real-world autonomous payment monitoring and resolution capabilities.
+
+---
+
+## 4. Governed Versioned Policy-Limits Configuration (Stage 4 Part B)
+
+> "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
+
+### Gate 8: Two-Person Governance Boundary
+- **Criterion**: Monetary refund limits cannot be created, defaulted, or updated unilaterally by a single identity. A proposal submitted by an `ADMIN` can only be activated by a different authenticated `ADMIN` (`approvedBy !== proposedBy`).
+- **Measurement**: 100% of self-approval and non-ADMIN approval attempts are rejected with HTTP 403 Forbidden.
+
+### Gate 9: Immutability and Unique Active Configuration
+- **Criterion**: Once created, `limits`, `contentHash`, `tenantId`, and `configVersion` are strictly immutable. MongoDB partial unique index on `{ tenantId: 1 }` where `{ status: 'ACTIVE' }` guarantees at most one active configuration exists per tenant. Activation atomically supersedes the current active version.
+- **Measurement**: 100% of mutation attempts via PUT, PATCH, or DELETE return HTTP 405 Method Not Allowed; parallel approval races yield exactly one ACTIVE record.
+
+### Gate 10: Fail-Closed Refund Enforcement & Decision Binding
+- **Criterion**: When a tenant has no active policy config, or its config is DEACTIVATED, refund policy evaluation unconditionally returns `INSUFFICIENT_EVIDENCE` with zero preflight reads, zero balance reservations, zero tokens issued, and zero provider HTTP requests.
+- **Decision Binding**: If active configuration changes between policy decision and provider dispatch, dispatch is refused with HTTP 409 `POLICY_CONFIG_CHANGED`. `PolicyAuthorizationToken` cryptographically binds `policyConfigVersion` and `policyConfigHash`.
+- **Measurement**: 100% fail-closed behavior across unconfigured and deactivated tenants; 0 provider calls made without verified two-person-approved active configuration.

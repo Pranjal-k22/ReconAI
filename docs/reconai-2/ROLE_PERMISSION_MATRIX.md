@@ -90,6 +90,8 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 | **Audit Ledger** | View Events | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | **Audit Ledger** | Append Event | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (System Central) |
 | **System Configuration** | Read / Write | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Policy Limits Configuration (/api/policy-config)** | Propose / Approve / Reject / Deactivate | ❌ | ❌ | ✅ (Two-Person Rule) | ❌ | ❌ | ❌ | ❌ |
+| **Policy Limits Configuration (/api/policy-config)** | View Active / History | ❌ | ❌ | ✅ | ✅ (Tenant-Scoped / Global Audited) | ❌ | ❌ | ❌ |
 
 > **Provider Write Dispatch Hardening (Stage 3 & 4)**:
 > 1. Provider write execution is restricted strictly to authenticated human `ADMIN` principals triggering `POST /api/payment-cases/:caseId/provider/dispatch`. Machine identities (including PAYMENT_CONTROLLER, background workers, schedulers, and AI agents) cannot dispatch (returns HTTP 403 Forbidden).
@@ -97,6 +99,13 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 > 3. Autonomous or machine-triggered refunds by background workers, schedulers, or service principals are strictly prohibited.
 > 4. Execution requires a valid, unexpired, single-use `PolicyAuthorizationToken` (Gate 3) signed with `POLICY_TOKEN_SECRET`.
 > 5. Writes are disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`) and restricted to test keys (`rzp_test_...`).
+
+> **Governed Versioned Policy-Limits Configuration (Stage 4B)**:
+> "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
+> 1. Propose, approve, reject, deactivate, rollback endpoints strictly require `ADMIN` role. Proposers cannot approve their own configurations (`approvedBy !== proposedBy`).
+> 2. Read endpoints (`GET /api/policy-config`, `GET /api/policy-config/active`) permit `ADMIN` and `AUDITOR` (strictly tenant-scoped to `token.tenantId` unless privileged `GLOBAL_AUDIT` scope is present and audited via `GLOBAL_AUDIT_ACCESSED`).
+> 3. `SHOP`, `CUSTOMER`, and all machine identities/service principals are rejected with HTTP 403 Forbidden. Unauthenticated requests are rejected with HTTP 401 Unauthorized.
+> 4. `PUT`, `PATCH`, `DELETE` are permanently unavailable (HTTP 405 Method Not Allowed).
 
 
 ---

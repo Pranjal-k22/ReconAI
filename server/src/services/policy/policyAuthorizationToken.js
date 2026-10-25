@@ -59,6 +59,8 @@ export async function issuePolicyAuthorizationToken({
   currency = "INR",
   idempotencyKey,
   policyVersion = "1.0.0",
+  policyConfigVersion = null,
+  policyConfigHash = null,
   ttlSeconds = 120,
   nowMs = null,
   customSecret = null
@@ -87,6 +89,8 @@ export async function issuePolicyAuthorizationToken({
     currency: String(currency || "INR").trim().toUpperCase(),
     idempotencyKey: String(idempotencyKey).trim(),
     policyVersion: String(policyVersion || "1.0.0").trim(),
+    policyConfigVersion: policyConfigVersion !== null && policyConfigVersion !== undefined ? Number(policyConfigVersion) : null,
+    policyConfigHash: policyConfigHash ? String(policyConfigHash).trim() : null,
     issuedAt,
     expiresAt
   };
@@ -155,6 +159,8 @@ export async function verifyPolicyAuthorizationToken({
   expectedAmountPaise,
   expectedCurrency = "INR",
   expectedIdempotencyKey,
+  expectedPolicyConfigVersion = null,
+  expectedPolicyConfigHash = null,
   expectedOperationId = null,
   nowMs = null,
   customSecret = null
@@ -238,6 +244,26 @@ export async function verifyPolicyAuthorizationToken({
   }
   if (payload.idempotencyKey !== expectedIdempotencyKey) {
     await reject("PolicyAuthorizationToken idempotencyKey mismatch", { tokenIdempotencyKey: payload.idempotencyKey, expectedIdempotencyKey }, tokenId);
+  }
+
+  if (expectedPolicyConfigVersion !== undefined && expectedPolicyConfigVersion !== null) {
+    if (payload.policyConfigVersion !== expectedPolicyConfigVersion) {
+      await reject(
+        "PolicyAuthorizationToken policyConfigVersion mismatch",
+        { tokenVersion: payload.policyConfigVersion, expectedPolicyConfigVersion },
+        tokenId
+      );
+    }
+  }
+
+  if (expectedPolicyConfigHash !== undefined && expectedPolicyConfigHash !== null) {
+    if (payload.policyConfigHash !== expectedPolicyConfigHash) {
+      await reject(
+        "PolicyAuthorizationToken policyConfigHash mismatch",
+        { tokenHash: payload.policyConfigHash, expectedPolicyConfigHash },
+        tokenId
+      );
+    }
   }
 
   // 5. Single-use enforcement: check if tokenId has already been consumed on a ProviderOperation
