@@ -7,6 +7,7 @@ import { SCENARIO_IDS } from "../../src/models/EvidenceRecord.js";
 import { ACTION_STATUSES } from "../../src/models/PaymentAction.js";
 import * as razorpayClient from "../../src/services/razorpay/razorpayClient.js";
 import { CLASSIFICATION_SCENARIOS } from "../helpers/classificationScenarios.js";
+import { PaymentCase, SAFE_HOLD_CODES } from "../../src/models/PaymentCase.js";
 
 describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved Scenarios)", () => {
   const TENANT = "tenant_merch_01";
@@ -1378,5 +1379,23 @@ describe("Phase 6 — Deterministic Edge-Case Classification Engine (30 Approved
         expect(finding.safeHoldCode).not.toBe("GENERAL_SAFE_HOLD");
       }
     );
+
+    it("verifies every emitted safeHoldCode is in SAFE_HOLD_CODES and passes PaymentCase validateSync", () => {
+      for (const scenario of scenarios) {
+        const finding = classifyPaymentScenario(scenario.input);
+        expect(SAFE_HOLD_CODES).toContain(finding.safeHoldCode);
+        const testCase = new PaymentCase({
+          tenantId: "tenant_audit_test",
+          caseId: `CASE-${scenario.caseNum}`,
+          gatewayPaymentId: `pay_audit_${scenario.caseNum}`,
+          merchantOrderId: `ord_audit_${scenario.caseNum}`,
+          amountPaise: 50000,
+          safeHoldCode: finding.safeHoldCode,
+          isSafeHold: finding.safeHold
+        });
+        const err = testCase.validateSync();
+        expect(err?.errors?.safeHoldCode).toBeUndefined();
+      }
+    });
   });
 });

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../../src/app.js";
 import * as dispatchService from "../../src/services/policy/providerDispatchService.js";
+import * as serviceRegistry from "../../src/services/auth/serviceRegistry.js";
 import { signUserToken, signServiceToken, ROLES } from "../../src/services/auth/tokenService.js";
 import { AppError } from "../../src/utils/AppError.js";
 
@@ -34,6 +35,12 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
     customerId: "CUST-PROV-01"
   });
 
+  const auditorToken = signUserToken({
+    userId: "usr_auditor_prov",
+    role: ROLES.AUDITOR,
+    tenantId: TENANT_A
+  });
+
   const sampleOp = {
     operationId: "OP-20261012-A1B2C3D4",
     tenantId: TENANT_A,
@@ -51,6 +58,33 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(serviceRegistry, "getServiceAuthorizationState").mockImplementation(async (serviceId) => {
+      if (serviceId === "svc_ctrl_prov") {
+        return {
+          serviceId: "svc_ctrl_prov",
+          role: ROLES.PAYMENT_CONTROLLER,
+          tenantId: TENANT_A,
+          isActive: true
+        };
+      }
+      if (serviceId === "svc_investigator_ai") {
+        return {
+          serviceId: "svc_investigator_ai",
+          role: ROLES.INVESTIGATOR_AI,
+          tenantId: TENANT_A,
+          isActive: true
+        };
+      }
+      if (serviceId === "svc_planner_ai") {
+        return {
+          serviceId: "svc_planner_ai",
+          role: ROLES.RESOLUTION_PLANNER_AI,
+          tenantId: TENANT_A,
+          isActive: true
+        };
+      }
+      return null;
+    });
   });
 
   describe("1. Authentication and RBAC Enforcement", () => {
@@ -71,7 +105,7 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
       expect(res.status).toBe(403);
     });
 
-    it("returns 403 when merchant/shop attempts provider dispatch (requires ADMIN or PAYMENT_CONTROLLER)", async () => {
+    it("returns 403 when merchant/shop attempts provider dispatch", async () => {
       const res = await request(app)
         .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
         .set("Authorization", `Bearer ${shopToken}`)
@@ -80,7 +114,44 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
       expect(res.status).toBe(403);
     });
 
-    it("allows ADMIN or PAYMENT_CONTROLLER role to access dispatch route", async () => {
+    it("returns 403 when auditor attempts provider dispatch", async () => {
+      const res = await request(app)
+        .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
+        .set("Authorization", `Bearer ${auditorToken}`)
+        .send({ actionType: "REQUEST_REFUND" });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 403 when payment controller attempts provider dispatch (dispatch is ADMIN-only)", async () => {
+      const res = await request(app)
+        .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
+        .set("Authorization", `Bearer ${controllerToken}`)
+        .send({ actionType: "REQUEST_REFUND" });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 403 for AI service roles (INVESTIGATOR_AI, RESOLUTION_PLANNER_AI)", async () => {
+      for (const [serviceId, role] of [
+        ["svc_investigator_ai", ROLES.INVESTIGATOR_AI],
+        ["svc_planner_ai", ROLES.RESOLUTION_PLANNER_AI]
+      ]) {
+        const token = signServiceToken({
+          serviceId,
+          role,
+          tenantId: TENANT_A
+        });
+        const res = await request(app)
+          .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
+          .set("Authorization", `Bearer ${token}`)
+          .send({ actionType: "REQUEST_REFUND" });
+
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it("allows only ADMIN role to access dispatch route", async () => {
       vi.spyOn(dispatchService, "dispatchSandboxAction").mockResolvedValue({
         dispatchBlocked: false,
         isDuplicate: false,

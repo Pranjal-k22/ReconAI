@@ -321,7 +321,7 @@ router.get(
  */
 router.post(
   "/:caseId/provider/dispatch",
-  requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER),
+  requireRoles(ROLES.ADMIN),
   async (req, res, next) => {
     try {
       // 1. Strict schema validation: route accepts ONLY { actionType: "REQUEST_REFUND" }

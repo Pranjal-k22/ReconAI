@@ -91,10 +91,10 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 | **Audit Ledger** | Append Event | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (System Central) |
 | **System Configuration** | Read / Write | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
-> **Provider Write Dispatch Hardening (Stage 3)**:
-> 1. Provider write execution is restricted to authenticated `ADMIN` principals triggering `POST /api/payment-cases/:caseId/provider/dispatch`.
+> **Provider Write Dispatch Hardening (Stage 3 & 4)**:
+> 1. Provider write execution is restricted strictly to authenticated human `ADMIN` principals triggering `POST /api/payment-cases/:caseId/provider/dispatch`. Machine identities (including PAYMENT_CONTROLLER, background workers, schedulers, and AI agents) cannot dispatch (returns HTTP 403 Forbidden).
 > 2. The dispatch route accepts ONLY `{ actionType }` alongside `:caseId`. Caller-supplied amounts, limits, approval flags, or idempotency keys are strictly rejected with HTTP 400.
-> 3. Autonomous refunds by background workers remain strictly prohibited.
+> 3. Autonomous or machine-triggered refunds by background workers, schedulers, or service principals are strictly prohibited.
 > 4. Execution requires a valid, unexpired, single-use `PolicyAuthorizationToken` (Gate 3) signed with `POLICY_TOKEN_SECRET`.
 > 5. Writes are disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`) and restricted to test keys (`rzp_test_...`).
 

@@ -106,6 +106,7 @@ A rigorous security analysis of frontend evidence provenance established that:
    - Unauthorized principals (`CUSTOMER`, `SHOP`, etc.) cannot access `POST /api/payment-events` (HTTP 403).
 4. **Server-Verified Provenance Requirement**: Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`) is classified only when evidence originates from authoritative server-side ledger events (`RECONAI_SYSTEM` or `MERCHANT_ORDER`) carrying explicit cryptographic/server verification (`serverVerifiedTelemetry: true`) bound strictly to the matching tenant, merchant order, and gateway payment ID.
 5. **Safe Status Mismatch Fallback**: In the absence of server-verified telemetry (the default in the current architecture), `CAPTURED` gateway payment plus `PENDING` merchant order safely classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`) with explicit missing-evidence indicators explaining that trusted frontend checkout telemetry is unobserved. Case 1 remains unconfirmed in ordinary production flows.
+6. **Partial Capture Reservation**: The documented Razorpay Payment entity exposes only `amount` and boolean `captured`. Without an `amount_authorized` field in standard production payloads, Case 8 (`CASE_8_PARTIAL_CAPTURE`) cannot be detected from production data and is marked `[RESERVED: not detectable from documented fields]` alongside Case 1.
 
 ---
 

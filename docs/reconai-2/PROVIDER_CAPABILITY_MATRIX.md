@@ -33,7 +33,7 @@ To ensure strict financial safety, ReconAI 2.0 architecture decouples provider c
 ### Mode 3: Sandbox / Test-Mode Write Operations (`SANDBOX`)
 - **Status**: **IMPLEMENTED & HARDENED IN STAGE 3 (`razorpaySandboxAdapter.js`)**.
 - **Behavior**: Executes write mutations (full refunds) against Razorpay Test Mode API (`https://api.razorpay.com/v1/...`) using valid `rzp_test_...` credentials.
-- **Safety Boundary**: Hardcoded safety guard blocks any key beginning with `rzp_live_`. Writes are disabled by default via `RAZORPAY_SANDBOX_WRITES_ENABLED=false`. Execution strictly requires a signed Gate 3 `PolicyAuthorizationToken` (HMAC-SHA256, 120s TTL), server-derived dispatch evidence and idempotency key, authoritative fresh preflight GET read, atomic refund reservation (`reserveRefund`), and fail-closed policy limits. Autonomous worker refunds are prohibited.
+- **Safety Boundary**: Hardcoded safety guard blocks any key beginning with `rzp_live_`. Writes are disabled by default via `RAZORPAY_SANDBOX_WRITES_ENABLED=false`. Execution strictly requires a signed Gate 3 `PolicyAuthorizationToken` (HMAC-SHA256, 120s TTL), server-derived dispatch evidence and idempotency key, authoritative fresh preflight GET read, atomic refund reservation (`reserveRefundAmount`), and fail-closed policy limits. Dispatch is restricted strictly to authenticated human `ADMIN` principals (`POST /api/payment-cases/:caseId/provider/dispatch`); machine identities (workers, orchestrators, schedulers, AI agents, PAYMENT_CONTROLLER) cannot dispatch. Autonomous or machine-triggered worker refunds are strictly prohibited.
 
 ### Mode 4: Live-Mode Write Operations (`LIVE`)
 - **Status**: **STRICTLY BLOCKED & PROHIBITED**.

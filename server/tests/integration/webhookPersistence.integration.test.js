@@ -318,15 +318,30 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     const accepted = responses.filter((r) => r.status === 200 && r.body?.data?.status === "ACCEPTED");
     const inFlight503s = responses.filter((r) => r.status === 503);
     const duplicateAcks = responses.filter((r) => r.status === 200 && r.body?.data?.status === "DUPLICATE_ACKNOWLEDGED");
+    const errors500 = responses.filter((r) => r.status >= 500 && r.status !== 503);
 
+    expect(errors500.length).toBe(0);
     expect(accepted.length).toBe(1);
     expect(inFlight503s.length + duplicateAcks.length).toBe(4);
+    for (const r of responses) {
+      expect([200, 503]).toContain(r.status);
+      if (r.status === 200) {
+        expect(["ACCEPTED", "DUPLICATE_ACKNOWLEDGED"]).toContain(r.body?.data?.status);
+      }
+    }
 
     // Mutation is applied exactly once in MongoDB
     const paymentDoc = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
     expect(paymentDoc.status).toBe("CAPTURED");
     const orderDoc = await MerchantOrder.findOne({ merchantOrderId: "order_concurrent_01" }).lean();
     expect(orderDoc.status).toBe("PAID");
+
+    // Exactly one audit set is created for the ingested event
+    const auditEntries = await AuditLog.find({
+      action: "WEBHOOK_INGESTED",
+      "metadata.deduplicationKey": deduplicationKey
+    }).lean();
+    expect(auditEntries.length).toBe(1);
 
     // A subsequent provider retry after completion returns 200 DUPLICATE_ACKNOWLEDGED
     const retryRes = await request(app)

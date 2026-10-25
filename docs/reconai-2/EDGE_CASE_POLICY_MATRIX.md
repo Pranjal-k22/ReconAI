@@ -127,8 +127,8 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 
 ---
 
-### Case 8: Partial Capture
-- **Detection Signal**: Gateway `amount_captured < amount_authorized`.
+### Case 8: Partial Capture [RESERVED: not detectable from documented fields]
+- **Detection Signal**: Gateway `amount_captured < amount_authorized` (Not present in documented standard entity).
 - **Authoritative Evidence**: Provider payment record with split capture fields.
 - **Missing / Uncertain Evidence**: Merchant partial fulfillment terms.
 - **Autonomous Action Eligibility**: **NOT ELIGIBLE FOR AUTONOMOUS ACTION**.
