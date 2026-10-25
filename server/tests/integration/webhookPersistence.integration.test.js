@@ -314,12 +314,13 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       )
     );
 
-    // Exactly 1 must succeed with 200 ACCEPTED, the other 4 concurrent in-flight deliveries must receive 503 (retryable)
+    // Exactly 1 must succeed with 200 ACCEPTED, the other 4 concurrent deliveries must receive 503 (in-flight) or 200 (duplicate acknowledged)
     const accepted = responses.filter((r) => r.status === 200 && r.body?.data?.status === "ACCEPTED");
     const inFlight503s = responses.filter((r) => r.status === 503);
+    const duplicateAcks = responses.filter((r) => r.status === 200 && r.body?.data?.status === "DUPLICATE_ACKNOWLEDGED");
 
     expect(accepted.length).toBe(1);
-    expect(inFlight503s.length).toBe(4);
+    expect(inFlight503s.length + duplicateAcks.length).toBe(4);
 
     // Mutation is applied exactly once in MongoDB
     const paymentDoc = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();

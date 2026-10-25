@@ -113,13 +113,12 @@ export async function performProviderPreflight({
     );
   }
 
-  // 4. Validate Captured Amount
+  // 4. Validate Captured Amount (using official documented Razorpay Payment entity fields)
+  const isCaptured = payment.status === "captured" || payment.captured === true;
   const providerCaptured =
     typeof payment.amount_captured === "number"
       ? payment.amount_captured
-      : typeof payment.amount === "number"
-      ? payment.amount
-      : null;
+      : (isCaptured && typeof payment.amount === "number" ? payment.amount : null);
 
   if (providerCaptured !== localAmountPaise) {
     return await failMismatch(

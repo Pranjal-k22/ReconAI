@@ -75,7 +75,7 @@ export async function reserveRefund({
         $gte: [
           {
             $subtract: [
-              { $subtract: ["$amountPaise", { $ifNull: ["$refundAmountPaise", 0] }] },
+              { $subtract: [{ $ifNull: ["$capturedAmountPaise", "$amountPaise"] }, { $ifNull: ["$refundAmountPaise", 0] }] },
               { $ifNull: ["$reservedRefundPaise", 0] }
             ]
           },

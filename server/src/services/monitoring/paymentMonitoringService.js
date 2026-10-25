@@ -363,12 +363,12 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
     }
   }
 
-  const capturedAmountPaise =
-    mappedStatus === "CAPTURED"
-      ? (typeof providerData?.amount_captured === "number"
-          ? providerData.amount_captured
-          : (typeof providerData?.amount === "number" ? providerData.amount : null))
-      : null;
+  const isCaptured = mappedStatus === "CAPTURED" || providerData?.captured === true;
+  const capturedAmountPaise = isCaptured
+    ? (typeof providerData?.amount === "number"
+        ? providerData.amount
+        : (typeof providerData?.amount_captured === "number" ? providerData.amount_captured : null))
+    : null;
   const paymentCurrency = (providerData?.currency || "INR").toUpperCase();
 
   const transitionEval = evaluateCanonicalTransition({

@@ -1087,10 +1087,12 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
             lastProviderEventAt: providerEventAt,
             rawData: sanitizeWebhookPayload(paymentEntity)
           };
-          if (newPaymentStatus === "CAPTURED") {
+          if (newPaymentStatus === "CAPTURED" || paymentEntity.captured === true) {
             const capturedAmt = typeof paymentEntity.amount_captured === "number"
               ? paymentEntity.amount_captured
-              : (typeof paymentEntity.amount === "number" ? paymentEntity.amount : null);
+              : (paymentEntity.captured === true || paymentEntity.status === "captured"
+                  ? (typeof paymentEntity.amount === "number" ? paymentEntity.amount : null)
+                  : null);
             if (capturedAmt !== null) {
               updateFields.capturedAmountPaise = capturedAmt;
             }
@@ -1123,10 +1125,13 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
           );
         }
       } else {
-        const capturedAmt = newPaymentStatus === "CAPTURED"
+        const isCaptured = newPaymentStatus === "CAPTURED" || paymentEntity.captured === true;
+        const capturedAmt = isCaptured
           ? (typeof paymentEntity.amount_captured === "number"
               ? paymentEntity.amount_captured
-              : (amountPaise || null))
+              : (paymentEntity.captured === true || paymentEntity.status === "captured"
+                  ? (typeof paymentEntity.amount === "number" ? paymentEntity.amount : (amountPaise || null))
+                  : (amountPaise || null)))
           : null;
 
         const newPaymentDoc = {
@@ -1181,8 +1186,8 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       let capturedAmountEvidence = null;
       if (typeof paymentEntity.amount_captured === "number") {
         capturedAmountEvidence = paymentEntity.amount_captured;
-      } else if (paymentEntity.captured === true && typeof paymentEntity.amount === "number") {
-        capturedAmountEvidence = paymentEntity.amount;
+      } else if (paymentEntity.captured === true || paymentEntity.status === "captured") {
+        capturedAmountEvidence = typeof paymentEntity.amount === "number" ? paymentEntity.amount : null;
       } else if (typeof eventEnvelope.payload?.order?.entity?.amount_paid === "number") {
         capturedAmountEvidence = eventEnvelope.payload.order.entity.amount_paid;
       }
@@ -1507,10 +1512,11 @@ export async function reprocessQuarantinedWebhookEvents({
     );
 
     const paymentStatus = mapToGatewayPaymentStatus(eventName);
-    const capturedAmt = paymentStatus === "CAPTURED"
-      ? (typeof paymentEntity.amount_captured === "number"
-          ? paymentEntity.amount_captured
-          : (typeof paymentEntity.amount === "number" ? paymentEntity.amount : null))
+    const isCaptured = paymentStatus === "CAPTURED" || paymentEntity.captured === true;
+    const capturedAmt = isCaptured
+      ? (typeof paymentEntity.amount === "number"
+          ? paymentEntity.amount
+          : (typeof paymentEntity.amount_captured === "number" ? paymentEntity.amount_captured : null))
       : null;
 
     // Apply updates to GatewayPayment and MerchantOrder

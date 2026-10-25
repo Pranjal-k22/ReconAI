@@ -75,6 +75,12 @@ export function signUserToken({
     throw AppError.badRequest("SHOP role requires tenantId");
   }
 
+  if (tenantId && tenantId.trim() === "unassigned_provider_quarantine") {
+    throw AppError.badRequest(
+      "Tenant 'unassigned_provider_quarantine' is a protected internal quarantine sentinel and cannot be claimed in user tokens"
+    );
+  }
+
   const env = getEnv();
   const jti = crypto.randomUUID();
 
@@ -128,6 +134,12 @@ export function signServiceToken({
 
   if ((role === ROLES.INVESTIGATOR_AI || role === ROLES.RESOLUTION_PLANNER_AI) && !tenantId) {
     throw AppError.badRequest(`${role} requires tenantId`);
+  }
+
+  if (tenantId && tenantId.trim() === "unassigned_provider_quarantine") {
+    throw AppError.badRequest(
+      "Tenant 'unassigned_provider_quarantine' is a protected internal quarantine sentinel and cannot be claimed in service tokens"
+    );
   }
 
   const env = getEnv();
@@ -196,6 +208,10 @@ export function verifyToken(token, { expectedAudience = null } = {}) {
     // Verify mandatory claims
     if (!verified.sub || !verified.role || !verified.identityType) {
       throw AppError.unauthorized("Token missing mandatory claims");
+    }
+
+    if (verified.tenantId === "unassigned_provider_quarantine") {
+      throw AppError.unauthorized("Token claims protected internal quarantine sentinel tenantId");
     }
 
     return verified;

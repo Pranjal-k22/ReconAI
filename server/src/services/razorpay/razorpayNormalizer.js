@@ -102,9 +102,12 @@ export function normalizeRazorpayPayment(rawPayment, importBatchId) {
     : new Date();
 
   const status = mapPaymentStatus(rawPayment.status);
-  const capturedAmountPaise = typeof rawPayment.amount_captured === "number"
-    ? Math.round(rawPayment.amount_captured)
-    : (status === "CAPTURED" ? amountPaise : null);
+  const isCaptured = status === "CAPTURED" || rawPayment.captured === true;
+  const capturedAmountPaise = isCaptured
+    ? (typeof rawPayment.amount === "number"
+        ? Math.round(rawPayment.amount)
+        : (typeof rawPayment.amount_captured === "number" ? Math.round(rawPayment.amount_captured) : null))
+    : null;
 
   return {
     gatewayPaymentId: String(rawPayment.id),

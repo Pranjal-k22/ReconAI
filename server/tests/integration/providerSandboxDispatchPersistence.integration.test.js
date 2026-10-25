@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import crypto from "crypto";
+import request from "supertest";
 import mongoose from "mongoose";
+import app from "../../src/app.js";
 import { ProviderOperation } from "../../src/models/ProviderOperation.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
 import { PaymentAction } from "../../src/models/PaymentAction.js";
 import { RefundReservation } from "../../src/models/RefundReservation.js";
+import { PaymentLifecycleEvent } from "../../src/models/PaymentLifecycleEvent.js";
 import {
   dispatchSandboxAction,
   recheckProviderOperationStatus,
@@ -49,6 +53,7 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     await MerchantOrder.syncIndexes();
     await PaymentAction.syncIndexes();
     await RefundReservation.syncIndexes();
+    await PaymentLifecycleEvent.syncIndexes();
   });
 
   afterAll(async () => {
@@ -73,6 +78,7 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     await MerchantOrder.deleteMany({});
     await PaymentAction.deleteMany({});
     await RefundReservation.deleteMany({});
+    await PaymentLifecycleEvent.deleteMany({});
 
     // Seed Standard Test Case
     await PaymentCase.create({
@@ -718,6 +724,110 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
         tenantId: TENANT_A
       }).lean();
       expect(paymentAfterRelease.reservedRefundPaise).toBe(40000);
+    });
+
+    it("real ingestion path: signed captured webhook with documented entity shape populates capturedAmountPaise in DB, allows reservation up to balance, and rejects reservation exceeding balance", async () => {
+      const webhookSecret = "persistent_test_webhook_secret_key_32_bytes_ok!";
+      process.env.RAZORPAY_WEBHOOK_SECRET = webhookSecret;
+
+      const paymentId = `pay_real_ingest_${Date.now()}`;
+      const orderId = `order_real_ingest_${Date.now()}`;
+      const eventId = `evt_real_ingest_${Date.now()}`;
+      const accountId = "acc_real_ingest_001";
+
+      // Pre-seed merchant order for tenant mapping
+      await MerchantOrder.create({
+        merchantOrderId: orderId,
+        tenantId: TENANT_A,
+        amountPaise: 25000,
+        currency: "INR",
+        status: "PENDING"
+      });
+
+      // Construct raw webhook payload matching official documented Razorpay Payment entity shape
+      // Notice: NO amount_captured field exists in documented payload; only amount, status: captured, captured: true
+      const rawBody = JSON.stringify({
+        entity: "event",
+        account_id: accountId,
+        event: "payment.captured",
+        contains: ["payment"],
+        payload: {
+          payment: {
+            entity: {
+              id: paymentId,
+              entity: "payment",
+              amount: 25000,
+              currency: "INR",
+              status: "captured",
+              order_id: orderId,
+              invoice_id: null,
+              international: false,
+              method: "upi",
+              amount_refunded: 0,
+              refund_status: null,
+              captured: true,
+              description: "ReconAI real ingestion test",
+              email: "buyer@example.com",
+              contact: "+919999999999",
+              fee: 50,
+              tax: 9,
+              created_at: Math.floor(Date.now() / 1000)
+            }
+          }
+        },
+        created_at: Math.floor(Date.now() / 1000)
+      });
+
+      const signature = crypto.createHmac("sha256", webhookSecret).update(Buffer.from(rawBody, "utf8")).digest("hex");
+
+      // Ingest via real HTTP route
+      const webhookRes = await request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", eventId)
+        .send(rawBody);
+
+      expect(webhookRes.status).toBe(200);
+      expect(webhookRes.body.success).toBe(true);
+
+      // Verify GatewayPayment.capturedAmountPaise was populated by CODE (never set by hand!)
+      const ingestedPayment = await GatewayPayment.findOne({
+        gatewayPaymentId: paymentId,
+        tenantId: TENANT_A
+      }).lean();
+
+      expect(ingestedPayment).toBeDefined();
+      expect(ingestedPayment.status).toBe("CAPTURED");
+      expect(ingestedPayment.capturedAmountPaise).toBe(25000);
+      expect(ingestedPayment.amountPaise).toBe(25000);
+
+      // First reservation for 15000 paise (15000 <= 25000) succeeds
+      const res1 = await reserveRefund({
+        tenantId: TENANT_A,
+        gatewayPaymentId: paymentId,
+        amountPaise: 15000,
+        idempotencyKey: `idem-real-ingest-01-${Date.now()}`
+      });
+      expect(res1.success).toBe(true);
+      expect(res1.reservation.amountPaise).toBe(15000);
+
+      // Second reservation for 15000 paise (remaining balance is 10000, 15000 > 10000) fails
+      const res2 = await reserveRefund({
+        tenantId: TENANT_A,
+        gatewayPaymentId: paymentId,
+        amountPaise: 15000,
+        idempotencyKey: `idem-real-ingest-02-${Date.now()}`
+      });
+      expect(res2.success).toBe(false);
+      expect(res2.reason).toBe("INSUFFICIENT_REFUNDABLE_BALANCE");
+
+      // Verify in MongoDB that total reserved is 15000, never exceeding balance
+      const finalPayment = await GatewayPayment.findOne({
+        gatewayPaymentId: paymentId,
+        tenantId: TENANT_A
+      }).lean();
+      expect(finalPayment.reservedRefundPaise).toBe(15000);
     });
 
     it("crash between ProviderOperation insert and POST leaves REQUESTED operation; reconcile resolves without blind re-send", async () => {

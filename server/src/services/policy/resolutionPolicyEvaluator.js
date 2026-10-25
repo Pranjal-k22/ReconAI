@@ -606,6 +606,14 @@ export function evaluateResolutionPolicy({
     }
     if (
       gatewayPayment.rawData &&
+      (gatewayPayment.rawData.status === "captured" || gatewayPayment.rawData.captured === true) &&
+      typeof gatewayPayment.rawData.amount === "number" &&
+      isNonNegativeSafeInteger(gatewayPayment.rawData.amount)
+    ) {
+      candidateCapturedValues.push({ source: "rawData.amount (captured)", amount: gatewayPayment.rawData.amount });
+    }
+    if (
+      gatewayPayment.rawData &&
       typeof gatewayPayment.rawData.amount_captured === "number" &&
       isNonNegativeSafeInteger(gatewayPayment.rawData.amount_captured)
     ) {

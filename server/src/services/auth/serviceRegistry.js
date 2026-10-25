@@ -142,6 +142,12 @@ export async function registerServicePrincipal({
     throw AppError.badRequest("SHOP_AI requires fixed tenantId");
   }
 
+  if (tenantId && tenantId.trim() === "unassigned_provider_quarantine") {
+    throw AppError.badRequest(
+      "Tenant 'unassigned_provider_quarantine' is a protected internal quarantine sentinel and cannot be assigned to service principals"
+    );
+  }
+
   const { hash, salt } = hashServiceCredential(secret);
   const cleanId = serviceId.trim();
   serviceMemoryCache.delete(cleanId);

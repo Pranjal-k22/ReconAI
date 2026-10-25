@@ -92,7 +92,7 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 | **System Configuration** | Read / Write | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 > **Provider Write Dispatch Hardening (Stage 3)**:
-> 1. Provider write execution is restricted to authenticated `ADMIN` principals triggering `POST /api/cases/:caseId/dispatch-sandbox-action`.
+> 1. Provider write execution is restricted to authenticated `ADMIN` principals triggering `POST /api/payment-cases/:caseId/provider/dispatch`.
 > 2. The dispatch route accepts ONLY `{ actionType }` alongside `:caseId`. Caller-supplied amounts, limits, approval flags, or idempotency keys are strictly rejected with HTTP 400.
 > 3. Autonomous refunds by background workers remain strictly prohibited.
 > 4. Execution requires a valid, unexpired, single-use `PolicyAuthorizationToken` (Gate 3) signed with `POLICY_TOKEN_SECRET`.

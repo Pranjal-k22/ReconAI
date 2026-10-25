@@ -29,6 +29,12 @@ export async function provisionUserAccount({
     throw AppError.badRequest("userId, email, password, and role are required");
   }
 
+  if (tenantId && tenantId.trim() === "unassigned_provider_quarantine") {
+    throw AppError.badRequest(
+      "Tenant 'unassigned_provider_quarantine' is a protected internal quarantine sentinel and cannot be assigned to accounts"
+    );
+  }
+
   const { hash, salt } = hashPassword(password);
 
   const accountDoc = {
@@ -208,6 +214,12 @@ export async function updateUserAuthorization(
 ) {
   if (!userId || typeof userId !== "string") {
     throw AppError.badRequest("userId is required");
+  }
+
+  if (typeof tenantId !== "undefined" && tenantId && tenantId.trim() === "unassigned_provider_quarantine") {
+    throw AppError.badRequest(
+      "Tenant 'unassigned_provider_quarantine' is a protected internal quarantine sentinel and cannot be assigned to accounts"
+    );
   }
 
   const cleanUserId = userId.trim();

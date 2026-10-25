@@ -831,50 +831,58 @@ ReconAI/
   - Verification-and-fix stage to rigorously audit, correct, and back with executed code every claim from Stage 3.
   - No UI work, no policy-limits storage, no provider writes (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), no live keys (`rzp_live_` rejected), all tests use mocked fetch transport.
 
-- **V1 Safe-Hold Table from Code (Verified via Execution)**:
-  - Ran automated runner against all 30 scenario fixtures in `evidenceClassifier.test.js:1363-1687`.
-  - All 30 scenarios mapped to canonical enum in `SAFE_HOLD_CODES`.
-  - Identified and corrected previous prose claims: Case 15 (`Forged Webhook`) emits `POLICY_REJECTED` (`safeHold: true`), not `NONE`; Case 28 (`Cross-Tenant Access Attempt`) emits `POLICY_REJECTED` (`safeHold: true`), not `NONE`; Cases 25 (`DATABASE_OUTAGE_PERSISTENCE_FAILURE`) and 26 (`CONTAINER_CRASH_WORKER_RECOVERY`) headings aligned.
+- **V1 Safe-Hold Table from Code (Verified via Real Classifier Execution)**:
+  - Verified by executing `server/scripts/audit30Scenarios.js` against the real classifier (`evidenceClassifier.js`) and canonical scenario fixtures (`server/tests/helpers/classificationScenarios.js`).
+  - Total Scenarios: 30. **Held (`safeHold === true`): 20. Not Held (`safeHold === false`): 10.**
+  - Zero mismatches between classifier scenario IDs/safe-hold codes, `EDGE_CASE_POLICY_MATRIX.md`, and `PHASE_6_CLASSIFICATION_ENGINE.md`.
+  - Discrepancy Explanation: The prior Stage 3.5 log entry contained an unverified, hand-typed table with hallucinated scenario names (e.g. `OVERPAYMENT_REVIEW`, `WEBHOOK_OUT_OF_ORDER`) that listed 21 rows as held, while claiming in prose "23 held / 7 not held". Neither matched the actual classifier implementation. This unverified table is hereby retracted and replaced with the authoritative output computed directly by the classification engine:
 
-| Scenario ID | Name / Heading from Edge Case Matrix | safeHold | safeHoldCode |
-| :--- | :--- | :---: | :--- |
-| Case 1 | Payment Abandoned Before Gateway Confirmation | false | NONE |
-| Case 2 | Webhook Drops or Delivered Out of Order | true | WEBHOOK_OUT_OF_ORDER |
-| Case 3 | Customer Debit Claim with Payment Failed | false | NONE |
-| Case 4 | Late Authorization After Timeout | false | NONE |
-| Case 5 | Captured Payment with Delayed Merchant Settlement | false | NONE |
-| Case 6 | Paid Gateway Payment But Unpaid Order | false | NONE |
-| Case 7 | Duplicate Payment Attempts | false | NONE |
-| Case 8 | Partial Capture | true | PARTIAL_CAPTURE |
-| Case 9 | Currency Mismatch Between Order and Payment | true | AMOUNT_CURRENCY_MISMATCH |
-| Case 10 | Amount Paid Less Than Order Total | true | AMOUNT_CURRENCY_MISMATCH |
-| Case 11 | Amount Paid Greater Than Order Total | true | OVERPAYMENT_REVIEW |
-| Case 12 | Refund Initiated Twice by Operator | true | DUPLICATE_REFUND_IN_FLIGHT |
-| Case 13 | Refund Processed by Gateway But Ledger Not Updated | false | NONE |
-| Case 14 | Gateway Reversal / Chargeback Filed | true | FORMAL_DISPUTE_OPENED |
-| Case 15 | Forged Webhook or Signature Mismatch | true | POLICY_REJECTED |
-| Case 16 | Idempotency Key Collision with Different Amount | true | IDEMPOTENCY_CONFLICT |
-| Case 17 | Customer Claims Refund Not Received After SLA | false | NONE |
-| Case 18 | Bank Reference Number (ARN/RRN) Missing | true | CONFLICTING_RECORDS |
-| Case 19 | Merchant Account Suspended or Inactive | true | GATEWAY_ACCOUNT_SUSPENDED |
-| Case 20 | Customer Account Closed Before Refund Processed | true | REFUND_FAILED |
-| Case 21 | Webhook Storm | false | NONE |
-| Case 22 | Late Capture on Cancelled Order | true | LATE_CAPTURE_CANCELLED_ORDER |
-| Case 23 | Split Settlement Failure | true | SPLIT_SETTLEMENT_MISMATCH |
-| Case 24 | Webhook Delivered for Unknown Account | true | UNKNOWN_ACCOUNT_EVENT |
-| Case 25 | Database Outage During Webhook Processing | true | DATABASE_OUTAGE_PERSISTENCE_FAILURE |
-| Case 26 | Worker Crash While Action Is Pending | true | CONTAINER_CRASH_WORKER_RECOVERY |
-| Case 27 | Concurrent Resolution Attempts | true | LEASE_ACQUISITION_FAILED |
-| Case 28 | Cross-Tenant Access Attempt | true | POLICY_REJECTED |
-| Case 29 | Fraud Allegation or Unauthorized Payment Claim | true | FRAUD_HOLD |
-| Case 30 | Chargeback or Formal Dispute | true | FORMAL_DISPUTE_OPENED |
+| Case # | Scenario ID | Category | Reason Code | safeHold | safeHoldCode |
+| :---: | :--- | :--- | :--- | :---: | :--- |
+| 1 | CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS | PAYMENT_DISCREPANCY | PAYMENT_SUCCESS_MERCHANT_TIMEOUT | false | NONE |
+| 2 | CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING | PAYMENT_DISCREPANCY | CUSTOMER_DEBIT_CLAIM_PENDING | true | CUSTOMER_DEBIT_ON_GATEWAY_PENDING |
+| 3 | CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED | PAYMENT_DISCREPANCY | CUSTOMER_DEBIT_CLAIM_FAILED | true | CUSTOMER_DEBIT_ON_GATEWAY_FAILURE |
+| 4 | CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT | TIMING_ANOMALY | LATE_AUTHORIZATION | false | NONE |
+| 5 | CASE_5_CAPTURED_PAYMENT_DELAYED_SETTLEMENT | SETTLEMENT_DELAY | SETTLEMENT_PENDING_NORMAL | false | NONE |
+| 6 | CASE_6_PAID_GATEWAY_UNPAID_ORDER | STATE_MISMATCH | PAID_PAYMENT_UNPAID_ORDER | false | NONE |
+| 7 | CASE_7_DUPLICATE_PAYMENT_ATTEMPTS | DUPLICATE_TRANSACTION | DUPLICATE_PAYMENTS_EXIST | true | DUPLICATE_PAYMENT_AMOUNTS_DIFFER |
+| 8 | CASE_8_PARTIAL_CAPTURE | PARTIAL_CAPTURE | PARTIAL_CAPTURE | true | PARTIAL_CAPTURE |
+| 9 | CASE_9_PARTIAL_PAYMENT | PARTIAL_PAYMENT | PARTIAL_PAYMENT | true | PARTIAL_PAYMENT |
+| 10 | CASE_10_PARTIAL_REFUND | PARTIAL_REFUND | PARTIAL_REFUND | true | PARTIAL_REFUND_EXCEEDS_CAPTURED |
+| 11 | CASE_11_FULL_REFUND_INITIATED_NOT_COMPLETED | REFUND_PENDING_TIMEOUT | REFUND_PENDING_TIMEOUT | true | REFUND_PENDING_TIMEOUT |
+| 12 | CASE_12_FAILED_REFUND | REFUND_FAILED | REFUND_FAILED | true | REFUND_FAILED |
+| 13 | CASE_13_STALE_EVENT_AFTER_REFUND | STALE_EVENT_DELIVERY | STALE_EVENT_DELIVERY | false | NONE |
+| 14 | CASE_14_DUPLICATE_WEBHOOK_DELIVERY | DUPLICATE_WEBHOOK | DUPLICATE_WEBHOOK | false | NONE |
+| 15 | CASE_15_FORGED_WEBHOOK | FORGED_WEBHOOK | FORGED_WEBHOOK | true | POLICY_REJECTED |
+| 16 | CASE_16_OUT_OF_ORDER_WEBHOOK | OUT_OF_ORDER_WEBHOOK | OUT_OF_ORDER_WEBHOOK | false | NONE |
+| 17 | CASE_17_LOST_WEBHOOK | LOST_WEBHOOK | LOST_WEBHOOK | false | NONE |
+| 18 | CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS | CONFLICTING_PROVIDER_MERCHANT_RECORDS | CONFLICTING_PROVIDER_MERCHANT_RECORDS | true | CONFLICTING_RECORDS |
+| 19 | CASE_19_AMOUNT_OR_CURRENCY_MISMATCH | AMOUNT_CURRENCY_MISMATCH | AMOUNT_CURRENCY_MISMATCH | true | AMOUNT_CURRENCY_MISMATCH |
+| 20 | CASE_20_DUPLICATE_SETTLEMENT_RECORD | DUPLICATE_SETTLEMENT | DUPLICATE_SETTLEMENT_RECORD | false | NONE |
+| 21 | CASE_21_MISSING_SETTLEMENT_RECORD | MISSING_SETTLEMENT | MISSING_SETTLEMENT_RECORD | true | MISSING_SETTLEMENT |
+| 22 | CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED | CANCELLED_ORDER_CAPTURED | CANCELLED_ORDER_CAPTURED | true | LATE_CAPTURE_CANCELLED_ORDER |
+| 23 | CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES | AMBIGUOUS_CANDIDATE_MATCH | AMBIGUOUS_PAYMENTS | true | AMBIGUOUS_PAYMENTS |
+| 24 | CASE_24_PROVIDER_UNAVAILABLE_RATE_LIMITED | PROVIDER_UNAVAILABLE | PROVIDER_THROTTLED_OR_UNAVAILABLE | true | PROVIDER_ERROR |
+| 25 | CASE_25_DATABASE_OUTAGE_DURING_ACTION | DATABASE_OUTAGE_RECOVERY | DATABASE_OUTAGE_RECOVERY | true | DATABASE_OUTAGE_RECOVERY |
+| 26 | CASE_26_WORKER_CRASH_ACTION_PENDING | WORKER_LEASE_EXPIRED | EXPIRED_LEASE_RECOVERY | true | WORKER_LEASE_EXPIRED |
+| 27 | CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS | CONCURRENT_ATTEMPT | CONCURRENT_MUTATION_RACE | false | NONE |
+| 28 | CASE_28_CROSS_TENANT_ACCESS_ATTEMPT | CROSS_TENANT_BLOCKED | CROSS_TENANT_VIOLATION | true | POLICY_REJECTED |
+| 29 | CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT | FRAUD_CLAIM | FRAUD_SUSPICION | true | FRAUD_SUSPICION |
+| 30 | CASE_30_CHARGEBACK_OR_FORMAL_DISPUTE | FORMAL_DISPUTE | FORMAL_DISPUTE | true | FORMAL_DISPUTE |
 
-- **V2 Test-Count Provenance**:
-  - Baseline before Stage 3 was 82 integration tests. Part A added Test 15 (sequentially asserting 4 audit/retry conditions within one `it(` block) and Test 16 (+2 `it(` blocks, bringing total to 84). Part B added 1 test in `providerSandboxDispatchPersistence` (+1 `it(` block, bringing total to 85).
-  - Stage 3.5 added 4 new real-Mongo integration tests:
-    - `webhookPersistence.integration.test.js`: +2 tests (stale window 503, crashed attempt reclaim).
-    - `monitoringPersistence.integration.test.js`: +1 test (worker sweep quarantine recovery end to end).
-    - `providerSandboxDispatchPersistence.integration.test.js`: +1 test (crashed REQUESTED operation reconciled without blind POST).
+- **V2 Stage 2 Test-Count Contradiction & Provenance Correction**:
+  - The prior characterization of commit `207717c` as "documentation/reorganization" is hereby **retracted**.
+  - Commit `207717c` was titled `fix(reconai-2): stage 2 data-integrity hardening` and made significant test code additions across 4 files (+525 lines, -133 lines).
+  - Exact breakdown of how integration tests increased 77 -> 82 (+5 tests):
+    - `monitoringPersistence.integration.test.js`: +1 test (Test 8 / Item h: pending payment with no task gets a task after one worker cycle and is not duplicated).
+    - `servicePersistence.integration.test.js`: +3 tests (Test 11: RevokedToken persists across disconnect/reconnect and rejected by authMiddleware; Test 12: service token issued before credential rotation rejected; Test 13: human token rejected after authVersion bump).
+    - `webhookPersistence.integration.test.js`: +1 test (Test 14: disconnect during a mutation path -> mutation not reported successful, no partial state).
+    - Total: 77 + 5 = 82 integration tests.
+  - Subsequent integration count evolution:
+    - Stage 3 Part A added Tests 15 & 16 in `providerSandboxDispatchPersistence` (+2 tests -> 84).
+    - Stage 3 Part B added Test 17 in `providerSandboxDispatchPersistence` (+1 test -> 85).
+    - Stage 3.5 added 4 tests (+2 webhook, +1 monitoring, +1 provider dispatch -> 89).
+    - Stage 3.6 added 1 test in `providerSandboxDispatchPersistence` (signed webhook ingestion -> `capturedAmountPaise` -> reservation succeeds -> over-balance refund fails -> 90).
   - Per-file integration counts for HEAD:
     - `evidencePersistence.integration.test.js`: 4
     - `monitoringPersistence.integration.test.js`: 9
@@ -882,10 +890,10 @@ ReconAI/
     - `orchestrationPersistence.integration.test.js`: 13
     - `policySimulationPersistence.integration.test.js`: 11
     - `productionStartup.integration.test.js`: 3
-    - `providerSandboxDispatchPersistence.integration.test.js`: 14
+    - `providerSandboxDispatchPersistence.integration.test.js`: 15
     - `servicePersistence.integration.test.js`: 13
     - `webhookPersistence.integration.test.js`: 18
-    - **Total: 89 integration tests** across 9 files (all passing).
+    - **Total: 90 integration tests** across 9 files (all passing).
 
 - **V3 Webhook Re-Process Race Hardened**:
   - Webhook claiming uses ONE atomic `findOneAndUpdate` on `PaymentLifecycleEvent` setting `processingStartedAt` and `processingAttemptId`.
@@ -913,3 +921,34 @@ ReconAI/
 
 - **V8 Honest Wording Qualified**:
   - Qualified Gate 3 in `ACCEPTANCE_CRITERIA.md`, `README.md`, `memory.md`, and `RAZORPAY_INTEGRATION.md`: "implemented; verified with mocked provider transport; no real Razorpay test-mode run yet".
+
+### Entry 16: Stage 3.6 Provenance and Report-Integrity Fixes
+
+- **Context & Stage 3.6 Mandate**:
+  - Verification-and-fix stage: provenance audit, canonical 30-scenario table generation, test count contradiction resolution, Razorpay official field verification, route validation facts, and quarantine sentinel hardening.
+  - Strict scope enforcement: No UI changes, no policy-limits config storage, writes flag remains false (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), mocked transport only in tests, no live keys, Stage 4 not started.
+
+- **Provenance & Commit Audit (11b7a33..HEAD)**:
+  - Audited commits `f8cc174` and `6888d19`. Commit `f8cc174` landed Stage 3.5 changes across 30 files but omitted `server/tests/helpers/testDbGuard.js`, breaking test imports until `6888d19` added it 2 minutes later. `npm test` and `npm run test:integration` could never have run or passed on `f8cc174`.
+
+- **Classification Engine Truth (Real Fixtures & Code)**:
+  - Extracted 30 canonical scenario fixtures into `server/tests/helpers/classificationScenarios.js`.
+  - Added unit test asserting all 30 (scenarioId, safeHoldCode) pairs.
+  - Verified via `server/scripts/audit30Scenarios.js`: **20 Held / 10 Not Held**. Zero mismatches with `EDGE_CASE_POLICY_MATRIX.md` or `PHASE_6_CLASSIFICATION_ENGINE.md`.
+
+- **Razorpay Entity Verification (Captured Amount)**:
+  - Fetched official Razorpay documentation (`https://razorpay.com/docs/api/payments/`, retrieved 2026-10-25).
+  - Confirmed official Payment entity fields: `amount`, `captured` (boolean), `status`, `amount_refunded`, `refund_status`, `order_id`, `currency`. Confirmed `amount_captured` does NOT exist in the standard Payment entity.
+  - Aligned `razorpayNormalizer.js`, `webhookService.js`, `paymentMonitoringService.js`, `providerPreflightService.js`, `resolutionPolicyEvaluator.js`, and `refundReservationService.js` to derive captured amount from `payment.amount` when `payment.captured === true` or `payment.status === "captured"`.
+  - Added real ingestion integration test in `providerSandboxDispatchPersistence.integration.test.js`: signed webhook ingestion -> `capturedAmountPaise` populated by code -> reservation succeeds -> over-balance refund fails.
+
+- **Quarantine Sentinel Hardening**:
+  - Sentinel tenant `unassigned_provider_quarantine` is rejected with `INVALID_TENANT_ID` in `accountService.js` (account provisioning, auth updates), `serviceRegistry.js` (service principals), and `tokenService.js` (token signing and verification).
+  - Added 7 unit tests in `server/tests/auth/quarantineSentinelRejection.test.js`.
+  - Verified that an ADMIN query with tenant filter equal to sentinel returns HTTP 200 with `{ cases: [], pagination: { total: 0 } }`.
+
+- **Verification Totals**:
+  - Unit Tests: 697/697 passed across 72 files (+7 tests from baseline 690).
+  - Integration Tests: 90/90 passed across 9 files (+1 test from baseline 89).
+  - Monitoring Smoke Test: 7/7 gates passed.
+  - Client Build: Clean build (2,400 modules).
