@@ -155,6 +155,7 @@ export async function verifyPolicyAuthorizationToken({
   expectedAmountPaise,
   expectedCurrency = "INR",
   expectedIdempotencyKey,
+  expectedOperationId = null,
   nowMs = null,
   customSecret = null
 }) {
@@ -248,7 +249,15 @@ export async function verifyPolicyAuthorizationToken({
         const query = ProviderOperation.findOne({ tokenId });
         const existingUse = typeof query?.lean === "function" ? await query.lean() : await query;
         if (existingUse) {
-          await reject("PolicyAuthorizationToken has already been consumed (replay rejected)", { tokenId, existingOperationId: existingUse.operationId }, tokenId);
+          if (
+            expectedOperationId &&
+            existingUse.operationId === expectedOperationId &&
+            existingUse.operationStatus === "REQUESTED"
+          ) {
+            // Authorized in-flight consumer for this operation attempt
+          } else {
+            await reject("PolicyAuthorizationToken has already been consumed (replay rejected)", { tokenId, existingOperationId: existingUse.operationId }, tokenId);
+          }
         }
       } catch (err) {
         if (err instanceof UnauthorizedActionExecutionError) throw err;

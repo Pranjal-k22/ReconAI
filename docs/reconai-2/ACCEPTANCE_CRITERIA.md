@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Measurable Acceptance Criteria & Verification Framework
 
-> **DOCUMENT STATUS: VERIFIED (GATE 1 IMPLEMENTED IN PHASE 3; GATE 3 IMPLEMENTED & HARDENED IN STAGE 3)**
-> *Gate 1 (Zero Cross-Tenant Access Leaks) and Gate 3 (Zero Actions Initiated Directly by LLM Generation via Signed PolicyAuthorizationToken) have been implemented, hardened, and verified with automated test suites.*
+> **DOCUMENT STATUS: GATE 1 VERIFIED; GATE 3 IMPLEMENTED & VERIFIED WITH MOCKED TRANSPORT (NO REAL RAZORPAY TEST-MODE RUN YET)**
+> *Gate 1 (Zero Cross-Tenant Access Leaks) has been implemented, hardened, and verified with automated test suites. Gate 3 (Zero Actions Initiated Directly by LLM Generation via Signed PolicyAuthorizationToken) is implemented; verified with mocked provider transport; no real Razorpay test-mode run yet.*
 
 ---
 
@@ -32,9 +32,9 @@ To certify that ReconAI 2.0 has successfully evolved into an enterprise-grade au
 - **Measurement**: Zero double refunds or double ledger credits under load testing.
 
 ### Gate 3: Zero Actions Initiated Directly by LLM Generation (Hardened in Stage 3)
-- **Status**: **VERIFIED & HARDENED**.
+- **Status**: **IMPLEMENTED; VERIFIED WITH MOCKED PROVIDER TRANSPORT; NO REAL RAZORPAY TEST-MODE RUN YET**.
 - **Criterion**: Every executed provider action must possess a cryptographically signed `PolicyAuthorizationToken` emitted by the deterministic Policy Engine. If the policy token is missing, expired, tampered with, bound to a different tenant/case/payment/amount/currency/idempotencyKey, or already consumed, the Provider Action Adapter throws a typed `UnauthorizedActionExecutionError` with 0 network calls and 0 `ProviderOperation` rows.
-- **Measurement**: Zero actions executed without passing all deterministic policy invariants, fresh provider preflight GET verification, and single-use token verification. Verified across 100% of adversarial unit and integration tests.
+- **Measurement**: Zero actions executed without passing all deterministic policy invariants, fresh provider preflight GET verification, and single-use token verification. Verified across 100% of adversarial unit and integration tests with mocked provider transport; no real Razorpay test-mode run yet.
 
 
 ### Gate 4: Zero Premature Case Closures

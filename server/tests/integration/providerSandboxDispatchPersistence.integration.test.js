@@ -9,7 +9,8 @@ import { RefundReservation } from "../../src/models/RefundReservation.js";
 import {
   dispatchSandboxAction,
   recheckProviderOperationStatus,
-  getProviderOperationsByCaseId
+  getProviderOperationsByCaseId,
+  computeDispatchPayloadHash
 } from "../../src/services/policy/providerDispatchService.js";
 import {
   reserveRefund,
@@ -17,23 +18,7 @@ import {
 } from "../../src/services/policy/refundReservationService.js";
 import { RazorpayProviderError, RAZORPAY_ERROR_CODES } from "../../src/services/razorpay/razorpayClient.js";
 
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("MONGODB_TEST_URI must be provided as a non-empty string");
-  }
-  let dbName = "";
-  try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
-    dbName = url.pathname.replace(/^\//, "");
-  } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
-  }
-  if (!dbName || !dbName.toLowerCase().includes("test")) {
-    throw new Error("Test database name must contain 'test'");
-  }
-  return uri;
-}
+import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_provider_dispatch";
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);
@@ -733,6 +718,140 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
         tenantId: TENANT_A
       }).lean();
       expect(paymentAfterRelease.reservedRefundPaise).toBe(40000);
+    });
+
+    it("crash between ProviderOperation insert and POST leaves REQUESTED operation; reconcile resolves without blind re-send", async () => {
+      const idempotencyKey = "idem-crashed-insert-01";
+      const crashedOpId = "op_crashed_test_123";
+
+      // 1. Establish reservation as if dispatch steps 1-2 executed
+      await reserveRefund({
+        tenantId: TENANT_A,
+        gatewayPaymentId: "pay_test_prov_001",
+        amountPaise: 12000,
+        idempotencyKey
+      });
+
+      const inputHash = computeDispatchPayloadHash({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        gatewayPaymentId: "pay_test_prov_001",
+        amountPaise: 12000,
+        currency: "INR",
+        actionType: "REQUEST_REFUND"
+      });
+
+      // 2. Insert ProviderOperation doc in REQUESTED state (simulating crash immediately after insert before POST)
+      await ProviderOperation.create({
+        operationId: crashedOpId,
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        gatewayPaymentId: "pay_test_prov_001",
+        actionType: "REQUEST_REFUND",
+        amountPaise: 12000,
+        currency: "INR",
+        idempotencyKey,
+        providerIdempotencyKey: idempotencyKey,
+        operationStatus: "REQUESTED",
+        verificationStatus: "UNVERIFIED",
+        policyDecisionId: "POL-001",
+        tokenId: "tok_crashed_test_123",
+        requestPayloadHash: inputHash,
+        requestedAt: new Date()
+      });
+
+      // Verify MongoDB has REQUESTED operation
+      const initialOp = await ProviderOperation.findOne({ tenantId: TENANT_A, idempotencyKey }).lean();
+      expect(initialOp.operationStatus).toBe("REQUESTED");
+
+      // 3. Reconcile / retry attempt: simulate provider having received the refund
+      let retryPostCount = 0;
+      const reconcileMockFetch = vi.fn().mockImplementation(async (url, options = {}) => {
+        const urlStr = String(url);
+        const method = (options.method || "GET").toUpperCase();
+
+        if (method === "GET" && !urlStr.includes("/refund")) {
+          return {
+            status: 200,
+            ok: true,
+            json: async () => ({
+              id: "pay_test_prov_001",
+              entity: "payment",
+              amount: 12000,
+              amount_captured: 12000,
+              amount_refunded: 0,
+              currency: "INR",
+              status: "captured",
+              order_id: "ORD-PROV-001"
+            })
+          };
+        }
+        if (method === "GET" && urlStr.endsWith("/refunds")) {
+          return {
+            status: 200,
+            ok: true,
+            json: async () => ({
+              entity: "collection",
+              count: 1,
+              items: [
+                {
+                  id: "rfnd_reconciled_after_crash_01",
+                  payment_id: "pay_test_prov_001",
+                  amount: 12000,
+                  currency: "INR",
+                  status: "processed",
+                  receipt: `RCP-${crashedOpId}`,
+                  notes: { operationId: crashedOpId }
+                }
+              ]
+            })
+          };
+        }
+        if (method === "GET" && urlStr.includes("/refunds/rfnd_reconciled_after_crash_01")) {
+          return {
+            status: 200,
+            ok: true,
+            json: async () => ({
+              id: "rfnd_reconciled_after_crash_01",
+              payment_id: "pay_test_prov_001",
+              amount: 12000,
+              currency: "INR",
+              status: "processed"
+            })
+          };
+        }
+        if (method === "POST") {
+          retryPostCount++;
+          throw new Error("BLIND_RETRY_FORBIDDEN: POST was called during reconcile!");
+        }
+        return { status: 404, ok: false, json: async () => ({}) };
+      });
+
+      const retryRes = await dispatchSandboxAction({
+        tenantId: TENANT_A,
+        caseId: CASE_ID_A,
+        actorId: "admin-1",
+        actorRole: "ADMIN",
+        proposedActionType: "REQUEST_REFUND",
+        idempotencyKey,
+        policyConfig: approvedPolicyConfig,
+        customFetch: reconcileMockFetch
+      });
+
+      // 4. Invariant: Reconciled successfully without a blind POST re-send
+      expect(retryPostCount).toBe(0);
+      expect(retryRes.dispatchBlocked).toBe(false);
+      expect(retryRes.operation.operationStatus).toBe("VERIFIED_SUCCEEDED");
+      expect(retryRes.operation.providerOperationId).toBe("rfnd_reconciled_after_crash_01");
+
+      // Verify final MongoDB state
+      const resolvedOp = await ProviderOperation.findOne({
+        tenantId: TENANT_A,
+        idempotencyKey
+      }).lean();
+
+      expect(resolvedOp.operationStatus).toBe("VERIFIED_SUCCEEDED");
+      expect(resolvedOp.providerOperationId).toBe("rfnd_reconciled_after_crash_01");
     });
   });
 });

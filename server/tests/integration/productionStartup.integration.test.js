@@ -9,26 +9,7 @@ import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { PaymentLifecycleEvent } from "../../src/models/PaymentLifecycleEvent.js";
 import { schedulePaymentMonitoring } from "../../src/services/monitoring/paymentMonitoringService.js";
 
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("Safety violation: MONGODB_URI must be provided as a non-empty string");
-  }
-  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
-    throw new Error("Safety violation: Invalid URI scheme");
-  }
-  let dbName = "";
-  try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
-    dbName = url.pathname.replace(/^\//, "");
-  } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
-  }
-  if (!dbName || !dbName.toLowerCase().includes("test") || dbName.toLowerCase().includes("prod")) {
-    throw new Error(`Safety violation: Database name '${dbName}' must contain 'test' and cannot contain 'prod'.`);
-  }
-  return uri;
-}
+import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const TEST_DB_URI = validateTestDatabaseUri(
   process.env.MONGODB_TEST_URI || "mongodb://127.0.0.1:27017/reconai_test_startup_lifecycle"

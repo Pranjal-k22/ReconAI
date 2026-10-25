@@ -364,8 +364,10 @@ export async function executeMonitoringRecheck(task, { asOfTime = new Date(), cu
   }
 
   const capturedAmountPaise =
-    mappedStatus === "CAPTURED" && typeof providerData?.amount === "number"
-      ? providerData.amount
+    mappedStatus === "CAPTURED"
+      ? (typeof providerData?.amount_captured === "number"
+          ? providerData.amount_captured
+          : (typeof providerData?.amount === "number" ? providerData.amount : null))
       : null;
   const paymentCurrency = (providerData?.currency || "INR").toUpperCase();
 

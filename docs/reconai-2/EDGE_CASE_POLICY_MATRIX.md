@@ -71,7 +71,7 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 - **Authoritative Evidence**: Cryptographic webhook `payment.authorized` with valid timestamp.
 - **Missing / Uncertain Evidence**: Merchant inventory availability.
 - **Autonomous Action Eligibility**: **ELIGIBLE** for `AUTO_CAPTURE` (if inventory available). For uncaptured payments where inventory is unavailable, note Razorpay provider limitation:
-  > **Razorpay API Capability Finding (B5)**: Razorpay does **not** provide a direct void API for authorized uncaptured payments (`POST /v1/payments/:id/refund` fails if uncaptured; no `/v1/payments/:id/void` exists). Authorized uncaptured payments auto-void/auto-refund after 3 days (72 hours default window per official Razorpay docs). Immediate reversal requires capturing and immediately issuing a full refund, or allowing the authorization to expire after 72 hours.
+  > **Razorpay API Capability Finding (B5)**: Razorpay does **not** provide a direct void API for authorized uncaptured payments (`POST /v1/payments/:id/refund` fails if uncaptured; no `/v1/payments/:id/void` exists). Authorized uncaptured payments automatically refund (auto-void) after 3 days per official Razorpay documentation. Direct refunds cannot be called on uncaptured payments (`BAD_REQUEST_ERROR: This payment has not been captured yet`). The system must not artificially capture unfulfilled payments solely to issue refunds; instead, allow the authorization to lapse/auto-refund after 3 days or hold for manual review.
 - **Required Verification**: Shop AI confirms inventory status.
 - **Retry / Monitoring Policy**: Verify order status before capture.
 - **Duplicate-Action Protections**: Check authorization expiry date and capture lock.

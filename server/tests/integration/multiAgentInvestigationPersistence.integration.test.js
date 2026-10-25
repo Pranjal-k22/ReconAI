@@ -9,23 +9,7 @@ import {
   getInvestigationsByCaseId
 } from "../../src/services/ai/multiAgentInvestigator.js";
 
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("MONGODB_TEST_URI must be provided as a non-empty string");
-  }
-  let dbName = "";
-  try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
-    dbName = url.pathname.replace(/^\//, "");
-  } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
-  }
-  if (!dbName || !dbName.toLowerCase().includes("test")) {
-    throw new Error("Test database name must contain 'test'");
-  }
-  return uri;
-}
+import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_multi_agent_investigation";
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);

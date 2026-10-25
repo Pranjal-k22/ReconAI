@@ -101,12 +101,18 @@ export function normalizeRazorpayPayment(rawPayment, importBatchId) {
     ? new Date(rawPayment.created_at * 1000)
     : new Date();
 
+  const status = mapPaymentStatus(rawPayment.status);
+  const capturedAmountPaise = typeof rawPayment.amount_captured === "number"
+    ? Math.round(rawPayment.amount_captured)
+    : (status === "CAPTURED" ? amountPaise : null);
+
   return {
     gatewayPaymentId: String(rawPayment.id),
     merchantOrderId: null, // Left unset unless explicit mapping exists
     amountPaise,
+    capturedAmountPaise,
     currency: rawPayment.currency ? String(rawPayment.currency).toUpperCase() : "INR",
-    status: mapPaymentStatus(rawPayment.status),
+    status,
     method: mapPaymentMethod(rawPayment.method),
     gatewayFeePaise: feePaise,
     gatewayTaxPaise: taxPaise,

@@ -53,9 +53,9 @@ The state transition engine is centralized in `server/src/services/stateMachine/
 | :--- | :--- | :--- | :--- | :--- |
 | **Standard Capture** | Provider `captured` | `status = "CAPTURED"` | `status = "PAID"` | `captureStatus = "CAPTURE_CAPTURED"`, `orderStatus = "ORDER_PAID"` |
 | **Stale Regression** | Provider `failed` after `CAPTURED` | **No change** (`CAPTURED` preserved) | **No change** (`PAID` preserved) | Evaluated as `STALE_REGRESSION_BLOCKED`, event recorded in append-only ledger |
-| **Late Capture after Failure** | Provider `captured` after `FAILED` | `status = "CAPTURED"`, `isLateCapture = true` | `status = "PAID"` (if not cancelled) | `resolutionCaseStatus = "CASE_SAFE_HOLD"`, `safeHoldCode = "ADMIN_HOLD"`, `isSafeHold = true` |
+| **Late Capture after Failure** | Provider `captured` after `FAILED` | `status = "CAPTURED"`, `isLateCapture = true` | `status = "PAID"` (if not cancelled) | `resolutionCaseStatus = "CASE_SAFE_HOLD"`, `safeHoldCode = "LATE_CAPTURE_AFTER_FAILURE"`, `isSafeHold = true` |
 | **Capture on Cancelled Order** | Provider `captured` on `CANCELLED` order | `status = "CAPTURED"`, `isLateCapture = true` | **No change** (`CANCELLED` strictly preserved) | `resolutionCaseStatus = "CASE_SAFE_HOLD"`, `safeHoldCode = "LATE_CAPTURE_CANCELLED_ORDER"`, `isSafeHold = true` |
-| **Retry Exhaustion / Timeout** | Polling retry ceiling reached | **No change** (`PENDING`/`UNKNOWN` preserved) | **No change** | `resolutionCaseStatus = "CASE_SAFE_HOLD"`, `safeHoldCode = "ADMIN_HOLD"`, `safeHoldReason = "MONITORING_RETRY_EXHAUSTED"` |
+| **Retry Exhaustion / Timeout** | Polling retry ceiling reached | **No change** (`PENDING`/`UNKNOWN` preserved) | **No change** | `resolutionCaseStatus = "CASE_SAFE_HOLD"`, `safeHoldCode = "MONITORING_RETRY_EXHAUSTED"`, `safeHoldReason = "MONITORING_RETRY_EXHAUSTED"` |
 
 ---
 

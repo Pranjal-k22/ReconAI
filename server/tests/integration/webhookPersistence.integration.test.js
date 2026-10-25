@@ -27,52 +27,7 @@ function sanitizeMongoUri(uri) {
   }
 }
 
-/**
- * Validates the test database URI to guarantee complete isolation.
- */
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("MONGODB_TEST_URI must be provided as a non-empty string");
-  }
-
-  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
-    throw new Error("Invalid MONGODB_TEST_URI scheme: must start with mongodb:// or mongodb+srv://");
-  }
-
-  if (process.env.MONGODB_URI && uri.trim() === process.env.MONGODB_URI.trim()) {
-    throw new Error(
-      "Safety violation: MONGODB_TEST_URI matches development/app MONGODB_URI. Integration tests require an isolated test database."
-    );
-  }
-
-  let dbName = "";
-  try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
-    dbName = url.pathname.replace(/^\//, "");
-  } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
-  }
-
-  if (!dbName) {
-    throw new Error("Safety violation: MONGODB_TEST_URI must explicitly specify a database name.");
-  }
-
-  const lowerName = dbName.toLowerCase();
-  if (!lowerName.includes("test")) {
-    throw new Error(
-      `Safety violation: Test database name '${dbName}' must contain 'test' to guarantee isolation.`
-    );
-  }
-
-  if (lowerName.includes("prod")) {
-    throw new Error(
-      `Safety violation: Test database name '${dbName}' contains 'prod'. Execution refused.`
-    );
-  }
-
-  return uri;
-}
+import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_webhook_persistence";
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);
@@ -305,6 +260,15 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     trackedDeduplicationKeys.add(deduplicationKey);
     trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add("order_concurrent_01");
+
+    await MerchantOrder.create({
+      tenantId: "sh_integ_merchant",
+      merchantOrderId: "order_concurrent_01",
+      amountPaise: 50000,
+      currency: "INR",
+      status: "PENDING"
+    });
 
     // Pre-seed GatewayPayment for server-side tenant mapping
     await GatewayPayment.create({
@@ -325,7 +289,10 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
         payment: {
           entity: {
             id: paymentId,
+            order_id: "order_concurrent_01",
             amount: 50000,
+            amount_captured: 50000,
+            captured: true,
             currency: "INR",
             notes: { tenantId: "sh_integ_merchant" }
           }
@@ -347,18 +314,30 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       )
     );
 
-    // All must succeed with 200 HTTP status
-    responses.forEach((res) => {
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
-
-    // Exactly 1 must be ACCEPTED, exactly 4 must be DUPLICATE_ACKNOWLEDGED
-    const accepted = responses.filter((r) => r.body.data.status === "ACCEPTED");
-    const duplicates = responses.filter((r) => r.body.data.status === "DUPLICATE_ACKNOWLEDGED");
+    // Exactly 1 must succeed with 200 ACCEPTED, the other 4 concurrent in-flight deliveries must receive 503 (retryable)
+    const accepted = responses.filter((r) => r.status === 200 && r.body?.data?.status === "ACCEPTED");
+    const inFlight503s = responses.filter((r) => r.status === 503);
 
     expect(accepted.length).toBe(1);
-    expect(duplicates.length).toBe(4);
+    expect(inFlight503s.length).toBe(4);
+
+    // Mutation is applied exactly once in MongoDB
+    const paymentDoc = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(paymentDoc.status).toBe("CAPTURED");
+    const orderDoc = await MerchantOrder.findOne({ merchantOrderId: "order_concurrent_01" }).lean();
+    expect(orderDoc.status).toBe("PAID");
+
+    // A subsequent provider retry after completion returns 200 DUPLICATE_ACKNOWLEDGED
+    const retryRes = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    expect(retryRes.status).toBe(200);
+    expect(retryRes.body.data.status).toBe("DUPLICATE_ACKNOWLEDGED");
+    expect(retryRes.body.data.isDuplicate).toBe(true);
 
     // Exactly one row exists in MongoDB
     const count = await PaymentLifecycleEvent.countDocuments({ deduplicationKey });
@@ -1556,5 +1535,196 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     expect(attackerOrder).toBeNull();
     const attackerPayment = await GatewayPayment.findOne({ tenantId: maliciousNotesTenant }).lean();
     expect(attackerPayment).toBeNull();
+  });
+
+  it("17. delivery within the stale window (<30s) returns retryable 503 while attempt is in flight", async () => {
+    const paymentId = `pay_integ_stale_win_${Date.now()}`;
+    const orderId = `order_integ_stale_win_${Date.now()}`;
+    const testEventId = `evt_integ_stale_win_${Date.now()}`;
+    const accountId = "acc_integ_stale_01";
+    const deduplicationKey = `RAZORPAY:${accountId}:${testEventId}`;
+    const tenantId = "sh_integ_merchant";
+
+    trackedDeduplicationKeys.add(deduplicationKey);
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+
+    await GatewayPayment.create({
+      tenantId,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 45000,
+      currency: "INR"
+    });
+
+    await MerchantOrder.create({
+      tenantId,
+      merchantOrderId: orderId,
+      amountPaise: 45000,
+      currency: "INR",
+      status: "PENDING"
+    });
+
+    const payload = {
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 45000,
+            amount_captured: 45000,
+            currency: "INR",
+            status: "captured",
+            captured: true,
+            amount_refunded: 0
+          }
+        }
+      },
+      created_at: Math.floor(Date.now() / 1000)
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const signature = signBody(rawBody);
+
+    // Simulate an in-flight attempt started 5 seconds ago (< 30s stale threshold)
+    const inFlightStartedAt = new Date(Date.now() - 5000);
+    await PaymentLifecycleEvent.create({
+      eventId: `evt_wh_${Date.now()}`,
+      tenantId,
+      sourceSystem: "GATEWAY_WEBHOOK",
+      sourceEventId: testEventId,
+      deduplicationKey,
+      payloadFingerprint: crypto.createHash("sha256").update(Buffer.from(rawBody, "utf8")).digest("hex"),
+      accountBodyHash: `RAZORPAY_BODY:${accountId}:${crypto.createHash("sha256").update(Buffer.from(rawBody, "utf8")).digest("hex")}`,
+      normalizedEventType: "PAYMENT_CAPTURED",
+      merchantOrderId: orderId,
+      gatewayPaymentId: paymentId,
+      amountPaise: 45000,
+      currency: "INR",
+      processingStatus: "RECEIVED",
+      processingStartedAt: inFlightStartedAt,
+      processingAttemptId: crypto.randomUUID()
+    });
+
+    // Concurrent delivery within stale window must return 503
+    const res = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    expect(res.status).toBe(503);
+
+    // Mutation must NOT be applied yet
+    const orderDoc = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+    expect(orderDoc.status).toBe("PENDING");
+    const paymentDoc = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(paymentDoc.status).toBe("AUTHORIZED");
+  });
+
+  it("18. delivery after a crashed attempt (stale claim >30s) atomically reclaims and applies mutation once", async () => {
+    const paymentId = `pay_integ_crashed_${Date.now()}`;
+    const orderId = `order_integ_crashed_${Date.now()}`;
+    const testEventId = `evt_integ_crashed_${Date.now()}`;
+    const accountId = "acc_integ_crashed_01";
+    const deduplicationKey = `RAZORPAY:${accountId}:${testEventId}`;
+    const tenantId = "sh_integ_merchant";
+
+    trackedDeduplicationKeys.add(deduplicationKey);
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+
+    await GatewayPayment.create({
+      tenantId,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 55000,
+      currency: "INR"
+    });
+
+    await MerchantOrder.create({
+      tenantId,
+      merchantOrderId: orderId,
+      amountPaise: 55000,
+      currency: "INR",
+      status: "PENDING"
+    });
+
+    const payload = {
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            order_id: orderId,
+            amount: 55000,
+            amount_captured: 55000,
+            currency: "INR",
+            status: "captured",
+            captured: true,
+            amount_refunded: 0
+          }
+        }
+      },
+      created_at: Math.floor(Date.now() / 1000)
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const signature = signBody(rawBody);
+
+    // Simulate crashed attempt from 35 seconds ago (> 30s stale threshold)
+    const crashedStartedAt = new Date(Date.now() - 35000);
+    const crashedAttemptId = crypto.randomUUID();
+    await PaymentLifecycleEvent.create({
+      eventId: `evt_wh_${Date.now()}`,
+      tenantId,
+      sourceSystem: "GATEWAY_WEBHOOK",
+      sourceEventId: testEventId,
+      deduplicationKey,
+      payloadFingerprint: crypto.createHash("sha256").update(Buffer.from(rawBody, "utf8")).digest("hex"),
+      accountBodyHash: `RAZORPAY_BODY:${accountId}:${crypto.createHash("sha256").update(Buffer.from(rawBody, "utf8")).digest("hex")}`,
+      normalizedEventType: "PAYMENT_CAPTURED",
+      merchantOrderId: orderId,
+      gatewayPaymentId: paymentId,
+      amountPaise: 55000,
+      currency: "INR",
+      processingStatus: "RECEIVED",
+      processingStartedAt: crashedStartedAt,
+      processingAttemptId: crashedAttemptId
+    });
+
+    // Retry after stale claim must reclaim atomically and succeed with 200
+    const res = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe("ACCEPTED");
+
+    // Mutation is applied exactly once
+    const orderDoc = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+    expect(orderDoc.status).toBe("PAID");
+    const paymentDoc = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(paymentDoc.status).toBe("CAPTURED");
+
+    // Event doc has transitioned to PROCESSED with a new attempt ID
+    const eventDoc = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+    expect(eventDoc.processingStatus).toBe("PROCESSED");
+    expect(eventDoc.processingAttemptId).not.toBe(crashedAttemptId);
   });
 });

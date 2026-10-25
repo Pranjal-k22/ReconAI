@@ -7,6 +7,7 @@ import { collectDispatchEvidence } from "./dispatchEvidenceCollector.js";
 import { performProviderPreflight } from "./providerPreflightService.js";
 import {
   issuePolicyAuthorizationToken,
+  verifyPolicyAuthorizationToken,
   UnauthorizedActionExecutionError
 } from "./policyAuthorizationToken.js";
 import {
@@ -131,9 +132,10 @@ export async function dispatchSandboxAction({
   const cleanTenantId = tenantId.trim();
   const cleanCaseId = caseId.trim();
 
+  let earlyExistingOp = null;
   // Early Idempotency Check: if a completed operation already exists for this idempotency key, return it immediately
   if (idempotencyKey && typeof idempotencyKey === "string" && idempotencyKey.trim()) {
-    const earlyExistingOp = await ProviderOperation.findOne({
+    earlyExistingOp = await ProviderOperation.findOne({
       tenantId: cleanTenantId,
       idempotencyKey: idempotencyKey.trim()
     }).lean();
@@ -153,7 +155,7 @@ export async function dispatchSandboxAction({
         );
       }
 
-      if (earlyExistingOp.operationStatus !== "OUTCOME_UNKNOWN") {
+      if (earlyExistingOp.operationStatus !== "OUTCOME_UNKNOWN" && earlyExistingOp.operationStatus !== "REQUESTED") {
         return {
           isDuplicate: true,
           dispatchBlocked: false,
@@ -171,7 +173,13 @@ export async function dispatchSandboxAction({
     caseId: cleanCaseId
   });
 
-  const { paymentCase: caseDoc, gatewayPayment, merchantOrder, evidenceRecord, inFlightCommitmentsPaise } = evidence;
+  const { paymentCase: caseDoc, gatewayPayment, merchantOrder, evidenceRecord } = evidence;
+  let inFlightCommitmentsPaise = evidence.inFlightCommitmentsPaise;
+
+  // When reconciling an in-flight operation (REQUESTED or OUTCOME_UNKNOWN), subtract its own reserved amount so it is not double-counted
+  if (earlyExistingOp && (earlyExistingOp.operationStatus === "REQUESTED" || earlyExistingOp.operationStatus === "OUTCOME_UNKNOWN")) {
+    inFlightCommitmentsPaise = Math.max(0, inFlightCommitmentsPaise - (earlyExistingOp.amountPaise || 0));
+  }
   const targetCurrency = (gatewayPayment.currency || "INR").toUpperCase();
 
   // -------------------------------------------------------------------------
@@ -267,7 +275,7 @@ export async function dispatchSandboxAction({
       );
     }
 
-    if (existingOp.operationStatus !== "OUTCOME_UNKNOWN") {
+    if (existingOp.operationStatus !== "OUTCOME_UNKNOWN" && existingOp.operationStatus !== "REQUESTED") {
       return {
         isDuplicate: true,
         dispatchBlocked: false,
@@ -298,12 +306,12 @@ export async function dispatchSandboxAction({
 
   if (existingOp) {
 
-    // Handle OUTCOME_UNKNOWN per Gate B5:
+    // Handle OUTCOME_UNKNOWN or crashed REQUESTED per Gate B5:
     // Before any re-send, list the payment's refunds from the provider and match by idempotency key/reference/amount
-    if (existingOp.operationStatus === "OUTCOME_UNKNOWN") {
+    if (existingOp.operationStatus === "OUTCOME_UNKNOWN" || existingOp.operationStatus === "REQUESTED") {
       logger.info(
-        { operationId: existingOp.operationId },
-        "Checking provider refunds list before re-send of OUTCOME_UNKNOWN operation"
+        { operationId: existingOp.operationId, operationStatus: existingOp.operationStatus },
+        "Checking provider refunds list before re-send of in-flight / unknown operation"
       );
 
       let providerRefundsList = [];
@@ -513,59 +521,43 @@ export async function dispatchSandboxAction({
   });
 
   // -------------------------------------------------------------------------
-  // Step 7: Dispatch Sandbox Operation via Adapter with Token (Gate 1 & Gate 3)
+  // Step 7: Verify PolicyAuthorizationToken Cryptographically (Gate 3)
   // -------------------------------------------------------------------------
-  const operationId = existingOp ? existingOp.operationId : generateOperationId();
-  let dispatchResponse = null;
-  let dispatchError = null;
-
   try {
-    dispatchResponse = await executeSandboxRefund({
-      authorizationToken,
-      tenantId: cleanTenantId,
-      caseId: cleanCaseId,
-      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
-      amountPaise: targetAmountPaise,
-      currency: targetCurrency,
-      idempotencyKey: serverIdempotencyKey,
-      providerIdempotencyKey: serverIdempotencyKey,
-      notes: {
-        reconaiCaseId: cleanCaseId,
-        tenantId: cleanTenantId,
-        operationId
-      },
-      receipt: `RCP-${operationId}`,
-      customFetch,
+    await verifyPolicyAuthorizationToken({
+      token: authorizationToken,
+      expectedTenantId: cleanTenantId,
+      expectedCaseId: cleanCaseId,
+      expectedPaymentId: gatewayPayment.gatewayPaymentId,
+      expectedActionType: actionType,
+      expectedAmountPaise: targetAmountPaise,
+      expectedCurrency: targetCurrency,
+      expectedIdempotencyKey: serverIdempotencyKey,
       nowMs,
       customSecret
     });
-  } catch (err) {
-    dispatchError = err;
-    logger.warn({ err: err.message, operationId }, "Error during sandbox provider refund dispatch");
-  }
-
-  // If token was rejected by adapter (Gate 3), refuse with typed error; NO ProviderOperation row is created
-  if (dispatchError && dispatchError instanceof UnauthorizedActionExecutionError) {
+  } catch (tokenErr) {
     await releaseRefundReservation({
       tenantId: cleanTenantId,
       gatewayPaymentId: gatewayPayment.gatewayPaymentId,
       idempotencyKey: serverIdempotencyKey,
-      reason: "UNAUTHORIZED_ACTION_EXECUTION"
+      reason: "TOKEN_VERIFICATION_FAILED"
     });
-    throw dispatchError;
+    throw tokenErr;
   }
 
   // -------------------------------------------------------------------------
-  // Step 8: Persist ProviderOperation with Single-Use tokenId
+  // Step 8: Persist ProviderOperation (REQUESTED, tokenId Unique: Consumes Token)
   // -------------------------------------------------------------------------
+  const operationId = existingOp ? existingOp.operationId : generateOperationId();
   let providerOp;
   if (existingOp) {
     providerOp = await ProviderOperation.findByIdAndUpdate(
       existingOp._id,
       {
         tokenId,
-        dispatchedAt: new Date(),
-        providerResponseRaw: dispatchResponse?.rawResponse || null
+        operationStatus: "REQUESTED",
+        requestedAt: new Date()
       },
       { new: true }
     );
@@ -587,9 +579,7 @@ export async function dispatchSandboxAction({
         provider: "RAZORPAY",
         requestPayloadHash: inputHash,
         policyVersion: policyResult.policyVersion || DEFAULT_POLICY_VERSION,
-        providerResponseRaw: dispatchResponse?.rawResponse || null,
-        requestedAt: new Date(),
-        dispatchedAt: new Date()
+        requestedAt: new Date()
       });
     } catch (err) {
       if (err.code === 11000) {
@@ -631,6 +621,54 @@ export async function dispatchSandboxAction({
       idempotencyKey: serverIdempotencyKey
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Step 9: POST Send (Dispatch Sandbox Operation via Adapter with Token)
+  // -------------------------------------------------------------------------
+  let dispatchResponse = null;
+  let dispatchError = null;
+
+  try {
+    dispatchResponse = await executeSandboxRefund({
+      authorizationToken,
+      tenantId: cleanTenantId,
+      caseId: cleanCaseId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      amountPaise: targetAmountPaise,
+      currency: targetCurrency,
+      idempotencyKey: serverIdempotencyKey,
+      providerIdempotencyKey: serverIdempotencyKey,
+      notes: {
+        reconaiCaseId: cleanCaseId,
+        tenantId: cleanTenantId,
+        operationId
+      },
+      receipt: `RCP-${operationId}`,
+      customFetch,
+      nowMs,
+      customSecret,
+      operationId
+    });
+
+    await ProviderOperation.findByIdAndUpdate(providerOp._id, {
+      dispatchedAt: new Date(),
+      providerResponseRaw: dispatchResponse?.rawResponse || null
+    });
+  } catch (err) {
+    dispatchError = err;
+    logger.warn({ err: err.message, operationId }, "Error during sandbox provider refund dispatch");
+  }
+
+  // If token was rejected by adapter (Gate 3), refuse with typed error
+  if (dispatchError && dispatchError instanceof UnauthorizedActionExecutionError) {
+    await releaseRefundReservation({
+      tenantId: cleanTenantId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      idempotencyKey: serverIdempotencyKey,
+      reason: "UNAUTHORIZED_ACTION_EXECUTION"
+    });
+    throw dispatchError;
+  }
 
   // -------------------------------------------------------------------------
   // Step 9 & 10: Verify Outcome & Finalize Atomic Reservation (B4 & B6)

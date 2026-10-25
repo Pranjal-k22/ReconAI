@@ -135,14 +135,15 @@ Ingest merchant orders, gateway payments, and settlement records, run determinis
   - Safe-hold mapping: All 30 scenarios emit unique specific codes (Case 18 emits `CONFLICTING_RECORDS`; general safe-hold eliminated).
   - Audit fail-closed: Audit writes occur before mutations; failures fail closed with 503; webhooks carry `processingStatus` (`RECEIVED`, `PROCESSED`, `QUARANTINED`, `FAILED`); unmapped events are quarantined and reprocessed via authoritative server-side tenant lookup (never payload notes).
 - **Stage 3B Hardened Dispatch Path**:
-  - Strict dispatch route: `POST /api/cases/:caseId/dispatch-sandbox-action` accepts ONLY `{ actionType }` alongside `:caseId`. Client-supplied amounts, limits, approval flags, and idempotency keys are strictly rejected with 400.
+  - Strict dispatch route: `POST /api/payment-cases/:caseId/provider/dispatch` accepts strictly `{ actionType: "REQUEST_REFUND" }` alongside `:caseId`. Client-supplied amounts, limits, approval flags, and idempotency keys are strictly rejected with 400.
   - Server-Derived Evidence: `dispatchEvidenceCollector.js` loads canonical DB state. Amount is derived as full refundable balance. Idempotency key is server-derived (`policyDecisionId + actionType + gatewayPaymentId`).
   - Injected Limits Provider: Allowed only when `NODE_ENV === "test"`. Production fails closed without configured limits.
-  - Case 22 Unconditionally Blocked: Dispatch route halts on Case 22 with hard safe-hold.
+  - Case 22 Unconditionally Blocked: Dispatch route halts on Case 22 with hard safe-hold (`LATE_CAPTURE_CANCELLED_ORDER`).
   - Authoritative Provider Preflight: GET `/v1/payments/:id` and `/v1/payments/:id/refunds` verify status, currency, and amounts. Mismatch -> `SAFE_HOLD` (`PROVIDER_PREFLIGHT_MISMATCH`); timeout/network error -> `INSUFFICIENT_EVIDENCE`.
-  - Gate 3 `PolicyAuthorizationToken`: Cryptographically signed HMAC-SHA256 token (short TTL 120s, max 300s, signed with `POLICY_TOKEN_SECRET` >= 32 chars distinct from JWT/Service secrets). Bound to tenant, case, payment, amount, currency, and idempotency key. Timing-safe verification with length check. Single-use enforced via unique sparse index on `tokenId` in `ProviderOperation`.
+  - Gate 3 `PolicyAuthorizationToken`: Cryptographically signed HMAC-SHA256 token (short TTL 120s, max 300s, signed with `POLICY_TOKEN_SECRET` >= 32 chars distinct from JWT/Service secrets). Bound to tenant, case, payment, amount, currency, and idempotency key. Timing-safe verification with length check. Single-use enforced via unique sparse index on `tokenId` in `ProviderOperation`. Status: implemented; verified with mocked provider transport; no real Razorpay test-mode run yet.
+  - Dispatch Invariant Ordering: preflight GET -> reserve -> issue token -> verify token -> INSERT ProviderOperation (`REQUESTED`, tokenId unique: consumes token) -> POST -> verification GET. A crash between insert and POST leaves a `REQUESTED` operation resolved via reconcile without blind re-send.
   - Atomic Refund Reservation: `reserveRefund` conditional `$expr` update on `GatewayPayment.reservedRefundPaise` and compound unique index `{ tenantId, idempotencyKey }` on `RefundReservation` prevents balance race conditions across concurrent dispatches.
-  - No Blind Retries on `OUTCOME_UNKNOWN`: Lists provider refunds matching by idempotency key and amount before retrying.
-  - Razorpay Refund Idempotency Header: Uses `X-Refund-Idempotency`.
-  - Razorpay Void Limitation: No direct void API exists in Razorpay for authorized uncaptured payments; uncaptured payments auto-void after 72 hours.
+  - No Blind Retries on `OUTCOME_UNKNOWN` or `REQUESTED`: Lists provider refunds matching by idempotency key and amount before retrying.
+  - Razorpay Refund Idempotency Header: Uses `X-Refund-Idempotency` (minimum 10 characters, alphanumeric + hyphens/underscores).
+  - Razorpay Auto-Refund Window: Authorized uncaptured payments auto-refund after 3 days per Razorpay official documentation (no direct void API exists in Razorpay). Normal refunds take 5-7 working days.
   - Safety Invariants: `RAZORPAY_SANDBOX_WRITES_ENABLED` is false by default. No live keys (`rzp_live_`). Autonomous worker refunds strictly prohibited.

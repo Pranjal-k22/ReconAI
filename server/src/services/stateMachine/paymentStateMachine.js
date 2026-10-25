@@ -177,7 +177,8 @@ export function evaluateCanonicalTransition({
       conflictFlag: "CANCELLED_ORDER_CAPTURED",
       gatewayUpdates: {
         status: "CAPTURED",
-        isLateCapture: true
+        isLateCapture: true,
+        ...(capturedAmountPaise !== null ? { capturedAmountPaise } : {})
       },
       orderUpdates: {
         // Order status must NOT be changed to PAID! Cancellation preserved!
@@ -226,7 +227,8 @@ export function evaluateCanonicalTransition({
       gatewayUpdates: {
         status: "CAPTURED",
         isLateCapture: true,
-        previousStatus: "FAILED"
+        previousStatus: "FAILED",
+        ...(capturedAmountPaise !== null ? { capturedAmountPaise } : {})
       },
       orderUpdates,
       caseUpdates: {
@@ -282,7 +284,8 @@ export function evaluateCanonicalTransition({
       reason: "PAYMENT_CAPTURED: Standard successful capture transition",
       conflictFlag: caseUpdates.isSafeHold ? caseUpdates.safeHoldCode : null,
       gatewayUpdates: {
-        status: "CAPTURED"
+        status: "CAPTURED",
+        ...(capturedAmountPaise !== null ? { capturedAmountPaise } : {})
       },
       orderUpdates,
       caseUpdates

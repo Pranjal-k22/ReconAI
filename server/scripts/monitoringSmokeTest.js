@@ -28,13 +28,26 @@ function validateTestDatabaseUri(uri, initialMongoUri) {
     throw new Error("Configuration safety violation: Invalid URI scheme, must start with mongodb:// or mongodb+srv://");
   }
 
+  let hostname = "";
   let dbName = "";
   try {
     const url = new URL(trimmedUri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
+    hostname = url.hostname;
     dbName = url.pathname.replace(/^\//, "");
   } catch {
-    const match = trimmedUri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
+    const match = trimmedUri.match(/^mongodb(?:\+srv)?:\/\/([^/:?#]+)(?::\d+)?\/([^/?]+)/);
+    if (match) {
+      hostname = match[1];
+      dbName = match[2];
+    }
+  }
+
+  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
+  const allowRemote = process.env.ALLOW_REMOTE_TEST_DB === "true";
+  if (!isLocalHost && !allowRemote) {
+    throw new Error(
+      `Configuration safety violation: MONGODB_TEST_URI host '${hostname}' is not localhost/127.0.0.1. Remote test databases are refused unless ALLOW_REMOTE_TEST_DB=true.`
+    );
   }
 
   if (!dbName) {

@@ -18,52 +18,7 @@ function sanitizeMongoUri(uri) {
   }
 }
 
-/**
- * Validates the test database URI to guarantee complete isolation.
- */
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("MONGODB_TEST_URI must be provided as a non-empty string");
-  }
-
-  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
-    throw new Error("Invalid MONGODB_TEST_URI scheme: must start with mongodb:// or mongodb+srv://");
-  }
-
-  if (process.env.MONGODB_URI && uri.trim() === process.env.MONGODB_URI.trim()) {
-    throw new Error(
-      "Safety violation: MONGODB_TEST_URI matches development/app MONGODB_URI. Integration tests require an isolated test database."
-    );
-  }
-
-  let dbName = "";
-  try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
-    dbName = url.pathname.replace(/^\//, "");
-  } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
-  }
-
-  if (!dbName) {
-    throw new Error("Safety violation: MONGODB_TEST_URI must explicitly specify a database name.");
-  }
-
-  const lowerName = dbName.toLowerCase();
-  if (!lowerName.includes("test")) {
-    throw new Error(
-      `Safety violation: Test database name '${dbName}' must contain 'test' to guarantee isolation.`
-    );
-  }
-
-  if (lowerName.includes("prod")) {
-    throw new Error(
-      `Safety violation: Test database name '${dbName}' contains 'prod'. Execution refused.`
-    );
-  }
-
-  return uri;
-}
+import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_evidence_persistence";
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);

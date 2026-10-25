@@ -321,13 +321,33 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       }
 
       // If stored event is in RECEIVED state:
-      const eventAgeMs = Date.now() - new Date(existingByEventId.ingestedAt || existingByEventId.createdAt || 0).getTime();
-      const SHORT_TIMEOUT_MS = 500;
-      if (eventAgeMs >= SHORT_TIMEOUT_MS) {
-        existingReceivedEvent = existingByEventId;
-      } else {
+      const staleThresholdMs = Number(process.env.WEBHOOK_STALE_PROCESSING_THRESHOLD_MS) || 30000;
+      const now = new Date();
+      const staleBefore = new Date(now.getTime() - staleThresholdMs);
+      const processingAttemptId = crypto.randomUUID();
+
+      const claimed = await PaymentLifecycleEvent.findOneAndUpdate(
+        {
+          _id: existingByEventId._id,
+          processingStatus: "RECEIVED",
+          $or: [
+            { processingStartedAt: null },
+            { processingStartedAt: { $lt: staleBefore } }
+          ]
+        },
+        {
+          $set: {
+            processingStartedAt: now,
+            processingAttemptId
+          }
+        },
+        { new: true }
+      );
+
+      if (!claimed) {
         throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
       }
+      existingReceivedEvent = claimed;
     }
 
     // Check B: Has this exact raw body hash already been processed for this provider account?
@@ -365,13 +385,33 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
           };
         }
 
-        const eventAgeMs = Date.now() - new Date(existingByBody.ingestedAt || existingByBody.createdAt || 0).getTime();
-        const SHORT_TIMEOUT_MS = 500;
-        if (eventAgeMs >= SHORT_TIMEOUT_MS) {
-          existingReceivedEvent = existingByBody;
-        } else {
+        const staleThresholdMs = Number(process.env.WEBHOOK_STALE_PROCESSING_THRESHOLD_MS) || 30000;
+        const now = new Date();
+        const staleBefore = new Date(now.getTime() - staleThresholdMs);
+        const processingAttemptId = crypto.randomUUID();
+
+        const claimed = await PaymentLifecycleEvent.findOneAndUpdate(
+          {
+            _id: existingByBody._id,
+            processingStatus: "RECEIVED",
+            $or: [
+              { processingStartedAt: null },
+              { processingStartedAt: { $lt: staleBefore } }
+            ]
+          },
+          {
+            $set: {
+              processingStartedAt: now,
+              processingAttemptId
+            }
+          },
+          { new: true }
+        );
+
+        if (!claimed) {
           throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
         }
+        existingReceivedEvent = claimed;
       }
     }
   } else {
@@ -713,6 +753,8 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     sourceObservedAt: providerOccurredAt,
     ingestedAt: new Date(),
     processingStatus: "RECEIVED",
+    processingStartedAt: new Date(),
+    processingAttemptId: crypto.randomUUID(),
     normalizedPayload: sanitizeWebhookPayload(eventEnvelope.payload),
     payloadFingerprint,
     schemaVersion: "1.0.0",
@@ -771,24 +813,6 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
           existing?.provenance?.processingStatus === "PROCESSED" ||
           existing?.provenance?.processingStatus === "ACCEPTED";
 
-        if (!isProcessed) {
-          // If in RECEIVED, wait briefly up to short timeout for concurrent in-flight winner to complete
-          const pollStart = Date.now();
-          while (Date.now() - pollStart < 800) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            const recheck = await PaymentLifecycleEvent.findOne({ $or: queryOr }).lean();
-            if (
-              recheck?.processingStatus === "PROCESSED" ||
-              recheck?.provenance?.processingStatus === "PROCESSED" ||
-              recheck?.provenance?.processingStatus === "ACCEPTED"
-            ) {
-              existing = recheck;
-              isProcessed = true;
-              break;
-            }
-          }
-        }
-
         if (isProcessed) {
           await createAuditEvent({
             actorType: "RAZORPAY_ADAPTER",
@@ -807,14 +831,34 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
           };
         }
 
-        // Stored event in RECEIVED: check timeout (older than short timeout is re-processed exactly once)
-        const eventAgeMs = Date.now() - new Date(existing?.ingestedAt || existing?.createdAt || 0).getTime();
-        const SHORT_TIMEOUT_MS = 500;
-        if (eventAgeMs >= SHORT_TIMEOUT_MS) {
-          lifecycleEvent = existing;
-        } else {
+        // Stored event in RECEIVED: claim with ONE atomic findOneAndUpdate conditioned on unclaimed or stale
+        const staleThresholdMs = Number(process.env.WEBHOOK_STALE_PROCESSING_THRESHOLD_MS) || 30000;
+        const now = new Date();
+        const staleBefore = new Date(now.getTime() - staleThresholdMs);
+        const processingAttemptId = crypto.randomUUID();
+
+        const claimed = await PaymentLifecycleEvent.findOneAndUpdate(
+          {
+            _id: existing._id,
+            processingStatus: "RECEIVED",
+            $or: [
+              { processingStartedAt: null },
+              { processingStartedAt: { $lt: staleBefore } }
+            ]
+          },
+          {
+            $set: {
+              processingStartedAt: now,
+              processingAttemptId
+            }
+          },
+          { new: true }
+        );
+
+        if (!claimed) {
           throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
         }
+        lifecycleEvent = claimed;
       } else {
         throw err;
       }
@@ -846,8 +890,12 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
         };
       }
 
-      const eventAgeMs = Date.now() - new Date(existing.ingestedAt || 0).getTime();
-      if (eventAgeMs >= 500) {
+      const staleThresholdMs = Number(process.env.WEBHOOK_STALE_PROCESSING_THRESHOLD_MS) || 30000;
+      const startedAt = existing.processingStartedAt ? new Date(existing.processingStartedAt).getTime() : 0;
+      const isStale = !existing.processingStartedAt || (Date.now() - startedAt >= staleThresholdMs);
+      if (isStale) {
+        existing.processingStartedAt = new Date();
+        existing.processingAttemptId = crypto.randomUUID();
         lifecycleEvent = existing;
       } else {
         throw AppError.serviceUnavailable("Webhook event in RECEIVED state is currently processing", 503);
@@ -886,7 +934,14 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
     if (isMongoConnected && lifecycleEvent?._id) {
       await PaymentLifecycleEvent.updateOne(
         { _id: lifecycleEvent._id },
-        { $set: { processingStatus: "RECEIVED", "provenance.processingStatus": "RECEIVED" } }
+        {
+          $set: {
+            processingStatus: "RECEIVED",
+            "provenance.processingStatus": "RECEIVED",
+            processingStartedAt: null,
+            processingAttemptId: null
+          }
+        }
       ).catch(() => {});
     }
     throw AppError.serviceUnavailable(`Webhook audit logging failed: ${auditErr.message}`, 503);
@@ -1032,6 +1087,14 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
             lastProviderEventAt: providerEventAt,
             rawData: sanitizeWebhookPayload(paymentEntity)
           };
+          if (newPaymentStatus === "CAPTURED") {
+            const capturedAmt = typeof paymentEntity.amount_captured === "number"
+              ? paymentEntity.amount_captured
+              : (typeof paymentEntity.amount === "number" ? paymentEntity.amount : null);
+            if (capturedAmt !== null) {
+              updateFields.capturedAmountPaise = capturedAmt;
+            }
+          }
           if (newRefundStatus) {
             updateFields.refundStatus = newRefundStatus;
           }
@@ -1060,11 +1123,18 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
           );
         }
       } else {
+        const capturedAmt = newPaymentStatus === "CAPTURED"
+          ? (typeof paymentEntity.amount_captured === "number"
+              ? paymentEntity.amount_captured
+              : (amountPaise || null))
+          : null;
+
         const newPaymentDoc = {
           gatewayPaymentId,
           tenantId: resolvedTenantId,
           merchantOrderId,
           amountPaise: amountPaise || 0,
+          capturedAmountPaise: capturedAmt,
           currency,
           status: newPaymentStatus,
           method: (paymentEntity.method || "UPI").toUpperCase(),
@@ -1327,39 +1397,52 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
  * @returns {Promise<{ reprocessedCount: number, results: Array }>}
  */
 export async function reprocessQuarantinedWebhookEvents({
-  tenantId,
+  tenantId = null,
   gatewayPaymentId = null,
-  merchantOrderId = null
+  merchantOrderId = null,
+  limit = 50
 } = {}) {
-  if (!tenantId || typeof tenantId !== "string" || tenantId.trim().length === 0) {
-    throw AppError.badRequest("Authoritative tenantId is required to reprocess quarantined events");
-  }
-  if (!gatewayPaymentId && !merchantOrderId) {
-    throw AppError.badRequest("gatewayPaymentId or merchantOrderId is required to reprocess quarantined events");
-  }
-
   const isMongoConnected = Boolean(mongoose.connection && mongoose.connection.readyState === 1);
-  const cleanTenantId = tenantId.trim();
+  const cleanTenantId = (tenantId && typeof tenantId === "string" && tenantId.trim().length > 0)
+    ? tenantId.trim()
+    : null;
 
-  const queryConditions = [];
-  if (gatewayPaymentId) queryConditions.push({ gatewayPaymentId });
-  if (merchantOrderId) queryConditions.push({ merchantOrderId });
+  if (cleanTenantId && !gatewayPaymentId && !merchantOrderId) {
+    throw AppError.badRequest("gatewayPaymentId or merchantOrderId is required when specifying tenantId");
+  }
 
   let quarantinedEvents = [];
-  if (isMongoConnected) {
-    quarantinedEvents = await PaymentLifecycleEvent.find({
-      tenantId: "unassigned_provider_quarantine",
-      processingStatus: "QUARANTINED",
-      $or: queryConditions
-    });
+  if (cleanTenantId) {
+    const queryConditions = [];
+    if (gatewayPaymentId) queryConditions.push({ gatewayPaymentId });
+    if (merchantOrderId) queryConditions.push({ merchantOrderId });
+
+    if (isMongoConnected) {
+      quarantinedEvents = await PaymentLifecycleEvent.find({
+        tenantId: "unassigned_provider_quarantine",
+        processingStatus: "QUARANTINED",
+        $or: queryConditions
+      }).limit(limit);
+    } else {
+      quarantinedEvents = Array.from(inMemoryEvents.values()).filter(
+        (e) =>
+          e.tenantId === "unassigned_provider_quarantine" &&
+          (e.processingStatus === "QUARANTINED" || e.provenance?.status === "QUARANTINED_UNMAPPED_TENANT") &&
+          ((gatewayPaymentId && e.gatewayPaymentId === gatewayPaymentId) ||
+            (merchantOrderId && e.merchantOrderId === merchantOrderId))
+      ).slice(0, limit);
+    }
   } else {
-    quarantinedEvents = Array.from(inMemoryEvents.values()).filter(
-      (e) =>
-        e.tenantId === "unassigned_provider_quarantine" &&
-        (e.processingStatus === "QUARANTINED" || e.provenance?.status === "QUARANTINED_UNMAPPED_TENANT") &&
-        ((gatewayPaymentId && e.gatewayPaymentId === gatewayPaymentId) ||
-          (merchantOrderId && e.merchantOrderId === merchantOrderId))
-    );
+    // Autonomous background worker sweep mode: find quarantined events and derive tenant from server DB records
+    if (isMongoConnected) {
+      quarantinedEvents = await PaymentLifecycleEvent.find({
+        processingStatus: "QUARANTINED"
+      }).limit(limit);
+    } else {
+      quarantinedEvents = Array.from(inMemoryEvents.values()).filter(
+        (e) => e.processingStatus === "QUARANTINED" || e.provenance?.status === "QUARANTINED_UNMAPPED_TENANT"
+      ).slice(0, limit);
+    }
   }
 
   if (quarantinedEvents.length === 0) {
@@ -1368,6 +1451,52 @@ export async function reprocessQuarantinedWebhookEvents({
 
   const results = [];
   for (const event of quarantinedEvents) {
+    let effectiveTenantId = cleanTenantId;
+    const targetGatewayPaymentId = event.gatewayPaymentId || gatewayPaymentId;
+    const targetMerchantOrderId = event.merchantOrderId || merchantOrderId;
+
+    if (!effectiveTenantId) {
+      // Derive tenant strictly from server-side GatewayPayment or MerchantOrder record
+      if (targetGatewayPaymentId) {
+        if (isMongoConnected) {
+          const matchingPayment = await GatewayPayment.findOne({
+            gatewayPaymentId: targetGatewayPaymentId,
+            tenantId: { $ne: "unassigned_provider_quarantine" }
+          }).lean();
+          if (matchingPayment?.tenantId) {
+            effectiveTenantId = matchingPayment.tenantId;
+          }
+        } else {
+          const memPayment = inMemoryPayments.get(targetGatewayPaymentId);
+          if (memPayment && memPayment.tenantId !== "unassigned_provider_quarantine") {
+            effectiveTenantId = memPayment.tenantId;
+          }
+        }
+      }
+
+      if (!effectiveTenantId && targetMerchantOrderId) {
+        if (isMongoConnected) {
+          const matchingOrder = await MerchantOrder.findOne({
+            merchantOrderId: targetMerchantOrderId,
+            tenantId: { $ne: "unassigned_provider_quarantine" }
+          }).lean();
+          if (matchingOrder?.tenantId) {
+            effectiveTenantId = matchingOrder.tenantId;
+          }
+        } else {
+          const memOrder = inMemoryOrders.get(targetMerchantOrderId);
+          if (memOrder && memOrder.tenantId !== "unassigned_provider_quarantine") {
+            effectiveTenantId = memOrder.tenantId;
+          }
+        }
+      }
+    }
+
+    // If still unmapped, leave it quarantined
+    if (!effectiveTenantId) {
+      continue;
+    }
+
     const payload = event.normalizedPayload || {};
     const paymentEntity = payload.payment?.entity || payload.payment || {};
     const eventName = payload.event || event.provenance?.eventName || (
@@ -1378,38 +1507,45 @@ export async function reprocessQuarantinedWebhookEvents({
     );
 
     const paymentStatus = mapToGatewayPaymentStatus(eventName);
+    const capturedAmt = paymentStatus === "CAPTURED"
+      ? (typeof paymentEntity.amount_captured === "number"
+          ? paymentEntity.amount_captured
+          : (typeof paymentEntity.amount === "number" ? paymentEntity.amount : null))
+      : null;
 
     // Apply updates to GatewayPayment and MerchantOrder
-    if (gatewayPaymentId) {
+    if (targetGatewayPaymentId) {
+      const paymentUpdate = {
+        status: paymentStatus,
+        lastProviderEventAt: event.providerEventAt || new Date(),
+        rawData: sanitizeWebhookPayload(paymentEntity)
+      };
+      if (capturedAmt !== null) {
+        paymentUpdate.capturedAmountPaise = capturedAmt;
+      }
+
       if (isMongoConnected) {
         await GatewayPayment.updateOne(
-          { gatewayPaymentId, tenantId: cleanTenantId },
-          {
-            $set: {
-              status: paymentStatus,
-              lastProviderEventAt: event.providerEventAt || new Date(),
-              rawData: sanitizeWebhookPayload(paymentEntity)
-            }
-          }
+          { gatewayPaymentId: targetGatewayPaymentId, tenantId: effectiveTenantId },
+          { $set: paymentUpdate }
         );
       } else {
-        const memPayment = inMemoryPayments.get(gatewayPaymentId);
-        if (memPayment && memPayment.tenantId === cleanTenantId) {
-          memPayment.status = paymentStatus;
-          memPayment.lastProviderEventAt = event.providerEventAt || new Date();
+        const memPayment = inMemoryPayments.get(targetGatewayPaymentId);
+        if (memPayment && memPayment.tenantId === effectiveTenantId) {
+          Object.assign(memPayment, paymentUpdate);
         }
       }
     }
 
-    if (merchantOrderId && (eventName === "payment.captured" || eventName === "order.paid")) {
+    if (targetMerchantOrderId && (eventName === "payment.captured" || eventName === "order.paid")) {
       if (isMongoConnected) {
         await MerchantOrder.updateOne(
-          { merchantOrderId, tenantId: cleanTenantId },
+          { merchantOrderId: targetMerchantOrderId, tenantId: effectiveTenantId },
           { $set: { status: "PAID" } }
         );
       } else {
-        const memOrder = inMemoryOrders.get(merchantOrderId);
-        if (memOrder && memOrder.tenantId === cleanTenantId) {
+        const memOrder = inMemoryOrders.get(targetMerchantOrderId);
+        if (memOrder && memOrder.tenantId === effectiveTenantId) {
           memOrder.status = "PAID";
         }
       }
@@ -1421,16 +1557,16 @@ export async function reprocessQuarantinedWebhookEvents({
         { _id: event._id },
         {
           $set: {
-            tenantId: cleanTenantId,
+            tenantId: effectiveTenantId,
             processingStatus: "PROCESSED",
             "provenance.processingStatus": "PROCESSED",
             "provenance.reprocessedAt": new Date(),
-            "provenance.reprocessedTenant": cleanTenantId
+            "provenance.reprocessedTenant": effectiveTenantId
           }
         }
       );
     } else {
-      event.tenantId = cleanTenantId;
+      event.tenantId = effectiveTenantId;
       event.processingStatus = "PROCESSED";
       if (event.provenance) {
         event.provenance.processingStatus = "PROCESSED";
@@ -1443,14 +1579,14 @@ export async function reprocessQuarantinedWebhookEvents({
       actorType: "SYSTEM",
       actorId: "quarantine-recovery-service",
       action: "QUARANTINED_EVENT_REPROCESSED",
-      tenantId: cleanTenantId,
+      tenantId: effectiveTenantId,
       entityType: "PaymentLifecycleEvent",
       entityId: event.eventId,
       metadata: {
         eventId: event.eventId,
-        gatewayPaymentId: event.gatewayPaymentId,
-        merchantOrderId: event.merchantOrderId,
-        authoritativeTenantId: cleanTenantId,
+        gatewayPaymentId: targetGatewayPaymentId,
+        merchantOrderId: targetMerchantOrderId,
+        authoritativeTenantId: effectiveTenantId,
         reprocessedAt: new Date().toISOString()
       }
     }).catch(() => {});
@@ -1458,7 +1594,7 @@ export async function reprocessQuarantinedWebhookEvents({
     results.push({
       eventId: event.eventId,
       status: "REPROCESSED",
-      tenantId: cleanTenantId
+      tenantId: effectiveTenantId
     });
   }
 

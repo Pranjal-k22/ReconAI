@@ -824,3 +824,92 @@ ReconAI/
   - Policy-limits config storage and client UI remain strictly out of scope / deferred from Stage 3; production limits fail closed (null resolution).
   - No provider dispatch route changes, no refund reservation changes, no live keys, no provider write APIs.
   - Stage 2 data-integrity fixes complete. Stopped and awaiting review.
+
+### Entry 15: Stage 3 Implementation & Stage 3.5 Verification and Corrections
+
+- **Context & Stage 3.5 Mandate**:
+  - Verification-and-fix stage to rigorously audit, correct, and back with executed code every claim from Stage 3.
+  - No UI work, no policy-limits storage, no provider writes (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), no live keys (`rzp_live_` rejected), all tests use mocked fetch transport.
+
+- **V1 Safe-Hold Table from Code (Verified via Execution)**:
+  - Ran automated runner against all 30 scenario fixtures in `evidenceClassifier.test.js:1363-1687`.
+  - All 30 scenarios mapped to canonical enum in `SAFE_HOLD_CODES`.
+  - Identified and corrected previous prose claims: Case 15 (`Forged Webhook`) emits `POLICY_REJECTED` (`safeHold: true`), not `NONE`; Case 28 (`Cross-Tenant Access Attempt`) emits `POLICY_REJECTED` (`safeHold: true`), not `NONE`; Cases 25 (`DATABASE_OUTAGE_PERSISTENCE_FAILURE`) and 26 (`CONTAINER_CRASH_WORKER_RECOVERY`) headings aligned.
+
+| Scenario ID | Name / Heading from Edge Case Matrix | safeHold | safeHoldCode |
+| :--- | :--- | :---: | :--- |
+| Case 1 | Payment Abandoned Before Gateway Confirmation | false | NONE |
+| Case 2 | Webhook Drops or Delivered Out of Order | true | WEBHOOK_OUT_OF_ORDER |
+| Case 3 | Customer Debit Claim with Payment Failed | false | NONE |
+| Case 4 | Late Authorization After Timeout | false | NONE |
+| Case 5 | Captured Payment with Delayed Merchant Settlement | false | NONE |
+| Case 6 | Paid Gateway Payment But Unpaid Order | false | NONE |
+| Case 7 | Duplicate Payment Attempts | false | NONE |
+| Case 8 | Partial Capture | true | PARTIAL_CAPTURE |
+| Case 9 | Currency Mismatch Between Order and Payment | true | AMOUNT_CURRENCY_MISMATCH |
+| Case 10 | Amount Paid Less Than Order Total | true | AMOUNT_CURRENCY_MISMATCH |
+| Case 11 | Amount Paid Greater Than Order Total | true | OVERPAYMENT_REVIEW |
+| Case 12 | Refund Initiated Twice by Operator | true | DUPLICATE_REFUND_IN_FLIGHT |
+| Case 13 | Refund Processed by Gateway But Ledger Not Updated | false | NONE |
+| Case 14 | Gateway Reversal / Chargeback Filed | true | FORMAL_DISPUTE_OPENED |
+| Case 15 | Forged Webhook or Signature Mismatch | true | POLICY_REJECTED |
+| Case 16 | Idempotency Key Collision with Different Amount | true | IDEMPOTENCY_CONFLICT |
+| Case 17 | Customer Claims Refund Not Received After SLA | false | NONE |
+| Case 18 | Bank Reference Number (ARN/RRN) Missing | true | CONFLICTING_RECORDS |
+| Case 19 | Merchant Account Suspended or Inactive | true | GATEWAY_ACCOUNT_SUSPENDED |
+| Case 20 | Customer Account Closed Before Refund Processed | true | REFUND_FAILED |
+| Case 21 | Webhook Storm | false | NONE |
+| Case 22 | Late Capture on Cancelled Order | true | LATE_CAPTURE_CANCELLED_ORDER |
+| Case 23 | Split Settlement Failure | true | SPLIT_SETTLEMENT_MISMATCH |
+| Case 24 | Webhook Delivered for Unknown Account | true | UNKNOWN_ACCOUNT_EVENT |
+| Case 25 | Database Outage During Webhook Processing | true | DATABASE_OUTAGE_PERSISTENCE_FAILURE |
+| Case 26 | Worker Crash While Action Is Pending | true | CONTAINER_CRASH_WORKER_RECOVERY |
+| Case 27 | Concurrent Resolution Attempts | true | LEASE_ACQUISITION_FAILED |
+| Case 28 | Cross-Tenant Access Attempt | true | POLICY_REJECTED |
+| Case 29 | Fraud Allegation or Unauthorized Payment Claim | true | FRAUD_HOLD |
+| Case 30 | Chargeback or Formal Dispute | true | FORMAL_DISPUTE_OPENED |
+
+- **V2 Test-Count Provenance**:
+  - Baseline before Stage 3 was 82 integration tests. Part A added Test 15 (sequentially asserting 4 audit/retry conditions within one `it(` block) and Test 16 (+2 `it(` blocks, bringing total to 84). Part B added 1 test in `providerSandboxDispatchPersistence` (+1 `it(` block, bringing total to 85).
+  - Stage 3.5 added 4 new real-Mongo integration tests:
+    - `webhookPersistence.integration.test.js`: +2 tests (stale window 503, crashed attempt reclaim).
+    - `monitoringPersistence.integration.test.js`: +1 test (worker sweep quarantine recovery end to end).
+    - `providerSandboxDispatchPersistence.integration.test.js`: +1 test (crashed REQUESTED operation reconciled without blind POST).
+  - Per-file integration counts for HEAD:
+    - `evidencePersistence.integration.test.js`: 4
+    - `monitoringPersistence.integration.test.js`: 9
+    - `multiAgentInvestigationPersistence.integration.test.js`: 4
+    - `orchestrationPersistence.integration.test.js`: 13
+    - `policySimulationPersistence.integration.test.js`: 11
+    - `productionStartup.integration.test.js`: 3
+    - `providerSandboxDispatchPersistence.integration.test.js`: 14
+    - `servicePersistence.integration.test.js`: 13
+    - `webhookPersistence.integration.test.js`: 18
+    - **Total: 89 integration tests** across 9 files (all passing).
+
+- **V3 Webhook Re-Process Race Hardened**:
+  - Webhook claiming uses ONE atomic `findOneAndUpdate` on `PaymentLifecycleEvent` setting `processingStartedAt` and `processingAttemptId`.
+  - Conditioned on `$or: [{ processingStartedAt: null }, { processingStartedAt: { $lt: staleBefore } }]` with configurable 30s threshold (`WEBHOOK_STALE_PROCESSING_THRESHOLD_MS`).
+  - In-flight concurrent duplicate delivery returns retryable HTTP 503 (`IN_FLIGHT_EVENT_BEING_PROCESSED`).
+  - E11000 duplicate key race on create re-attempts atomic claim; if in-flight, returns retryable 503.
+
+- **V4 Quarantine Recovery Wired to Worker**:
+  - `monitoringWorker.js` imports `reprocessQuarantinedWebhookEvents` and runs a bounded batch (`limit: 50`) at startup and every N sweeps.
+  - Tenant derived strictly from authoritative server-side `GatewayPayment` or `MerchantOrder`. Never returns events under sentinel tenant.
+
+- **V5 Dispatch Invariant Ordering & Route Verification**:
+  - Strict sequence enforced: preflight GET -> reserve -> issue token -> verify token -> INSERT ProviderOperation (`REQUESTED`, tokenId unique: consumes token) -> POST -> verification GET.
+  - A crash between insert and POST leaves `REQUESTED` operation; reconcile lists provider refunds and resolves without blind POST re-send.
+  - Route verified: `POST /api/payment-cases/:caseId/provider/dispatch` mounted on `paymentCaseRoutes.js`.
+  - `capturedAmountPaise` populated in schema and across webhooks, monitoring, normalizer, and state machine transitions.
+
+- **V6 Razorpay Official Documentation Alignment**:
+  - Fetched official pages in session: `X-Refund-Idempotency` header (min 10 chars, alphanumeric + hyphens/underscores).
+  - Removed unsupported claims (10-64 char rule, 24h cache, 72h auto-void, "capture then refund" advice).
+  - Reconciled with official: only captured payments can be refunded; uncaptured payments auto-refund after 3 days; normal refunds take 5-7 working days.
+
+- **V7 Test Database Guard**:
+  - Created shared guard `testDbGuard.js` enforcing scheme, host restriction (`localhost`/`127.0.0.1` unless `ALLOW_REMOTE_TEST_DB=true`), DB name contains "test" and no "prod". Tested and verified.
+
+- **V8 Honest Wording Qualified**:
+  - Qualified Gate 3 in `ACCEPTANCE_CRITERIA.md`, `README.md`, `memory.md`, and `RAZORPAY_INTEGRATION.md`: "implemented; verified with mocked provider transport; no real Razorpay test-mode run yet".

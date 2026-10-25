@@ -103,6 +103,14 @@ const gatewayPaymentSchema = new mongoose.Schema(
         message: "reservedRefundPaise must be a non-negative safe integer"
       }
     },
+    capturedAmountPaise: {
+      type: Number,
+      default: null,
+      validate: {
+        validator: (v) => v === null || isNonNegativeSafeInteger(v),
+        message: "capturedAmountPaise must be a non-negative safe integer or null"
+      }
+    },
     gatewayCreatedAt: {
       type: Date,
       default: Date.now

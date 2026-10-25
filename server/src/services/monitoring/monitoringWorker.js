@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { logger } from "../../config/logger.js";
 import { PaymentMonitoringTask } from "../../models/PaymentMonitoringTask.js";
 import { executeMonitoringRecheck, enqueueUnmonitoredPendingPayments } from "./paymentMonitoringService.js";
+import { reprocessQuarantinedWebhookEvents } from "../webhook/webhookService.js";
 
 /**
  * ReconAI 2.0 - Payment Monitoring Background Worker
@@ -173,7 +174,9 @@ export async function runMonitoringWorkerCycle({
   leaseDurationMs = 30000,
   runEnqueue = true,
   enqueueLimit = 50,
-  tenantId = null
+  tenantId = null,
+  runQuarantineRecovery = true,
+  quarantineLimit = 50
 } = {}) {
   let enqueueSummary = { enqueuedCount: 0, skippedCount: 0 };
   if (runEnqueue) {
@@ -182,6 +185,15 @@ export async function runMonitoringWorkerCycle({
       limit: enqueueLimit,
       asOfTime: getEffectiveMonitoringTime(asOfTime)
     });
+  }
+
+  let quarantineSummary = { reprocessedCount: 0, results: [] };
+  if (runQuarantineRecovery) {
+    try {
+      quarantineSummary = await reprocessQuarantinedWebhookEvents({ limit: quarantineLimit });
+    } catch (quarantineErr) {
+      logger.warn({ err: quarantineErr.message }, "Background quarantined webhook event recovery failed");
+    }
   }
 
   const sweepSummary = await sweepDueMonitoringTasks({
@@ -194,6 +206,7 @@ export async function runMonitoringWorkerCycle({
 
   return {
     enqueueSummary,
+    quarantineSummary,
     sweepSummary
   };
 }
@@ -219,12 +232,18 @@ export function startMonitoringWorker({
     if (isRunning || isStopped) return;
     isRunning = true;
     try {
-      // Call enqueueUnmonitoredPendingPayments once at worker start (sweepCount 0) and then every N sweeps
+      // Call enqueueUnmonitoredPendingPayments and reprocessQuarantinedWebhookEvents once at worker start (sweepCount 0) and then every N sweeps
       if (sweepCount === 0 || sweepCount % enqueueEveryNSweeps === 0) {
         try {
           await enqueueUnmonitoredPendingPayments({ limit: enqueueLimit });
         } catch (enqueueErr) {
           logger.warn({ err: enqueueErr.message }, "Background unmonitored pending payment enqueue failed");
+        }
+
+        try {
+          await reprocessQuarantinedWebhookEvents({ limit: enqueueLimit });
+        } catch (quarantineErr) {
+          logger.warn({ err: quarantineErr.message }, "Background quarantined webhook recovery failed");
         }
       }
       sweepCount++;

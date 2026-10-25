@@ -148,7 +148,8 @@ export async function executeSandboxRefund({
   providerIdempotencyKey = null,
   customFetch = null,
   nowMs = null,
-  customSecret = null
+  customSecret = null,
+  operationId = null
 }) {
   // 1. Enforce sandbox gate
   checkSandboxWriteGate();
@@ -174,6 +175,7 @@ export async function executeSandboxRefund({
     expectedAmountPaise: amountPaise,
     expectedCurrency: currency,
     expectedIdempotencyKey: idempotencyKey,
+    expectedOperationId: operationId,
     nowMs,
     customSecret
   });

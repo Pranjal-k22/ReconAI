@@ -86,7 +86,7 @@ describe("Payment State Machine - Deterministic Canonical Transitions", () => {
 
       expect(evaluation.allowed).toBe(true);
       expect(evaluation.conflictFlag).toBeNull();
-      expect(evaluation.gatewayUpdates).toEqual({ status: "CAPTURED" });
+      expect(evaluation.gatewayUpdates).toEqual({ status: "CAPTURED", capturedAmountPaise: 50000 });
       expect(evaluation.orderUpdates).toEqual({ status: "PAID" });
       expect(evaluation.caseUpdates.captureStatus).toBe("CAPTURE_CAPTURED");
       expect(evaluation.caseUpdates.orderStatus).toBe("ORDER_PAID");

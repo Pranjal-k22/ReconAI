@@ -55,7 +55,7 @@ Tracks card/UPI mandate hold at payment gateway:
 - `AUTH_NONE`: No authorization requested or initiated.
 - `AUTH_PENDING`: Mandate/hold in flight with card network or NPCI.
 - `AUTH_AUTHORIZED`: Two-factor authentication passed; funds held on customer line of credit/account.
-- `AUTH_EXPIRED`: Authorization window lapsed without capture (standard Razorpay auth timeout is 5–10 days).
+- `AUTH_EXPIRED`: Authorization window lapsed without capture (standard Razorpay authorized payments auto-refund/auto-void after 3 days if not captured).
 - `AUTH_VOIDED`: Authorization explicitly cancelled before capture.
 
 ### Dimension 4: Gateway Capture State (`captureState`)

@@ -64,6 +64,16 @@ const paymentLifecycleEventSchema = new mongoose.Schema(
       default: "RECEIVED",
       index: true
     },
+    processingStartedAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
+    processingAttemptId: {
+      type: String,
+      trim: true,
+      default: null
+    },
     caseId: {
       type: String,
       trim: true,

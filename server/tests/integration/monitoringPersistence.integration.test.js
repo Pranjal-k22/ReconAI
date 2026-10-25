@@ -30,52 +30,7 @@ function sanitizeMongoUri(uri) {
   }
 }
 
-/**
- * Validates the test database URI to guarantee complete isolation.
- */
-function validateTestDatabaseUri(uri) {
-  if (!uri || typeof uri !== "string") {
-    throw new Error("MONGODB_TEST_URI must be provided as a non-empty string");
-  }
-
-  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
-    throw new Error("Invalid MONGODB_TEST_URI scheme: must start with mongodb:// or mongodb+srv://");
-  }
-
-  if (process.env.MONGODB_URI && uri.trim() === process.env.MONGODB_URI.trim()) {
-    throw new Error(
-      "Safety violation: MONGODB_TEST_URI matches development/app MONGODB_URI. Integration tests require an isolated test database."
-    );
-  }
-
-  let dbName = "";
-  try {
-    const url = new URL(uri.replace(/^mongodb(\+srv)?:\/\//, "http://"));
-    dbName = url.pathname.replace(/^\//, "");
-  } catch {
-    const match = uri.match(/\/([^/?]+)(\?|$)/);
-    if (match) dbName = match[1];
-  }
-
-  if (!dbName) {
-    throw new Error("Safety violation: MONGODB_TEST_URI must explicitly specify a database name.");
-  }
-
-  const lowerName = dbName.toLowerCase();
-  if (!lowerName.includes("test")) {
-    throw new Error(
-      `Safety violation: Test database name '${dbName}' must contain 'test' to guarantee isolation.`
-    );
-  }
-
-  if (lowerName.includes("prod")) {
-    throw new Error(
-      `Safety violation: Test database name '${dbName}' contains 'prod'. Execution refused.`
-    );
-  }
-
-  return uri;
-}
+import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_monitoring_persistence";
 const TEST_DB_URI = validateTestDatabaseUri(process.env.MONGODB_TEST_URI || DEFAULT_TEST_URI);
@@ -522,5 +477,93 @@ describe("ReconAI 2.0 - Payment Monitoring Real MongoDB Persistence & Concurrenc
     const tasksAfterCycle2 = await PaymentMonitoringTask.find({ tenantId, gatewayPaymentId: paymentId }).lean();
     expect(tasksAfterCycle2).toHaveLength(1);
     expect(tasksAfterCycle2[0].taskId).toBe(tasksAfterCycle1[0].taskId);
+  });
+
+  it("9. monitoring worker sweep recovers quarantined webhook events end to end via authoritative mapping", async () => {
+    const testEventId = `evt_worker_quarantine_${Date.now()}`;
+    const paymentId = `pay_worker_quarantine_${Date.now()}`;
+    const orderId = `order_worker_quarantine_${Date.now()}`;
+    const authoritativeTenant = "sh_integ_authoritative_tenant";
+    const deduplicationKey = `RAZORPAY:acc_quarantine_integ:${testEventId}`;
+
+    // 1. Seed quarantined event in MongoDB under sentinel unassigned tenant
+    await PaymentLifecycleEvent.create({
+      eventId: `evt_wh_${crypto.randomUUID()}`,
+      tenantId: "unassigned_provider_quarantine",
+      sourceSystem: "GATEWAY_WEBHOOK",
+      sourceEventId: testEventId,
+      deduplicationKey,
+      payloadFingerprint: "fingerprint_quarantine_worker_test",
+      normalizedEventType: "PAYMENT_CAPTURED",
+      merchantOrderId: orderId,
+      gatewayPaymentId: paymentId,
+      amountPaise: 88000,
+      currency: "INR",
+      processingStatus: "QUARANTINED",
+      provenance: {
+        provider: "RAZORPAY",
+        status: "QUARANTINED_UNRESOLVED_TENANT",
+        processingStatus: "QUARANTINED_UNRESOLVED_TENANT",
+        reason: "UNMAPPED_TENANT"
+      }
+    });
+
+    // Verify initial quarantined state in MongoDB
+    const initialQuarantined = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+    expect(initialQuarantined.processingStatus).toBe("QUARANTINED");
+    expect(initialQuarantined.tenantId).toBe("unassigned_provider_quarantine");
+
+    // 2. Authoritative server-side records appear in MongoDB under authoritative tenant
+    await GatewayPayment.create({
+      tenantId: authoritativeTenant,
+      gatewayPaymentId: paymentId,
+      merchantOrderId: orderId,
+      provider: "RAZORPAY",
+      status: "AUTHORIZED",
+      amountPaise: 88000,
+      currency: "INR"
+    });
+
+    await MerchantOrder.create({
+      tenantId: authoritativeTenant,
+      merchantOrderId: orderId,
+      amountPaise: 88000,
+      currency: "INR",
+      status: "PENDING"
+    });
+
+    // 3. Run monitoring worker cycle (sweep 0 triggers bounded quarantine reprocess batch)
+    const cycle = await runMonitoringWorkerCycle({
+      runEnqueue: true,
+      customFetch: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: paymentId, status: "captured", amount: 88000, currency: "INR" })
+      })
+    });
+
+    expect(cycle.quarantineSummary).toBeDefined();
+    expect(cycle.quarantineSummary.reprocessedCount).toBeGreaterThanOrEqual(1);
+
+    // 4. Invariant: event is now PROCESSED and bound to authoritative tenant (never sentinel)
+    const reprocessedEvent = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+    expect(reprocessedEvent.processingStatus).toBe("PROCESSED");
+    expect(reprocessedEvent.tenantId).toBe(authoritativeTenant);
+
+    // 5. Invariant: mutations applied under authoritative tenant
+    const updatedPayment = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+    expect(updatedPayment.status).toBe("CAPTURED");
+    expect(updatedPayment.tenantId).toBe(authoritativeTenant);
+
+    const updatedOrder = await MerchantOrder.findOne({ merchantOrderId: orderId }).lean();
+    expect(updatedOrder.status).toBe("PAID");
+    expect(updatedOrder.tenantId).toBe(authoritativeTenant);
+
+    // 6. Invariant: sentinel tenant has zero quarantined events remaining for this event
+    const sentinelCount = await PaymentLifecycleEvent.countDocuments({
+      tenantId: "unassigned_provider_quarantine",
+      deduplicationKey
+    });
+    expect(sentinelCount).toBe(0);
   });
 });
