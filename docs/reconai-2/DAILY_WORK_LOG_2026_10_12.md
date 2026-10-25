@@ -952,3 +952,43 @@ ReconAI/
   - Integration Tests: 90/90 passed across 9 files (+1 test from baseline 89).
   - Monitoring Smoke Test: 7/7 gates passed.
   - Client Build: Clean build (2,400 modules).
+
+### Entry 17: Stage 4A Provenance, Dispatch Role, and Test-Integrity Corrections
+
+- **Context & Stage 4A Mandate**:
+  - Verification and hardening of commit provenance, race assertions, dispatch RBAC boundaries, classifier doc checks, partial capture reachability, and reservation API consistency.
+  - No UI, no regulatory logic, mocked fetch only, writes disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), test keys only.
+
+- **A1. Commit and Environment Provenance**:
+  - Audited `f8cc174` and `6888d19`. Clarified that the prior summary's stat (listing `taskPoller`, `reconciliationModels`, etc.) was ungrounded; actual git stat for `f8cc174` contains 30 files including `providerDispatchService.js`, `PaymentLifecycleEvent.js`, `GatewayPayment.js`, `paymentStateMachine.js`, `monitoringWorker.js`, and `policyAuthorizationToken.js`.
+  - Missing `node_modules` was due to git-ignored package directory requiring `npm ci`. Linear git history confirmed via `git reflog`.
+
+- **A2. Strict Race Assertions Restored**:
+  - Restored strict assertions in `webhookPersistence.integration.test.js`: zero 500 errors, exactly one applied mutation, exactly one audit set (`WEBHOOK_INGESTED`), and every concurrent delivery returning either 200 ACCEPTED, 503 IN_FLIGHT, or 200 DUPLICATE_ACKNOWLEDGED.
+  - Verified 25 consecutive loop runs with 25/25 passes (100% reliability).
+
+- **A3. Dispatch is ADMIN-Only**:
+  - Restricted `POST /api/payment-cases/:caseId/provider/dispatch` to `requireRoles(ROLES.ADMIN)`.
+  - Machine identities (`PAYMENT_CONTROLLER`, workers, AI agents) and unprivileged roles return HTTP 403 Forbidden; unauthenticated returns HTTP 401.
+  - Confirmed via `git grep` that no worker, orchestrator, or AI module imports dispatch service.
+  - Updated `ROLE_PERMISSION_MATRIX.md`, `PROVIDER_CAPABILITY_MATRIX.md`, `README.md`, and `ARCHITECTURE_DECISIONS.md`.
+
+- **A4. Classifier Real Doc Check & Model Compliance**:
+  - Aligned `server/scripts/audit30Scenarios.js` to parse actual table in `PHASE_6_CLASSIFICATION_ENGINE.md` (lines 31-60) without `NOT_FOUND` failures.
+  - Added test in `evidenceClassifier.test.js` validating that every emitted `safeHoldCode` belongs to `SAFE_HOLD_CODES` and passes `PaymentCase.validateSync()`.
+
+- **A5. Partial Capture & Scenario Reachability**:
+  - Case 8 (`CASE_8_PARTIAL_CAPTURE`) is marked `[RESERVED: not detectable from documented fields]` in matrix, Phase 6 doc, and README alongside Case 1 because standard Razorpay Payment entities omit `amount_authorized`.
+  - Audited classifier context usage: production code (`multiAgentInvestigator.js:179`) sets only `{ tenantId }`, leaving 45 synthetic context properties unset in production flows.
+
+- **A6. Small Claims**:
+  - Verified that dispatch service (`providerDispatchService.js`) and integration tests (`providerSandboxDispatchPersistence.integration.test.js`) both call the identical function `reserveRefund` from `refundReservationService.js`.
+  - Route test for `GET /api/payment-cases?tenantId=unassigned_provider_quarantine` as ADMIN verified (HTTP 200, empty cases array).
+
+- **Verification Totals (Part A)**:
+  - Unit Tests: 701/701 passed across 72 files (+4 tests from baseline 697).
+  - Integration Tests: 90/90 passed across 9 files.
+  - 120-Scenario Benchmark: 120/120 passed (100.00% match rate).
+  - Monitoring Smoke Test: 7/7 gates passed.
+  - Client Build: Clean build (2,416 modules).
+  - Code Cleanliness: 0 whitespace / conflict errors (`git diff --check`).
