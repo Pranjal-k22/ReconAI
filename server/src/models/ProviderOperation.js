@@ -61,6 +61,11 @@ const providerOperationSchema = new mongoose.Schema(
       trim: true,
       default: null
     },
+    tokenId: {
+      type: String,
+      trim: true,
+      default: null
+    },
     idempotencyKey: {
       type: String,
       required: [true, "idempotencyKey is required"],
@@ -188,6 +193,10 @@ providerOperationSchema.index({ tenantId: 1, idempotencyKey: 1 }, { unique: true
 providerOperationSchema.index({ tenantId: 1, providerIdempotencyKey: 1 });
 providerOperationSchema.index({ tenantId: 1, caseId: 1 });
 providerOperationSchema.index({ tenantId: 1, operationStatus: 1 });
+providerOperationSchema.index(
+  { tokenId: 1 },
+  { unique: true, partialFilterExpression: { tokenId: { $type: "string", $gt: "" } } }
+);
 
 export const ProviderOperation =
   mongoose.models.ProviderOperation ||

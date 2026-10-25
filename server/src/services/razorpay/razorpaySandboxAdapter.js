@@ -7,6 +7,12 @@ import {
   RAZORPAY_ERROR_CODES
 } from "./razorpayClient.js";
 import { isNonNegativeSafeInteger } from "../../models/helpers/validators.js";
+import {
+  verifyPolicyAuthorizationToken,
+  UnauthorizedActionExecutionError
+} from "../policy/policyAuthorizationToken.js";
+
+export { UnauthorizedActionExecutionError };
 
 /**
  * Custom error thrown when a mutation is requested but the sandbox write gate is closed.
@@ -130,12 +136,19 @@ export function sanitizeProviderPayload(payload) {
  * - Strips all customer PII from notes prior to dispatch.
  */
 export async function executeSandboxRefund({
+  authorizationToken,
+  tenantId = null,
+  caseId = null,
   gatewayPaymentId,
   amountPaise,
+  currency = "INR",
+  idempotencyKey = null,
   notes = {},
   receipt = null,
   providerIdempotencyKey = null,
-  customFetch = null
+  customFetch = null,
+  nowMs = null,
+  customSecret = null
 }) {
   // 1. Enforce sandbox gate
   checkSandboxWriteGate();
@@ -151,7 +164,21 @@ export async function executeSandboxRefund({
 
   const cleanPaymentId = gatewayPaymentId.trim();
 
-  // 3. Prepare sanitized request payload
+  // 3. Cryptographic Policy Authorization Token Verification (Gate 3)
+  const tokenPayload = await verifyPolicyAuthorizationToken({
+    token: authorizationToken,
+    expectedTenantId: tenantId,
+    expectedCaseId: caseId,
+    expectedPaymentId: cleanPaymentId,
+    expectedActionType: "REQUEST_REFUND",
+    expectedAmountPaise: amountPaise,
+    expectedCurrency: currency,
+    expectedIdempotencyKey: idempotencyKey,
+    nowMs,
+    customSecret
+  });
+
+  // 4. Prepare sanitized request payload
   const safeNotes = sanitizeProviderPayload(notes) || {};
   const requestBody = {
     amount: Math.round(amountPaise),
@@ -163,18 +190,19 @@ export async function executeSandboxRefund({
     requestBody.receipt = receipt.slice(0, 40);
   }
 
-  // 4. Pass stable provider idempotency header
+  // 5. Pass stable provider idempotency header
   const extraHeaders = {};
-  if (providerIdempotencyKey && typeof providerIdempotencyKey === "string" && providerIdempotencyKey.trim()) {
-    extraHeaders["X-Refund-Idempotency"] = providerIdempotencyKey.trim();
+  const effectiveIdempotencyKey = providerIdempotencyKey || idempotencyKey;
+  if (effectiveIdempotencyKey && typeof effectiveIdempotencyKey === "string" && effectiveIdempotencyKey.trim()) {
+    extraHeaders["X-Refund-Idempotency"] = effectiveIdempotencyKey.trim();
   }
 
   logger.info(
-    { gatewayPaymentId: cleanPaymentId, amountPaise, providerIdempotencyKey },
+    { gatewayPaymentId: cleanPaymentId, amountPaise, providerIdempotencyKey: effectiveIdempotencyKey, tokenId: tokenPayload.tokenId },
     "Dispatching sandbox refund to Razorpay test endpoint"
   );
 
-  // 5. Dispatch via centralized POST wrapper
+  // 6. Dispatch via centralized POST wrapper
   const endpoint = `/v1/payments/${cleanPaymentId}/refund`;
   const rawResponse = await postRazorpayApi(endpoint, requestBody, customFetch, extraHeaders);
 
@@ -186,7 +214,8 @@ export async function executeSandboxRefund({
     amountPaise: typeof sanitizedResponse.amount === "number" ? Math.round(sanitizedResponse.amount) : amountPaise,
     currency: sanitizedResponse.currency || "INR",
     providerStatus: sanitizedResponse.status || "UNKNOWN",
-    rawResponse: sanitizedResponse
+    rawResponse: sanitizedResponse,
+    tokenId: tokenPayload.tokenId
   };
 }
 

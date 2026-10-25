@@ -78,12 +78,27 @@ describe("Phase 3 Security Correction - Hardening Suite", () => {
       }).toThrow(/distinct keys/i);
     });
 
+    it("fails startup in production if POLICY_TOKEN_SECRET equals JWT_SECRET or SERVICE_TOKEN_SECRET", () => {
+      const jwtSecret = "strong-random-prod-jwt-secret-key-32chars-min!";
+      const svcSecret = "strong-random-prod-service-token-secret-32chars!";
+      expect(() => {
+        validateEnv({
+          NODE_ENV: "production",
+          MONGODB_URI: "mongodb://localhost:27017/reconai_prod",
+          JWT_SECRET: jwtSecret,
+          SERVICE_TOKEN_SECRET: svcSecret,
+          POLICY_TOKEN_SECRET: jwtSecret
+        });
+      }).toThrow(/distinct keys/i);
+    });
+
     it("succeeds in production with distinct, strong, non-fallback secrets", () => {
       const validProd = validateEnv({
         NODE_ENV: "production",
         MONGODB_URI: "mongodb://localhost:27017/reconai_prod",
         JWT_SECRET: "strong-random-prod-jwt-secret-key-32chars-min!",
-        SERVICE_TOKEN_SECRET: "strong-random-prod-service-token-secret-32chars!"
+        SERVICE_TOKEN_SECRET: "strong-random-prod-service-token-secret-32chars!",
+        POLICY_TOKEN_SECRET: "strong-random-prod-policy-token-secret-32chars-min!"
       });
       expect(validProd.NODE_ENV).toBe("production");
     });

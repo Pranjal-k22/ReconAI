@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Measurable Acceptance Criteria & Verification Framework
 
-> **DOCUMENT STATUS: VERIFIED (GATE 1 IMPLEMENTED IN PHASE 3)**  
-> *Gate 1 (Zero Cross-Tenant Access Leaks) and RBAC have been implemented and verified with automated test suites in Phase 3.*
+> **DOCUMENT STATUS: VERIFIED (GATE 1 IMPLEMENTED IN PHASE 3; GATE 3 IMPLEMENTED & HARDENED IN STAGE 3)**
+> *Gate 1 (Zero Cross-Tenant Access Leaks) and Gate 3 (Zero Actions Initiated Directly by LLM Generation via Signed PolicyAuthorizationToken) have been implemented, hardened, and verified with automated test suites.*
 
 ---
 
@@ -31,9 +31,11 @@ To certify that ReconAI 2.0 has successfully evolved into an enterprise-grade au
 - **Criterion**: When 100 concurrent threads or distributed worker nodes attempt to resolve the same eligible payment case simultaneously, exactly **one** provider write action is dispatched, and the remaining 99 requests are cleanly rejected by the concurrency lock or idempotency ledger.
 - **Measurement**: Zero double refunds or double ledger credits under load testing.
 
-### Gate 3: Zero Actions Initiated Directly by LLM Generation
-- **Criterion**: Every executed provider action must possess a cryptographically signed `PolicyAuthorizationToken` emitted by the deterministic Policy Engine. If the policy token is missing or tampered with, the Provider Action Adapter throws a fatal `UnauthorizedActionExecutionError`.
-- **Measurement**: Zero actions executed without passing all deterministic policy invariants.
+### Gate 3: Zero Actions Initiated Directly by LLM Generation (Hardened in Stage 3)
+- **Status**: **VERIFIED & HARDENED**.
+- **Criterion**: Every executed provider action must possess a cryptographically signed `PolicyAuthorizationToken` emitted by the deterministic Policy Engine. If the policy token is missing, expired, tampered with, bound to a different tenant/case/payment/amount/currency/idempotencyKey, or already consumed, the Provider Action Adapter throws a typed `UnauthorizedActionExecutionError` with 0 network calls and 0 `ProviderOperation` rows.
+- **Measurement**: Zero actions executed without passing all deterministic policy invariants, fresh provider preflight GET verification, and single-use token verification. Verified across 100% of adversarial unit and integration tests.
+
 
 ### Gate 4: Zero Premature Case Closures
 - **Criterion**: No `PaymentCase` may transition to `CASE_RESOLVED` while any sub-state is in `REFUND_INITIATED`, `AUTH_PENDING`, or `SETTLEMENT_PENDING` without receiving an authoritative cryptographic webhook (`refund.processed`, `settlement.processed`) or verified server-side GET confirmation.

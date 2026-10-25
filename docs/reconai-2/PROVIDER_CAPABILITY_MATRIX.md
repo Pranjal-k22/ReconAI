@@ -31,9 +31,9 @@ To ensure strict financial safety, ReconAI 2.0 architecture decouples provider c
 - **Purpose**: Enables testing full multi-agent autonomous loops without external network dependencies.
 
 ### Mode 3: Sandbox / Test-Mode Write Operations (`SANDBOX`)
-- **Status**: **PROPOSED FOR PHASE 2 IMPLEMENTATION**.
-- **Behavior**: Executes write mutations (refunds, order updates) against Razorpay Test Mode API (`https://api.razorpay.com/v1/...`) using valid `rzp_test_...` credentials.
-- **Safety Boundary**: Hardcoded safety guard blocks any key beginning with `rzp_live_`.
+- **Status**: **IMPLEMENTED & HARDENED IN STAGE 3 (`razorpaySandboxAdapter.js`)**.
+- **Behavior**: Executes write mutations (full refunds) against Razorpay Test Mode API (`https://api.razorpay.com/v1/...`) using valid `rzp_test_...` credentials.
+- **Safety Boundary**: Hardcoded safety guard blocks any key beginning with `rzp_live_`. Writes are disabled by default via `RAZORPAY_SANDBOX_WRITES_ENABLED=false`. Execution strictly requires a signed Gate 3 `PolicyAuthorizationToken` (HMAC-SHA256, 120s TTL), server-derived dispatch evidence and idempotency key, authoritative fresh preflight GET read, atomic refund reservation (`reserveRefund`), and fail-closed policy limits. Autonomous worker refunds are prohibited.
 
 ### Mode 4: Live-Mode Write Operations (`LIVE`)
 - **Status**: **STRICTLY BLOCKED & PROHIBITED**.
@@ -48,13 +48,15 @@ To ensure strict financial safety, ReconAI 2.0 architecture decouples provider c
 | **Fetch Payments List** | `/v1/payments` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Fetch Payment Details** | `/v1/payments/:id` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Fetch Settlements Recon** | `/v1/settlements/recon/combined` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
-| **Capture Payment** | `/v1/payments/:id/capture` | `POST` | Proposed Write Adapter | `SIMULATED`, `SANDBOX` | `X-Razorpay-Idempotency-Key` |
-| **Create Full Refund** | `/v1/payments/:id/refund` | `POST` | Proposed Write Adapter | `SIMULATED`, `SANDBOX` | `X-Razorpay-Idempotency-Key` |
-| **Create Partial Refund** | `/v1/payments/:id/refund` | `POST` | Proposed Write Adapter | `SIMULATED`, `SANDBOX` | `X-Razorpay-Idempotency-Key` |
-| **Fetch Refund Details** | `/v1/payments/:id/refunds/:rfd_id` | `GET` | Proposed Write Adapter | `INGEST_ONLY`, `SANDBOX` | N/A |
+| **Capture Payment** | `/v1/payments/:id/capture` | `POST` | Proposed Write Adapter (Deferred) | `SIMULATED` | `X-Razorpay-Idempotency-Key` |
+| **Create Full Refund** | `/v1/payments/:id/refund` | `POST` | **Hardened Sandbox Adapter** (`razorpaySandboxAdapter.js`) | `SANDBOX` (Default Off; Token Required) | `X-Refund-Idempotency` |
+| **Create Partial Refund** | `/v1/payments/:id/refund` | `POST` | Deferred / Blocked (Full balance refunds only in Stage 3) | N/A | `X-Refund-Idempotency` |
+| **Fetch Refund Details** | `/v1/payments/:id/refunds/:rfd_id` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
+| **List Payment Refunds** | `/v1/payments/:id/refunds` | `GET` | **Verified Supported** (Preflight & Reconcile) | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Receive Webhook Stream** | `/api/webhooks/razorpay` | `POST` | Proposed Ingestion Engine | All Modes | Verified via HMAC Header |
 | **Fetch Disputes List** | `/v1/disputes` | `GET` | Proposed Read Adapter | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Direct Bank UTR Reversal Query** | Partner Bank API | `POST/GET` | Unsupported (3rd Party Bank Dependent) | N/A | Requires Direct Bank Tie-Up |
+
 
 ---
 

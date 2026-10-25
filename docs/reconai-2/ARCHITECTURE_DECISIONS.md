@@ -126,20 +126,26 @@ JWT tokens with HMAC-SHA256 signatures will authenticate HTTP requests, and an `
 
 ---
 
-## ADR-06: Dual-Adapter Payment Provider Isolation (Read vs Write)
+## ADR-06: Dual-Adapter Payment Provider Isolation & Hardened Sandbox Dispatch (Gate 3)
 
 ### Context
-The existing `razorpayClient.js` is strictly read-only and explicitly protected by `validateTestModeSafety()`, which rejects live keys (`rzp_live_`). We must support write actions (such as refunds and cancellations in sandbox mode) without weakening the read-only guarantees of the existing ingestion pipeline.
+The existing `razorpayClient.js` is strictly read-only and explicitly protected by `validateTestModeSafety()`, which rejects live keys (`rzp_live_`). We must support write actions (specifically refunds in test mode) without compromising the read-only guarantees of the existing ingestion pipeline or introducing financial race conditions.
 
 ### Decision
-We introduce a **Dual-Adapter Architecture**:
-1. **Read-Only Ingestion Adapter (`RazorpayReadAdapter`)**: Remains identical to the current `razorpayClient.js`. Queries payments and settlements via HTTP GET. Does not possess or expose write endpoints.
-2. **Write Action Adapter (`RazorpayWriteAdapter`)**: A completely separate service module.
-   - Operates in three explicit modes: `SIMULATED_DRY_RUN`, `SANDBOX_TEST`, and `LIVE_RESTRICTED`.
-   - In `SIMULATED_DRY_RUN` and `SANDBOX_TEST`, only test keys (`rzp_test_...`) are permitted.
-   - `LIVE_RESTRICTED` is disabled by default via environment invariant and hardcoded circuit breaker.
-   - Requires an `X-Razorpay-Idempotency-Key` on every write request.
-   - Emits signed action audit events for every attempt.
+We introduce a **Hardened Dual-Adapter Architecture**:
+1. **Read-Only Ingestion Adapter (`razorpayClient.js`)**: Remains strictly read-only. Queries payments and settlements via HTTP GET. Does not possess or expose write endpoints.
+2. **Hardened Sandbox Write Adapter (`razorpaySandboxAdapter.js`)**: A separate, heavily guarded service module:
+   - **Default Disabled**: Invariant flag `RAZORPAY_SANDBOX_WRITES_ENABLED=false` by default. Disabled state immediately rejects writes with zero network calls and zero database mutations.
+   - **Test Key Invariant**: Only test keys beginning with `rzp_test_` are permitted. Live keys (`rzp_live_`) trigger immediate exception rejection.
+   - **Gate 3 Cryptographic Authorization (`PolicyAuthorizationToken`)**: Every write operation strictly requires a valid HMAC-SHA256 token signed with `POLICY_TOKEN_SECRET` (at least 32 characters, distinct from `JWT_SECRET` and `SERVICE_TOKEN_SECRET`). The token is bound to `tenantId`, `caseId`, `gatewayPaymentId`, `amountPaise`, `currency`, and `idempotencyKey` with a short 120s TTL (max 300s). Replay is prevented via unique index on `tokenId` in `ProviderOperation`. The token is never logged or exposed in HTTP responses.
+   - **Server-Derived Dispatch Evidence**: The dispatch route (`POST /api/cases/:caseId/dispatch-sandbox-action`) strictly validates body against `{ actionType }`. Caller-supplied amounts, limits, approval flags, or idempotency keys result in HTTP 400 Bad Request. All evidence is gathered server-side (`dispatchEvidenceCollector.js`).
+   - **Fail-Closed Policy Limits**: Policy evaluation fails closed to `INSUFFICIENT_EVIDENCE` if policy limits are missing in production.
+   - **Authoritative Fresh Provider Preflight**: Executes GET `/v1/payments/:id` and `/v1/payments/:id/refunds` before token issuance or send. Mismatches trigger `SAFE_HOLD` (`PROVIDER_PREFLIGHT_MISMATCH`); network errors trigger `INSUFFICIENT_EVIDENCE`.
+   - **Atomic Conditional Refund Reservation**: Executes an atomic MongoDB findOneAndUpdate with `$expr: { $gte: [ { $subtract: [ "$capturedAmountPaise", { $add: ["$refundAmountPaise", "$reservedRefundPaise"] } ] }, amountPaise ] }` and a unique reservation record (`RefundReservation`) to prevent double-spending across concurrent requests.
+   - **Official Refund Idempotency Header**: Sends official header `X-Refund-Idempotency` per Razorpay API documentation.
+   - **No Blind Retries for Unknown Outcomes**: Before retrying an operation marked `OUTCOME_UNKNOWN`, the adapter queries provider refunds matching by idempotency key/reference and amount to adopt existing IDs before issuing new dispatches.
+   - **Append-Only Redacted Audit Events**: Emits `TOKEN_ISSUED`, `TOKEN_REJECTED`, `PROVIDER_PREFLIGHT_MISMATCH`, `REFUND_RESERVED`, `REFUND_RESERVATION_RELEASED`, `PROVIDER_DISPATCH_REQUESTED`, and `PROVIDER_OUTCOME_RECORDED` (audit failure fails closed).
+
 
 ---
 

@@ -7,6 +7,7 @@ import {
   dispatchSandboxAction,
   computeDispatchPayloadHash
 } from "../../src/services/policy/providerDispatchService.js";
+import { issuePolicyAuthorizationToken } from "../../src/services/policy/policyAuthorizationToken.js";
 import { ProviderOperation } from "../../src/models/ProviderOperation.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
@@ -22,6 +23,7 @@ describe("Independent Provider Outcome Verification Semantics", () => {
     process.env.RAZORPAY_KEY_ID = "rzp_test_mockKeyId12345";
     process.env.RAZORPAY_KEY_SECRET = "mockKeySecret67890";
     process.env.RAZORPAY_SANDBOX_WRITES_ENABLED = "true";
+    process.env.POLICY_TOKEN_SECRET = "super-secret-policy-token-test-32-chars!";
   });
 
   afterEach(() => {
@@ -44,9 +46,25 @@ describe("Independent Provider Outcome Verification Semantics", () => {
         })
       });
 
-      const postResult = await executeSandboxRefund({
+      const { token } = await issuePolicyAuthorizationToken({
+        tenantId: "sh_alpha",
+        caseId: "CASE-01",
+        policyDecisionId: "pdec_01",
+        actionType: "REQUEST_REFUND",
         gatewayPaymentId: "pay_test_001",
         amountPaise: 25000,
+        currency: "INR",
+        idempotencyKey: "idem_outcome_test_01",
+        ttlSeconds: 120
+      });
+
+      const postResult = await executeSandboxRefund({
+        authorizationToken: token,
+        tenantId: "sh_alpha",
+        caseId: "CASE-01",
+        gatewayPaymentId: "pay_test_001",
+        amountPaise: 25000,
+        idempotencyKey: "idem_outcome_test_01",
         customFetch: postFetch
       });
 

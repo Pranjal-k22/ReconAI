@@ -179,11 +179,14 @@ Monitored by the Payment Controller:
 - `DETECTED`: Case opened via webhook, claim, or monitor.
 - `INVESTIGATING`: Evidence collection and multi-agent cross-examination in progress.
 - `PENDING_POLICY`: Recommendation submitted; awaiting deterministic policy validation.
-- `ACTION_IN_PROGRESS`: Authorized provider action dispatched; awaiting callback/verification.
-- `VERIFYING_OUTCOME`: Action executed; polling or waiting for final confirmation webhook.
+- `ACTION_IN_PROGRESS`: Authorized provider action dispatched with a verified Gate 3 `PolicyAuthorizationToken` and atomic refund reservation; awaiting callback/verification.
+- `VERIFYING_OUTCOME`: Action executed; authoritative GET read verification or confirmation webhook required before transition to `RESOLVED`.
 - `RESOLVED`: Authoritative outcome confirmed by provider; audit log sealed; parties notified.
 - `SAFE_HOLD`: Suspended due to risk or ambiguity; awaiting manual operator decision.
 - `ESCALATED`: Referred to external bank/legal/dispute process.
+
+> **Stage 3 Provider Mutation Safety Guarantees**: Provider write actions (`ACTION_EXECUTE_PROVIDER_REFUND`) are executed through a dedicated hardened sandbox adapter (`razorpaySandboxAdapter.js`). Sandbox writes are disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), restricted strictly to test keys (`rzp_test_...`), require a cryptographically signed HMAC-SHA256 `PolicyAuthorizationToken` (Gate 3), enforce atomic conditional refund reservation (`reserveRefund`), and fail closed when policy limits are missing in production. Live writes are strictly prohibited.
+
 
 ---
 

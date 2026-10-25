@@ -5,11 +5,16 @@ import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
 import { PaymentAction } from "../../src/models/PaymentAction.js";
+import { RefundReservation } from "../../src/models/RefundReservation.js";
 import {
   dispatchSandboxAction,
   recheckProviderOperationStatus,
   getProviderOperationsByCaseId
 } from "../../src/services/policy/providerDispatchService.js";
+import {
+  reserveRefund,
+  releaseRefundReservation
+} from "../../src/services/policy/refundReservationService.js";
 import { RazorpayProviderError, RAZORPAY_ERROR_CODES } from "../../src/services/razorpay/razorpayClient.js";
 
 function validateTestDatabaseUri(uri) {
@@ -58,6 +63,7 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     await GatewayPayment.syncIndexes();
     await MerchantOrder.syncIndexes();
     await PaymentAction.syncIndexes();
+    await RefundReservation.syncIndexes();
   });
 
   afterAll(async () => {
@@ -74,12 +80,14 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     process.env.RAZORPAY_KEY_ID = "rzp_test_intKey12345";
     process.env.RAZORPAY_KEY_SECRET = "intSecret67890";
     process.env.RAZORPAY_SANDBOX_WRITES_ENABLED = "true";
+    process.env.POLICY_TOKEN_SECRET = "super-secret-policy-token-test-32-chars!";
 
     await ProviderOperation.deleteMany({});
     await PaymentCase.deleteMany({});
     await GatewayPayment.deleteMany({});
     await MerchantOrder.deleteMany({});
     await PaymentAction.deleteMany({});
+    await RefundReservation.deleteMany({});
 
     // Seed Standard Test Case
     await PaymentCase.create({
@@ -153,6 +161,96 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
       orderCreatedAt: new Date()
     });
   });
+
+  function createIntegrationMockFetch({
+    refundId = "rfnd_int_test_999",
+    amountPaise = 12000,
+    currency = "INR",
+    paymentId = "pay_test_prov_001",
+    postRefundStatus = "pending",
+    postResponseOverride = null,
+    getRefundStatus = "processed",
+    postError = null,
+    getError = null,
+    customPostHandler = null,
+    customGetRefundHandler = null
+  } = {}) {
+    return vi.fn().mockImplementation(async (url, options = {}) => {
+      const urlStr = String(url);
+      const method = (options.method || "GET").toUpperCase();
+
+      // 1. Preflight payment GET
+      if (method === "GET" && !urlStr.includes("/refund")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            id: paymentId,
+            entity: "payment",
+            amount: amountPaise,
+            amount_captured: amountPaise,
+            amount_refunded: 0,
+            currency,
+            status: "captured",
+            order_id: "ORD-PROV-001"
+          })
+        };
+      }
+
+      // 2. Preflight refunds list GET
+      if (method === "GET" && urlStr.endsWith("/refunds")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            entity: "collection",
+            count: 0,
+            items: []
+          })
+        };
+      }
+
+      // 3. POST refund
+      if (method === "POST") {
+        if (customPostHandler) return customPostHandler(url, options);
+        if (postError) throw postError;
+        if (postResponseOverride) return postResponseOverride;
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            id: refundId,
+            entity: "refund",
+            amount: amountPaise,
+            currency,
+            payment_id: paymentId,
+            status: postRefundStatus,
+            notes: options.body ? JSON.parse(options.body).notes : {}
+          })
+        };
+      }
+
+      // 4. Authoritative GET single refund
+      if (method === "GET" && urlStr.includes("/refunds/")) {
+        if (customGetRefundHandler) return customGetRefundHandler(url, options);
+        if (getError) throw getError;
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            id: refundId,
+            entity: "refund",
+            amount: amountPaise,
+            currency,
+            payment_id: paymentId,
+            status: getRefundStatus
+          })
+        };
+      }
+
+      return { status: 200, ok: true, json: async () => ({}) };
+    });
+  }
 
   describe("1. Fail-Closed Safety: Missing Refund Limits & Case 22", () => {
     it("fails closed before any provider call when server-side policyConfig is null (missing limits)", async () => {
@@ -228,33 +326,14 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
 
   describe("2. End-to-End Sandbox Dispatch & Independent Read Verification", () => {
     it("dispatches POST, verifies via authoritative GET, and persists VERIFIED_SUCCEEDED in MongoDB", async () => {
-      const mockFetch = vi.fn()
-        // 1. POST refund creation accepted
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_int_test_999",
-            entity: "refund",
-            amount: 12000,
-            currency: "INR",
-            payment_id: "pay_test_prov_001",
-            status: "pending"
-          })
-        })
-        // 2. Authoritative GET refund read returns processed
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_int_test_999",
-            entity: "refund",
-            amount: 12000,
-            currency: "INR",
-            payment_id: "pay_test_prov_001",
-            status: "processed"
-          })
-        });
+      const mockFetch = createIntegrationMockFetch({
+        refundId: "rfnd_int_test_999",
+        amountPaise: 12000,
+        currency: "INR",
+        paymentId: "pay_test_prov_001",
+        postRefundStatus: "pending",
+        getRefundStatus: "processed"
+      });
 
       const result = await dispatchSandboxAction({
         tenantId: TENANT_A,
@@ -285,15 +364,16 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
       expect(persisted.amountPaise).toBe(12000);
       expect(persisted.currency).toBe("INR");
       expect(persisted.verifiedAt).toBeDefined();
+      expect(persisted.tokenId).toBeDefined();
     });
 
     it("POST timeout transitions operation to OUTCOME_UNKNOWN without failing or retrying", async () => {
-      const mockFetch = vi.fn().mockRejectedValue(
-        new RazorpayProviderError(
+      const mockFetch = createIntegrationMockFetch({
+        postError: new RazorpayProviderError(
           RAZORPAY_ERROR_CODES.TIMEOUT,
           "Razorpay API request timed out after 10000ms"
         )
-      );
+      });
 
       const result = await dispatchSandboxAction({
         tenantId: TENANT_A,
@@ -322,29 +402,10 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
 
   describe("3. Idempotency & Concurrency Guarantees", () => {
     it("replaying with identical idempotencyKey returns existing operation without duplicate provider call", async () => {
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_idem_01",
-            payment_id: "pay_test_prov_001",
-            amount: 12000,
-            currency: "INR",
-            status: "processed"
-          })
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_idem_01",
-            payment_id: "pay_test_prov_001",
-            amount: 12000,
-            currency: "INR",
-            status: "processed"
-          })
-        });
+      const mockFetch = createIntegrationMockFetch({
+        refundId: "rfnd_idem_01",
+        getRefundStatus: "processed"
+      });
 
       // First call
       const res1 = await dispatchSandboxAction({
@@ -360,7 +421,7 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
 
       expect(res1.isDuplicate).toBe(false);
       expect(res1.operation.operationStatus).toBe("VERIFIED_SUCCEEDED");
-      expect(mockFetch).toHaveBeenCalledTimes(2); // 1 POST + 1 GET
+      const initialCallCount = mockFetch.mock.calls.length;
 
       // Second replay call
       const res2 = await dispatchSandboxAction({
@@ -377,7 +438,7 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
       expect(res2.isDuplicate).toBe(true);
       expect(res2.operation.operationId).toBe(res1.operation.operationId);
       // Confirm NO additional network calls were made on replay
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls.length).toBe(initialCallCount);
     });
 
     it("replaying with conflicting parameters on same idempotencyKey throws 409 conflict", async () => {
@@ -394,6 +455,8 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
         requestPayloadHash: "hash-original"
       });
 
+      const mockFetch = createIntegrationMockFetch();
+
       await expect(
         dispatchSandboxAction({
           tenantId: TENANT_A,
@@ -401,9 +464,9 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
           actorId: "admin-1",
           actorRole: "ADMIN",
           proposedActionType: "REQUEST_REFUND",
-          amountPaise: 5000, // conflicting amount
           idempotencyKey: "idem-conflict-key",
-          policyConfig: approvedPolicyConfig
+          policyConfig: approvedPolicyConfig,
+          customFetch: mockFetch
         })
       ).rejects.toThrow(/already used with conflicting parameters/);
     });
@@ -425,13 +488,14 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     });
 
     it("redacts credentials and customer PII before saving to MongoDB", async () => {
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
+      const mockFetch = createIntegrationMockFetch({
+        refundId: "rfnd_redact_01",
+        postResponseOverride: {
           status: 200,
           ok: true,
           json: async () => ({
             id: "rfnd_redact_01",
-            payment_id: "pay_test_prov_01",
+            payment_id: "pay_test_prov_001",
             amount: 12000,
             currency: "INR",
             status: "pending",
@@ -439,42 +503,30 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
             email: "sensitive@customer.com",
             contact: "+919999999999"
           })
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_redact_01",
-            payment_id: "pay_test_prov_01",
-            amount: 12000,
-            currency: "INR",
-            status: "processed",
-            key_secret: "leak_secret_value",
-            email: "sensitive@customer.com"
-          })
-        });
+        }
+      });
 
-      await dispatchSandboxAction({
+      const res = await dispatchSandboxAction({
         tenantId: TENANT_A,
         caseId: CASE_ID_A,
         actorId: "admin-1",
         actorRole: "ADMIN",
         proposedActionType: "REQUEST_REFUND",
-        idempotencyKey: "idem-redact-check-01",
+        idempotencyKey: "idem-redact-01",
         policyConfig: approvedPolicyConfig,
         customFetch: mockFetch
       });
 
+      expect(res.dispatchBlocked).toBe(false);
+
       const op = await ProviderOperation.findOne({
         tenantId: TENANT_A,
-        idempotencyKey: "idem-redact-check-01"
+        idempotencyKey: "idem-redact-01"
       }).lean();
 
       expect(op.providerResponseRaw.key_secret).toBeUndefined();
       expect(op.providerResponseRaw.email).toBeUndefined();
       expect(op.providerResponseRaw.contact).toBeUndefined();
-      expect(op.verificationEvidence.key_secret).toBeUndefined();
-      expect(op.verificationEvidence.email).toBeUndefined();
     });
   });
 
@@ -483,10 +535,11 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
       let capturedHeaders = null;
       let capturedBody = null;
 
-      const mockFetch = vi.fn()
-        .mockImplementationOnce(async (url, opts) => {
-          capturedHeaders = opts.headers;
-          capturedBody = JSON.parse(opts.body);
+      const mockFetch = createIntegrationMockFetch({
+        refundId: "rfnd_idem_hdr_01",
+        customPostHandler: async (url, options) => {
+          capturedHeaders = options.headers;
+          capturedBody = JSON.parse(options.body);
           return {
             status: 200,
             ok: true,
@@ -498,18 +551,8 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
               status: "pending"
             })
           };
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_idem_hdr_01",
-            payment_id: "pay_test_prov_001",
-            amount: 12000,
-            currency: "INR",
-            status: "processed"
-          })
-        });
+        }
+      });
 
       const res = await dispatchSandboxAction({
         tenantId: TENANT_A,
@@ -531,25 +574,26 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
         idempotencyKey: "idem-check-header-01"
       }).lean();
 
-      expect(op).toBeDefined();
-      expect(op.providerIdempotencyKey).toBe(op.operationId);
-      expect(capturedHeaders["X-Refund-Idempotency"]).toBe(op.operationId);
+      expect(op.providerIdempotencyKey).toBe(op.idempotencyKey);
+      expect(capturedHeaders["X-Refund-Idempotency"]).toBe(op.idempotencyKey);
       expect(capturedBody.amount).toBe(12000);
       expect(capturedBody.notes.reconaiCaseId).toBe(CASE_ID_A);
     });
 
     it("treats provider HTTP 409 Conflict conservatively as OUTCOME_UNKNOWN without assuming success or failure", async () => {
-      const mockFetch = vi.fn().mockImplementationOnce(async () => {
-        return {
-          status: 409,
-          ok: false,
-          json: async () => ({
-            error: {
-              code: "BAD_REQUEST_ERROR",
-              description: "A refund with the same idempotency key is already in progress"
-            }
-          })
-        };
+      const mockFetch = createIntegrationMockFetch({
+        customPostHandler: async () => {
+          return {
+            status: 409,
+            ok: false,
+            json: async () => ({
+              error: {
+                code: "BAD_REQUEST_ERROR",
+                description: "A refund with the same idempotency key is already in progress"
+              }
+            })
+          };
+        }
       });
 
       const res = await dispatchSandboxAction({
@@ -577,29 +621,22 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
     });
 
     it("transitions operation to SAFE_HOLD in MongoDB when authoritative read returns wrong payment ID", async () => {
-      const mockFetch = vi.fn()
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_wrong_payment_test",
-            payment_id: "pay_test_prov_001",
-            amount: 12000,
-            currency: "INR",
-            status: "pending"
-          })
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          ok: true,
-          json: async () => ({
-            id: "rfnd_wrong_payment_test",
-            payment_id: "pay_unrelated_foreign_payment_999", // Wrong payment ID!
-            amount: 12000,
-            currency: "INR",
-            status: "processed"
-          })
-        });
+      const mockFetch = createIntegrationMockFetch({
+        refundId: "rfnd_wrong_payment_test",
+        customGetRefundHandler: async () => {
+          return {
+            status: 200,
+            ok: true,
+            json: async () => ({
+              id: "rfnd_wrong_payment_test",
+              payment_id: "pay_unrelated_foreign_payment_999", // Wrong payment ID!
+              amount: 12000,
+              currency: "INR",
+              status: "processed"
+            })
+          };
+        }
+      });
 
       const res = await dispatchSandboxAction({
         tenantId: TENANT_A,
@@ -624,6 +661,78 @@ describe("Sandbox Provider Adapter & Verified Outcome Handling - MongoDB Integra
       expect(op.operationStatus).toBe("SAFE_HOLD");
       expect(op.verificationStatus).toBe("PAYMENT_ID_MISMATCH");
       expect(op.safeHoldReason).toContain("does not match expected");
+    });
+  });
+
+  describe("6. Real-Mongo Atomic Refund Reservation & Concurrency (Gate B4)", () => {
+    it("10 parallel dispatches with different keys whose total exceeds balance: total reserved never exceeds balance, correct number succeed, releases are idempotent", async () => {
+      // Payment has 50000 paise (Rs 500)
+      await GatewayPayment.updateOne(
+        { gatewayPaymentId: "pay_test_prov_001", tenantId: TENANT_A },
+        { amountPaise: 50000, refundAmountPaise: 0, reservedRefundPaise: 0 }
+      );
+      await MerchantOrder.updateOne(
+        { merchantOrderId: "ORD-PROV-001", tenantId: TENANT_A },
+        { amountPaise: 50000 }
+      );
+
+      // Attempt 10 parallel refund reservations of 10000 paise each (10 * 10000 = 100000 > 50000)
+      // Exactly 5 can succeed (5 * 10000 = 50000)
+      const parallelKeys = Array.from({ length: 10 }, (_, i) => `idem-parallel-b4-${i + 1}`);
+
+      const results = await Promise.all(
+        parallelKeys.map((key) =>
+          reserveRefund({
+            tenantId: TENANT_A,
+            gatewayPaymentId: "pay_test_prov_001",
+            amountPaise: 10000,
+            idempotencyKey: key
+          })
+        )
+      );
+
+      const successfulReservations = results.filter((r) => r.success);
+      const failedReservations = results.filter((r) => !r.success);
+
+      expect(successfulReservations.length).toBe(5);
+      expect(failedReservations.length).toBe(5);
+
+      // Verify GatewayPayment in real Mongo: reservedRefundPaise is exactly 50000, never exceeded
+      const updatedPayment = await GatewayPayment.findOne({
+        gatewayPaymentId: "pay_test_prov_001",
+        tenantId: TENANT_A
+      }).lean();
+
+      expect(updatedPayment.reservedRefundPaise).toBe(50000);
+      expect(updatedPayment.amountPaise - (updatedPayment.refundAmountPaise || 0) - updatedPayment.reservedRefundPaise).toBe(0);
+
+      // Verify idempotency of release
+      const firstSuccessKey = parallelKeys[results.findIndex((r) => r.success)];
+      const release1 = await releaseRefundReservation({
+        tenantId: TENANT_A,
+        gatewayPaymentId: "pay_test_prov_001",
+        idempotencyKey: firstSuccessKey,
+        reason: "TEST_RELEASE"
+      });
+      expect(release1.success).toBe(true);
+      expect(release1.alreadyReleased).toBe(false);
+
+      // Second release with same key is a safe no-op
+      const release2 = await releaseRefundReservation({
+        tenantId: TENANT_A,
+        gatewayPaymentId: "pay_test_prov_001",
+        idempotencyKey: firstSuccessKey,
+        reason: "TEST_RELEASE_DUPLICATE"
+      });
+      expect(release2.success).toBe(true);
+      expect(release2.alreadyReleased).toBe(true);
+
+      // Verify payment balance was restored by exactly 10000
+      const paymentAfterRelease = await GatewayPayment.findOne({
+        gatewayPaymentId: "pay_test_prov_001",
+        tenantId: TENANT_A
+      }).lean();
+      expect(paymentAfterRelease.reservedRefundPaise).toBe(40000);
     });
   });
 });

@@ -19,19 +19,20 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 
 ---
 
-### Case 1: Frontend Timeout After Payment Success
+### Case 1: Frontend Timeout After Payment Success [RESERVED]
+> **Status**: **Reserved: requires a server-verified telemetry source, not counted as a supported scenario** (no code change).
 - **Detection Signal**: Browser disconnects or checkout times out; merchant order remains `ORDER_PENDING`.
 - **Authoritative Evidence**: Provider webhook `payment.captured` or server GET `/v1/payments/:id` confirms `status === 'CAPTURED'`, **AND** authenticated client checkout telemetry records an explicit session drop/timeout event.
-- **Missing / Uncertain Evidence**: None when authenticated client telemetry is present. If frontend telemetry is unobserved, client timeout cannot be inferred.
-- **Autonomous Action Eligibility**: **ELIGIBLE** for `UPDATE_MERCHANT_LOCAL_LEDGER` (non-authoritative recommendation in Phase 6; deterministic execution reserved for Phase 8).
-- **Required Verification**: Amount, currency, and `merchantOrderId` match exactly; zero duplicate payments.
+- **Missing / Uncertain Evidence**: Authenticated client checkout telemetry is unobserved in standard gateway integration. Without cryptographic client telemetry, timeout causation cannot be inferred.
+- **Autonomous Action Eligibility**: **RESERVED / NOT COUNTED AS A SUPPORTED SCENARIO**. If frontend telemetry is unobserved, system strictly avoids causal inference and classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`).
+- **Required Verification**: Direct server-verified client session telemetry.
 - **Retry / Monitoring Policy**: Poll provider if webhook not received within 60s of timeout.
 - **Duplicate-Action Protections**: Order state transition check (`if order.status === 'PAID'` $\rightarrow$ no-op).
 - **Safe-Hold / Escalation Condition**: Order already cancelled by merchant before payment arrived.
 - **Customer Notification**: *"Your payment of ₹X was verified successfully. Order confirmed."*
 - **Audit Event Requirements**: `MERCHANT_LEDGER_REPAIRED`, `CASE_RESOLVED`.
-- **Test Acceptance Criterion**: Given order `PENDING`, gateway `CAPTURED`, and verified authenticated frontend timeout event, engine classifies `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` and recommends ledger repair. If frontend telemetry is unobserved, system strictly avoids causal inference and classifies as `CASE_6_PAID_GATEWAY_UNPAID_ORDER` (`STATUS_MISMATCH`).
-- **Policy Contradiction Documentation**: *The original Phase 1 title asserted causation ('Frontend Timeout') based solely on provider capture and local order pending, while listing frontend acknowledgment as unobserved. Under strict ReconAI evidence governance, causation cannot be inferred from two records being inconsistent. Case 1 classification requires positive authenticated client telemetry; otherwise, the case is classified as a status mismatch pending owner review.*
+- **Test Acceptance Criterion**: Without authenticated client telemetry, scenario is classified as `STATUS_MISMATCH` (Case 6) rather than Case 1.
+- **Policy Contradiction Documentation**: *The original Phase 1 title asserted causation ('Frontend Timeout') based solely on provider capture and local order pending, while listing frontend acknowledgment as unobserved. Under strict ReconAI evidence governance, causation cannot be inferred from two records being inconsistent. Case 1 is reserved pending an authenticated telemetry source.*
 
 ---
 
@@ -69,14 +70,15 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 - **Detection Signal**: Payment was marked timed out, but webhook `payment.authorized` arrives 15 minutes later.
 - **Authoritative Evidence**: Cryptographic webhook `payment.authorized` with valid timestamp.
 - **Missing / Uncertain Evidence**: Merchant inventory availability.
-- **Autonomous Action Eligibility**: **ELIGIBLE** for `AUTO_CAPTURE` (if inventory available) OR `AUTO_VOID/REFUND` (if out of stock).
+- **Autonomous Action Eligibility**: **ELIGIBLE** for `AUTO_CAPTURE` (if inventory available). For uncaptured payments where inventory is unavailable, note Razorpay provider limitation:
+  > **Razorpay API Capability Finding (B5)**: Razorpay does **not** provide a direct void API for authorized uncaptured payments (`POST /v1/payments/:id/refund` fails if uncaptured; no `/v1/payments/:id/void` exists). Authorized uncaptured payments auto-void/auto-refund after 3 days (72 hours default window per official Razorpay docs). Immediate reversal requires capturing and immediately issuing a full refund, or allowing the authorization to expire after 72 hours.
 - **Required Verification**: Shop AI confirms inventory status.
 - **Retry / Monitoring Policy**: Verify order status before capture.
 - **Duplicate-Action Protections**: Check authorization expiry date and capture lock.
-- **Safe-Hold / Escalation Condition**: Inventory unavailable and void request fails.
-- **Customer Notification**: *"Your late payment was verified. [Order confirmed / Funds returned]."*
+- **Safe-Hold / Escalation Condition**: Inventory unavailable and auto-void window exceeds merchant risk tolerance $\rightarrow$ `SAFE_HOLD`.
+- **Customer Notification**: *"Your late payment was verified. [Order confirmed / Authorization will lapse]."*
 - **Audit Event Requirements**: `LATE_AUTHORIZATION_RESOLVED`.
-- **Test Acceptance Criterion**: Late authorization triggers inventory check and either captures or voids deterministically.
+- **Test Acceptance Criterion**: Late authorization triggers inventory check; uncaptured payments cannot be directly refunded via refund API.
 
 ---
 
@@ -335,18 +337,19 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 
 ---
 
-### Case 22: Payment Captured But Order Cancelled
+### Case 22: Payment Captured But Order Cancelled (Hard Safe-Hold)
 - **Detection Signal**: Gateway is `CAPTURED`, but merchant order is `ORDER_CANCELLED`.
 - **Authoritative Evidence**: Order cancelled timestamp before or after payment capture.
-- **Missing / Uncertain Evidence**: Customer refund preference.
-- **Autonomous Action Eligibility**: **ELIGIBLE** for `REFUND_CUSTOMER`.
-- **Required Verification**: Goods not delivered; merchant cancellation policy verified.
-- **Retry / Monitoring Policy**: Execute full refund through provider adapter.
-- **Duplicate-Action Protections**: Unique idempotency key `IDEM-REF-CANCEL-{orderId}`.
-- **Safe-Hold / Escalation Condition**: Order cancelled due to fraud suspicion $\rightarrow$ `SAFE_HOLD`.
-- **Customer Notification**: *"Your cancelled order payment of ₹X has been automatically refunded."*
-- **Audit Event Requirements**: `CANCELLED_ORDER_REFUNDED`, `CASE_RESOLVED`.
-- **Test Acceptance Criterion**: Captured payment on cancelled order executes autonomous refund.
+- **Missing / Uncertain Evidence**: Customer refund preference and cancellation dispute context.
+- **Autonomous Action Eligibility**: **NOT ELIGIBLE FOR DISPATCH / UNCONDITIONALLY BLOCKED (HARD SAFE-HOLD)**.
+  > **Hard Safe-Hold Invariant**: Case 22 dispatch is unconditionally blocked (`safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER"`). AI advisory suggestions and caller-supplied flags (`approvedCancellationRefund`, `adminApproval`, etc.) cannot bypass safe-hold. Canonical `MerchantOrder` remains `CANCELLED` and canonical financial records are 100% unmutated.
+- **Required Verification**: Human operator review in Admin console.
+- **Retry / Monitoring Policy**: Automated retry prohibited.
+- **Duplicate-Action Protections**: Concurrency lock and deterministic safe-hold block.
+- **Safe-Hold / Escalation Condition**: **UNCONDITIONAL SAFE_HOLD** (`LATE_CAPTURE_CANCELLED_ORDER`).
+- **Customer Notification**: *"Your order was cancelled, but a late payment was captured. Your case is held under review by our operations team."*
+- **Audit Event Requirements**: `SAFE_HOLD_APPLIED`, `SAFE_HOLD_REASON_RECORDED`.
+- **Test Acceptance Criterion**: Captured payment on cancelled order deterministically evaluates to `SAFE_HOLD` (`LATE_CAPTURE_CANCELLED_ORDER`); dispatch route unconditionally rejects execution.
 
 ---
 

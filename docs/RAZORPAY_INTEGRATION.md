@@ -110,12 +110,14 @@ Synchronization (`POST /api/razorpay/sync/payments`, `POST /api/razorpay/sync/se
 
 ---
 
-## Track 4 Phase 4 — Safety & Audit Verification
+## 13. ReconAI 2.0 Stage 3 — Hardened Sandbox Write Adapter (Controlled Simulation)
 
-- **Phase Status**: VERIFIED & HARDENED (PASS).
-- **Verified Safety Boundaries**:
-  - **Test Mode Enforced**: `validateTestModeSafety()` verified to throw `RAZORPAY_LIVE_KEY_BLOCKED` when `rzp_live_` key is supplied in test mode.
-  - **Read-Only API Boundary**: `fetchRazorpayApi` executes GET requests only. Payment capture, refund creation, transfer, and payout execution methods do NOT exist in the codebase.
-  - **PII Excluded**: Verified by `razorpayNormalizer.test.js` and `controllerSafetyAndHardening.test.js` that `email`, `contact` (phone), `vpa`, `card` payloads are stripped before database write.
-  - **Decoupled Orchestration**: Razorpay sync creates/updates DB records without auto-reconciling or triggering financial mutations.
-
+- **Sandbox Write Adapter Exists**: In `razorpaySandboxAdapter.js` with `executeSandboxRefund` and `verifySandboxRefundStatus`.
+- **Default Off**: Controlled by `RAZORPAY_SANDBOX_WRITES_ENABLED` (stays `false` by default).
+- **Test Keys Only**: Rejects live keys (`rzp_live_...`) unconditionally at startup and adapter boundary; strictly requires test key prefix (`rzp_test_...`).
+- **Cryptographic Gate 3 Token Required**: Any mutation requires a signed `PolicyAuthorizationToken` (HMAC-SHA256 with `POLICY_TOKEN_SECRET` >= 32 chars). Tokens are bound to tenant, case, payment, action, amount, currency, and idempotency key with short TTL (120s, max 300s). Single use enforced with unique index on `tokenId`.
+- **Server-Derived Dispatch Evidence**: Route accepts strictly `{ actionType }` plus `:caseId` path parameter (Zod strict). Any client-supplied amount, limits, approval flags, or idempotency keys return 400 Bad Request with zero side effects. Amount and idempotency key are derived strictly server-side.
+- **Fresh Provider Preflight Read (B2)**: Authoritative GET reads payment and refunds list before issuing token or dispatching. Mismatch fails closed to SAFE_HOLD.
+- **Atomic Balance Reservation (B4)**: Single conditional atomic update on `GatewayPayment` prevents concurrent dispatches from exceeding balance. Converted on `VERIFIED_SUCCEEDED`, released on `VERIFIED_FAILED` or rejection.
+- **Fail-Closed Policy Limits**: In production, policy config resolves `null` (fail closed). Injected limits provider accepted only when `NODE_ENV === "test"`.
+- **No Autonomous Refunds**: Orchestration worker does NOT initiate refunds; human review / admin dispatch only. No blind retry after `OUTCOME_UNKNOWN`.

@@ -57,7 +57,7 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
     it("returns 401 when no auth header is provided", async () => {
       const res = await request(app)
         .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
-        .send({ idempotencyKey: "key-1" });
+        .send({ actionType: "REQUEST_REFUND" });
 
       expect(res.status).toBe(401);
     });
@@ -66,7 +66,7 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
       const res = await request(app)
         .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
         .set("Authorization", `Bearer ${customerToken}`)
-        .send({ idempotencyKey: "key-1" });
+        .send({ actionType: "REQUEST_REFUND" });
 
       expect(res.status).toBe(403);
     });
@@ -75,7 +75,7 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
       const res = await request(app)
         .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
         .set("Authorization", `Bearer ${shopToken}`)
-        .send({ idempotencyKey: "key-1" });
+        .send({ actionType: "REQUEST_REFUND" });
 
       expect(res.status).toBe(403);
     });
@@ -90,7 +90,7 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
       const res = await request(app)
         .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ idempotencyKey: "idem-ctrl-01" });
+        .send({ actionType: "REQUEST_REFUND" });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -99,30 +99,43 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
   });
 
   describe("2. Request-Controlled Enablement and Policy Config Rejection", () => {
-    it("strictly rejects caller-supplied refund limits; missing server-side limits blocks dispatch with 422", async () => {
-      vi.spyOn(dispatchService, "dispatchSandboxAction").mockImplementation(async (args) => {
-        // Confirm server-side policyConfig is strictly null regardless of what client sent
-        expect(args.policyConfig).toBeNull();
+    it("strictly rejects any extra request body field (idempotencyKey, amountPaise, limits, policyConfig, approval flags) with 400", async () => {
+      // Any extra field must return 400 Bad Request with zero side effects
+      const extraFieldPayloads = [
+        { actionType: "REQUEST_REFUND", idempotencyKey: "caller-supplied-key" },
+        { actionType: "REQUEST_REFUND", amountPaise: 5000 },
+        { actionType: "REQUEST_REFUND", currency: "USD" },
+        { actionType: "REQUEST_REFUND", policyConfig: { maxSingleRefundPaise: 10000 } },
+        { actionType: "REQUEST_REFUND", limits: { maxRefund: 5000 } },
+        { actionType: "REQUEST_REFUND", evidence: { status: "OK" } },
+        { actionType: "REQUEST_REFUND", approvedCancellationRefund: true },
+        { actionType: "REQUEST_REFUND", adminApproval: true }
+      ];
 
-        return {
-          dispatchBlocked: true,
-          reason: "Action is not eligible for provider dispatch under approved policy.",
-          policyOutcomeStatus: "INSUFFICIENT_EVIDENCE",
-          appliedRuleIds: ["R_REFUND_LIMITS_MISSING_FAIL_CLOSED"],
-          denyReasons: ["Binding guardrail: Policy configuration is missing. Fail-closed refund policy requires explicit limits."]
-        };
+      for (const payload of extraFieldPayloads) {
+        const res = await request(app)
+          .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
+          .set("Authorization", `Bearer ${adminToken}`)
+          .send(payload);
+
+        expect(res.status).toBe(400);
+        expect(res.body.success).toBe(false);
+      }
+    });
+
+    it("accepts strictly { actionType: 'REQUEST_REFUND' }; missing server-side limits blocks dispatch with 422", async () => {
+      vi.spyOn(dispatchService, "dispatchSandboxAction").mockResolvedValue({
+        dispatchBlocked: true,
+        reason: "Action is not eligible for provider dispatch under approved policy.",
+        policyOutcomeStatus: "INSUFFICIENT_EVIDENCE",
+        appliedRuleIds: ["R_REFUND_LIMITS_MISSING_FAIL_CLOSED"],
+        denyReasons: ["Binding guardrail: Policy configuration is missing. Fail-closed refund policy requires explicit limits."]
       });
 
       const res = await request(app)
         .post("/api/payment-cases/CASE-PROV-001/provider/dispatch")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({
-          idempotencyKey: "key-inject-test",
-          policyConfig: {
-            maxSingleRefundPaise: 999999999,
-            maxCumulativeRefundPaise: 999999999
-          }
-        });
+        .send({ actionType: "REQUEST_REFUND" });
 
       expect(res.status).toBe(422);
       expect(res.body.success).toBe(false);
@@ -142,12 +155,22 @@ describe("Payment Case Provider Dispatch Routes (POST & GET /api/payment-cases/:
       const res = await request(app)
         .post("/api/payment-cases/CASE-22-LATE-CAPTURE/provider/dispatch")
         .set("Authorization", `Bearer ${adminToken}`)
-        .send({ idempotencyKey: "key-case22" });
+        .send({ actionType: "REQUEST_REFUND" });
 
       expect(res.status).toBe(422);
       expect(res.body.success).toBe(false);
       expect(res.body.data.policyOutcomeStatus).toBe("SAFE_HOLD");
       expect(res.body.data.appliedRuleIds).toContain("R_LATE_CAPTURE_CANCELLED_ORDER_HOLD");
+    });
+
+    it("proves no request field can enable cancelled-order exception for Case 22 (returns 400)", async () => {
+      const res = await request(app)
+        .post("/api/payment-cases/CASE-22-LATE-CAPTURE/provider/dispatch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ actionType: "REQUEST_REFUND", approvedCancellationRefund: true });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
     });
   });
 

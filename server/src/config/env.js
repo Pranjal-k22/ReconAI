@@ -6,6 +6,7 @@ dotenv.config();
 export const PROHIBITED_DEV_SECRETS = Object.freeze([
   "reconai-dev-jwt-secret-key-32chars-min!",
   "reconai-service-token-secret-32chars-min!",
+  "reconai-policy-token-secret-32chars-min!",
   "reconai-test-jwt-secret-key-32chars-min!",
   "reconai-test-service-token-secret-32chars-min!"
 ]);
@@ -49,6 +50,7 @@ const envSchema = z
     JWT_AUDIENCE: z.string().default("reconai-api"),
     SERVICE_TOKEN_SECRET: z.string().min(16).default("reconai-service-token-secret-32chars-min!"),
     SERVICE_TOKEN_AUDIENCE: z.string().default("reconai-service"),
+    POLICY_TOKEN_SECRET: z.string().min(16).default("reconai-policy-token-secret-32chars-min!"),
     MONITORING_WORKER_ENABLED: z
       .union([z.boolean(), z.string()])
       .transform((val) => {
@@ -123,6 +125,35 @@ const envSchema = z
           message: "JWT_SECRET and SERVICE_TOKEN_SECRET must be distinct keys"
         });
       }
+
+      if (
+        !data.POLICY_TOKEN_SECRET ||
+        data.POLICY_TOKEN_SECRET.length < 32 ||
+        PROHIBITED_DEV_SECRETS.includes(data.POLICY_TOKEN_SECRET) ||
+        data.POLICY_TOKEN_SECRET.toLowerCase().includes("dev")
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["POLICY_TOKEN_SECRET"],
+          message: "Production requires a distinct, cryptographically strong POLICY_TOKEN_SECRET (min 32 chars) not matching development fallbacks"
+        });
+      }
+
+      if (data.JWT_SECRET && data.POLICY_TOKEN_SECRET && data.JWT_SECRET === data.POLICY_TOKEN_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["POLICY_TOKEN_SECRET"],
+          message: "JWT_SECRET and POLICY_TOKEN_SECRET must be distinct keys"
+        });
+      }
+
+      if (data.SERVICE_TOKEN_SECRET && data.POLICY_TOKEN_SECRET && data.SERVICE_TOKEN_SECRET === data.POLICY_TOKEN_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["POLICY_TOKEN_SECRET"],
+          message: "SERVICE_TOKEN_SECRET and POLICY_TOKEN_SECRET must be distinct keys"
+        });
+      }
     }
 
     if (data.RAZORPAY_SANDBOX_WRITES_ENABLED === true) {
@@ -139,6 +170,30 @@ const envSchema = z
           code: z.ZodIssueCode.custom,
           path: ["RAZORPAY_KEY_ID"],
           message: "RAZORPAY_SANDBOX_WRITES_ENABLED requires test credentials starting with 'rzp_test_'"
+        });
+      }
+
+      if (!data.POLICY_TOKEN_SECRET || data.POLICY_TOKEN_SECRET.length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["POLICY_TOKEN_SECRET"],
+          message: "RAZORPAY_SANDBOX_WRITES_ENABLED requires POLICY_TOKEN_SECRET to be at least 32 characters"
+        });
+      }
+
+      if (data.JWT_SECRET && data.POLICY_TOKEN_SECRET && data.JWT_SECRET === data.POLICY_TOKEN_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["POLICY_TOKEN_SECRET"],
+          message: "JWT_SECRET and POLICY_TOKEN_SECRET must be distinct keys"
+        });
+      }
+
+      if (data.SERVICE_TOKEN_SECRET && data.POLICY_TOKEN_SECRET && data.SERVICE_TOKEN_SECRET === data.POLICY_TOKEN_SECRET) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["POLICY_TOKEN_SECRET"],
+          message: "SERVICE_TOKEN_SECRET and POLICY_TOKEN_SECRET must be distinct keys"
         });
       }
     }

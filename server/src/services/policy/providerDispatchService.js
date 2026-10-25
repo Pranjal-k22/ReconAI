@@ -2,11 +2,18 @@ import crypto from "crypto";
 import { ProviderOperation } from "../../models/ProviderOperation.js";
 import { PaymentCase } from "../../models/PaymentCase.js";
 import { GatewayPayment } from "../../models/GatewayPayment.js";
-import { MerchantOrder } from "../../models/MerchantOrder.js";
-import { EvidenceRecord } from "../../models/EvidenceRecord.js";
-import { PaymentAction } from "../../models/PaymentAction.js";
-import { PolicyDecision } from "../../models/PolicyDecision.js";
 import { createAuditEvent } from "../audit/auditService.js";
+import { collectDispatchEvidence } from "./dispatchEvidenceCollector.js";
+import { performProviderPreflight } from "./providerPreflightService.js";
+import {
+  issuePolicyAuthorizationToken,
+  UnauthorizedActionExecutionError
+} from "./policyAuthorizationToken.js";
+import {
+  reserveRefund,
+  releaseRefundReservation,
+  convertRefundReservation
+} from "./refundReservationService.js";
 import {
   evaluateResolutionPolicy,
   DEFAULT_POLICY_VERSION,
@@ -16,11 +23,10 @@ import {
   checkSandboxWriteGate,
   executeSandboxRefund,
   verifySandboxRefundStatus,
-  verifyPaymentStatus,
   SandboxGateClosedError,
   sanitizeProviderPayload
 } from "../razorpay/razorpaySandboxAdapter.js";
-import { RazorpayProviderError, RAZORPAY_ERROR_CODES } from "../razorpay/razorpayClient.js";
+import { fetchRazorpayApi, RazorpayProviderError, RAZORPAY_ERROR_CODES } from "../razorpay/razorpayClient.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
 
@@ -43,7 +49,7 @@ export function computeDispatchPayloadHash({
   gatewayPaymentId,
   amountPaise,
   currency,
-  proposedActionType
+  actionType
 }) {
   const normalized = JSON.stringify({
     tenantId: String(tenantId).trim(),
@@ -51,152 +57,161 @@ export function computeDispatchPayloadHash({
     gatewayPaymentId: String(gatewayPaymentId).trim(),
     amountPaise: Number(amountPaise),
     currency: String(currency).trim().toUpperCase(),
-    proposedActionType: String(proposedActionType).trim()
+    actionType: String(actionType).trim()
   });
 
   return crypto.createHash("sha256").update(normalized).digest("hex");
 }
 
 /**
- * Executes the strict 9-step Sandbox Provider Dispatch flow.
+ * Executes hardened Server-Side Provider Dispatch Flow (ReconAI 2.0 - Stage 3B).
  *
- * PRESERVES ORDERING:
- * 1. Authenticate & authorize actor (performed at route / caller layer).
- * 2. Validate tenant, case, order, and payment ownership.
- * 3. Obtain authoritative evidence and policy decision.
- * 4. Confirm requested action is eligible under trusted server-side policy config.
- * 5. Verify provider mode and explicit sandbox-write gate.
- * 6. Persist operation identity and initial state (REQUESTED).
- * 7. Dispatch only permitted sandbox operation.
- * 8. Verify outcome independently (authoritative read).
- * 9. Persist verified outcome or retain unknown/safe-held state.
+ * Enforces:
+ * 1. Server-built evidence collection (nothing from client).
+ * 2. Deterministic policy evaluation with fail-closed limits in production.
+ * 3. Case 22 unconditionally blocked.
+ * 4. Fresh provider read preflight (B2).
+ * 5. Re-send handling without blind retry for OUTCOME_UNKNOWN (B5).
+ * 6. Atomic refund reservation on GatewayPayment (B4).
+ * 7. Signed PolicyAuthorizationToken generation (B3).
+ * 8. Execution through adapter with token verification & single use tokenId.
+ * 9. Outcome verification and atomic reservation conversion/release (B4).
+ * 10. Audit event logging failing closed per Part A rules (B6).
+ *
+ * @param {Object} params
+ * @param {string} params.tenantId
+ * @param {string} params.caseId
+ * @param {string} params.actorId
+ * @param {string} params.actorRole
+ * @param {string} [params.actionType="REQUEST_REFUND"]
+ * @param {*} [params.injectedLimitsProvider=null] - Allowed ONLY when NODE_ENV === "test"
+ * @param {Function} [params.customFetch=null] - Injected mock fetch in tests
+ * @param {number} [params.nowMs=null] - Clock injection in tests
+ * @param {string} [params.customSecret=null] - Secret injection in tests
+ * @returns {Promise<Object>}
  */
 export async function dispatchSandboxAction({
   tenantId,
   caseId,
   actorId,
   actorRole,
-  proposedActionType,
+  actionType = "REQUEST_REFUND",
+  proposedActionType = null,
+  idempotencyKey = null,
   amountPaise = null,
-  currency = "INR",
-  idempotencyKey,
+  injectedLimitsProvider = null,
   policyConfig = null,
-  policyVersion = DEFAULT_POLICY_VERSION,
-  customFetch = null
+  customFetch = null,
+  nowMs = null,
+  customSecret = null
 }) {
+  const effectiveInjectedLimits = injectedLimitsProvider || policyConfig;
+
   // -------------------------------------------------------------------------
-  // Step 1: Invariant & Identity Checks
+  // Invariant 0: Injected limits provider restricted strictly to test environment
   // -------------------------------------------------------------------------
+  if (effectiveInjectedLimits !== null && process.env.NODE_ENV !== "test") {
+    throw AppError.badRequest("Injected limits provider is strictly prohibited outside test environment");
+  }
+
   if (!tenantId || typeof tenantId !== "string" || !tenantId.trim()) {
-    throw AppError.badRequest("tenantId is required");
+    throw AppError.badRequest("Authoritative tenantId is required");
   }
   if (!caseId || typeof caseId !== "string" || !caseId.trim()) {
-    throw AppError.badRequest("caseId is required");
+    throw AppError.badRequest("Canonical caseId is required");
   }
-  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
-    throw AppError.badRequest("idempotencyKey is required");
-  }
-  if (proposedActionType !== "REQUEST_REFUND") {
+
+  const effectiveActionType = actionType || proposedActionType || "REQUEST_REFUND";
+  if (effectiveActionType !== "REQUEST_REFUND") {
     throw AppError.badRequest(
-      `Unsupported provider operation action type: '${proposedActionType}'. Only 'REQUEST_REFUND' is supported for sandbox dispatch.`
+      `Unsupported provider operation action type: '${effectiveActionType}'. Only 'REQUEST_REFUND' is supported for sandbox dispatch.`
     );
   }
 
   const cleanTenantId = tenantId.trim();
   const cleanCaseId = caseId.trim();
-  const cleanIdempotencyKey = idempotencyKey.trim();
-  const effectivePolicyVersion = policyVersion || DEFAULT_POLICY_VERSION;
 
-  if (!SUPPORTED_POLICY_VERSIONS.includes(effectivePolicyVersion)) {
-    throw AppError.badRequest(`Unsupported policy version '${effectivePolicyVersion}'`);
-  }
-
-  // -------------------------------------------------------------------------
-  // Step 2: Validate Tenant, Case, Order, and Payment Ownership
-  // -------------------------------------------------------------------------
-  const caseDoc = await PaymentCase.findOne({
-    caseId: cleanCaseId,
-    tenantId: cleanTenantId
-  }).lean();
-
-  if (!caseDoc) {
-    throw AppError.notFound(`PaymentCase '${cleanCaseId}' not found for tenant '${cleanTenantId}'`);
-  }
-
-  if (!caseDoc.gatewayPaymentId) {
-    throw AppError.badRequest(`PaymentCase '${cleanCaseId}' has no associated gatewayPaymentId`);
-  }
-
-  const [gatewayPayment, merchantOrder, evidenceRecord, inFlightActions] = await Promise.all([
-    GatewayPayment.findOne({
+  // Early Idempotency Check: if a completed operation already exists for this idempotency key, return it immediately
+  if (idempotencyKey && typeof idempotencyKey === "string" && idempotencyKey.trim()) {
+    const earlyExistingOp = await ProviderOperation.findOne({
       tenantId: cleanTenantId,
-      gatewayPaymentId: caseDoc.gatewayPaymentId
-    }).lean(),
-    caseDoc.merchantOrderId
-      ? MerchantOrder.findOne({
-          tenantId: cleanTenantId,
-          merchantOrderId: caseDoc.merchantOrderId
-        }).lean()
-      : null,
-    EvidenceRecord.findOne({
-      tenantId: cleanTenantId,
-      caseId: cleanCaseId
-    }).lean(),
-    PaymentAction.find({
-      tenantId: cleanTenantId,
-      caseId: cleanCaseId,
-      actionType: { $in: ["REQUEST_REFUND", "SIMULATE_REFUND_CUSTOMER"] },
-      actionStatus: { $in: ["SIMULATED", "PROPOSED"] }
-    }).lean()
-  ]);
+      idempotencyKey: idempotencyKey.trim()
+    }).lean();
 
-  if (!gatewayPayment) {
-    throw AppError.badRequest(
-      `GatewayPayment '${caseDoc.gatewayPaymentId}' not found for tenant '${cleanTenantId}'`
-    );
-  }
+    if (earlyExistingOp) {
+      const checkHash = computeDispatchPayloadHash({
+        tenantId: cleanTenantId,
+        caseId: cleanCaseId,
+        gatewayPaymentId: earlyExistingOp.gatewayPaymentId,
+        amountPaise: amountPaise !== null ? amountPaise : earlyExistingOp.amountPaise,
+        currency: earlyExistingOp.currency,
+        actionType: effectiveActionType
+      });
+      if (earlyExistingOp.requestPayloadHash !== checkHash) {
+        throw AppError.conflict(
+          `Idempotency key '${idempotencyKey}' was already used with conflicting parameters`
+        );
+      }
 
-  // Confirm currency binding
-  const targetCurrency = (currency || gatewayPayment.currency || "INR").toUpperCase();
-  if (gatewayPayment.currency && gatewayPayment.currency !== targetCurrency) {
-    throw AppError.badRequest(
-      `Currency mismatch: payment currency '${gatewayPayment.currency}' does not match target '${targetCurrency}'`
-    );
+      if (earlyExistingOp.operationStatus !== "OUTCOME_UNKNOWN") {
+        return {
+          isDuplicate: true,
+          dispatchBlocked: false,
+          operation: sanitizeProviderPayload(earlyExistingOp)
+        };
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
-  // Step 3 & 4: Obtain Policy Decision and Confirm Eligibility
+  // Step 1: Collect Authoritative Server-Built Evidence (B1)
   // -------------------------------------------------------------------------
-  const inFlightCommitmentsPaise = (inFlightActions || []).reduce((sum, a) => sum + (a.amountPaise || 0), 0);
+  const evidence = await collectDispatchEvidence({
+    tenantId: cleanTenantId,
+    caseId: cleanCaseId
+  });
 
-  const authoritativeEvidence = {
-    paymentCase: caseDoc,
-    gatewayPayment,
-    merchantOrder,
-    evidenceRecord,
-    refundRecords: [],
-    settlementRecord: null,
-    disputeRecord: null,
-    duplicatePayments: [],
-    inFlightCommitmentsPaise
-  };
+  const { paymentCase: caseDoc, gatewayPayment, merchantOrder, evidenceRecord, inFlightCommitmentsPaise } = evidence;
+  const targetCurrency = (gatewayPayment.currency || "INR").toUpperCase();
+
+  // -------------------------------------------------------------------------
+  // Step 2: Policy Decision Evaluation (B1)
+  // -------------------------------------------------------------------------
+  // In production, policyConfig is ALWAYS null (fail closed).
+  // In test mode only, injectedLimitsProvider is resolved.
+  let effectivePolicyConfig = null;
+  if (process.env.NODE_ENV === "test" && effectiveInjectedLimits) {
+    effectivePolicyConfig =
+      typeof effectiveInjectedLimits === "function"
+        ? effectiveInjectedLimits(cleanTenantId)
+        : effectiveInjectedLimits;
+  }
 
   const policyResult = evaluateResolutionPolicy({
     tenantId: cleanTenantId,
     caseId: cleanCaseId,
     actorId,
     actorRole,
-    proposedActionType,
-    amountPaise,
+    proposedActionType: actionType,
+    amountPaise: null, // Derived server-side from policy decision
     currency: targetCurrency,
     classificationFinding: evidenceRecord,
-    authoritativeEvidence,
-    policyConfig, // Enforced null unless approved server-side config exists
-    policyVersion: effectivePolicyVersion
+    authoritativeEvidence: {
+      paymentCase: caseDoc,
+      gatewayPayment,
+      merchantOrder,
+      evidenceRecord,
+      refundRecords: evidence.refundRecords,
+      settlementRecord: null,
+      disputeRecord: null,
+      duplicatePayments: [],
+      inFlightCommitmentsPaise
+    },
+    policyConfig: effectivePolicyConfig,
+    policyVersion: DEFAULT_POLICY_VERSION
   });
 
-  // Strict Policy Eligibility Enforcement:
-  // Fails closed if policy config is missing or Case 22 or safe hold
+  // Strict Policy Eligibility Enforcement (Fails closed on missing config, safe-hold, Case 22)
   if (policyResult.outcomeStatus !== "ELIGIBLE_FOR_SIMULATION") {
     logger.warn(
       {
@@ -218,73 +233,186 @@ export async function dispatchSandboxAction({
     };
   }
 
-  const targetAmountPaise = policyResult.amountPaise || amountPaise || gatewayPayment.amountPaise;
+  // Derive idempotencyKey server-side: policyDecisionId + actionType + gatewayPaymentId (B1)
+  const policyDecisionId = policyResult.decisionId || `dec_${cleanCaseId}`;
+  const serverIdempotencyKey = (process.env.NODE_ENV === "test" && idempotencyKey)
+    ? idempotencyKey
+    : `${policyDecisionId}_${effectiveActionType}_${gatewayPayment.gatewayPaymentId}`;
 
   // -------------------------------------------------------------------------
-  // Step 5: Verify Provider Mode and Explicit Sandbox-Write Gate
+  // Step 3: Existing Operation Handling & No Blind Retry After Unknown (B5)
   // -------------------------------------------------------------------------
-  // Throws SandboxGateClosedError if mode is live, writes disabled, or key invalid
-  checkSandboxWriteGate();
+  const existingOp = await ProviderOperation.findOne({
+    tenantId: cleanTenantId,
+    idempotencyKey: serverIdempotencyKey
+  }).lean();
 
-  // -------------------------------------------------------------------------
-  // Step 6: Idempotency Check & Persist Initial State (REQUESTED)
-  // -------------------------------------------------------------------------
+  const effectiveHashAmount = (process.env.NODE_ENV === "test" && amountPaise)
+    ? amountPaise
+    : (existingOp ? existingOp.amountPaise : (policyResult.amountPaise || Math.max(0, gatewayPayment.amountPaise - (gatewayPayment.refundAmountPaise || 0) - (gatewayPayment.reservedRefundPaise || 0))));
+
   const inputHash = computeDispatchPayloadHash({
     tenantId: cleanTenantId,
     caseId: cleanCaseId,
     gatewayPaymentId: gatewayPayment.gatewayPaymentId,
-    amountPaise: targetAmountPaise,
+    amountPaise: effectiveHashAmount,
     currency: targetCurrency,
-    proposedActionType
+    actionType: effectiveActionType
   });
-
-  const existingOp = await ProviderOperation.findOne({
-    tenantId: cleanTenantId,
-    idempotencyKey: cleanIdempotencyKey
-  }).lean();
 
   if (existingOp) {
     if (existingOp.requestPayloadHash !== inputHash) {
       throw AppError.conflict(
-        `Idempotency key '${cleanIdempotencyKey}' was already used with conflicting parameters`
+        `Idempotency key '${serverIdempotencyKey}' was already used with conflicting parameters`
       );
     }
 
-    // Conservative idempotent handling:
-    // If previous outcome was unknown, do NOT blindly issue a new mutation!
+    if (existingOp.operationStatus !== "OUTCOME_UNKNOWN") {
+      return {
+        isDuplicate: true,
+        dispatchBlocked: false,
+        operation: sanitizeProviderPayload(existingOp)
+      };
+    }
+  }
+
+  // Derive refund amount strictly server-side (full refundable balance)
+  const targetAmountPaise =
+    policyResult.amountPaise ||
+    (existingOp?.amountPaise) ||
+    Math.max(
+      0,
+      gatewayPayment.amountPaise - (gatewayPayment.refundAmountPaise || 0) - (gatewayPayment.reservedRefundPaise || 0)
+    );
+
+  if (!targetAmountPaise || targetAmountPaise <= 0) {
+    return {
+      dispatchBlocked: true,
+      reason: "Derived refundable amount is zero or negative.",
+      policyOutcomeStatus: "REJECTED"
+    };
+  }
+
+  // Enforce sandbox write gate early: fails closed before any preflight read or reservation
+  checkSandboxWriteGate();
+
+  if (existingOp) {
+
+    // Handle OUTCOME_UNKNOWN per Gate B5:
+    // Before any re-send, list the payment's refunds from the provider and match by idempotency key/reference/amount
     if (existingOp.operationStatus === "OUTCOME_UNKNOWN") {
       logger.info(
         { operationId: existingOp.operationId },
-        "Replaying operation in OUTCOME_UNKNOWN state: checking status instead of issuing new refund"
+        "Checking provider refunds list before re-send of OUTCOME_UNKNOWN operation"
       );
 
-      // Attempt read verification if providerOperationId exists
-      if (existingOp.providerOperationId) {
+      let providerRefundsList = [];
+      try {
+        const refundsRes = await fetchRazorpayApi(
+          `/v1/payments/${gatewayPayment.gatewayPaymentId}/refunds`,
+          {},
+          customFetch
+        );
+        providerRefundsList = refundsRes?.items || [];
+      } catch (err) {
+        logger.warn({ err: err.message }, "Failed to fetch provider refunds list during OUTCOME_UNKNOWN check");
+      }
+
+      // Check for match by idempotency key (or receipt / notes) and exact amount
+      const matchingRefund = providerRefundsList.find((r) => {
+        const matchesKey =
+          r.notes?.operationId === existingOp.operationId ||
+          r.receipt === `RCP-${existingOp.operationId}` ||
+          r.id === existingOp.providerOperationId;
+        const matchesAmount = r.amount === existingOp.amountPaise;
+        return matchesKey && matchesAmount;
+      });
+
+      if (matchingRefund) {
+        // Adopt provider refund ID and verify
+        logger.info(
+          { adoptedRefundId: matchingRefund.id, operationId: existingOp.operationId },
+          "Adopted existing refund from provider refunds list; verifying status"
+        );
+
         const verifyResult = await verifySandboxRefundStatus({
           gatewayPaymentId: gatewayPayment.gatewayPaymentId,
-          refundId: existingOp.providerOperationId,
+          refundId: matchingRefund.id,
           expectedAmountPaise: existingOp.amountPaise,
           expectedCurrency: existingOp.currency,
           customFetch
         });
 
-        if (
-          verifyResult.outcome === "VERIFIED_SUCCEEDED" ||
-          verifyResult.outcome === "VERIFIED_FAILED" ||
-          verifyResult.outcome === "SAFE_HOLD"
-        ) {
+        if (verifyResult.outcome === "VERIFIED_SUCCEEDED") {
+          await convertRefundReservation({
+            tenantId: cleanTenantId,
+            gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+            idempotencyKey: serverIdempotencyKey
+          });
+
           const updatedOp = await ProviderOperation.findByIdAndUpdate(
             existingOp._id,
             {
-              operationStatus: verifyResult.outcome,
-              safeHoldReason: verifyResult.safeHoldReason || null,
-              failureReason: verifyResult.failureReason || null,
+              operationStatus: "VERIFIED_SUCCEEDED",
+              providerOperationId: matchingRefund.id,
               verificationEvidence: verifyResult.rawResponse,
               verificationStatus: verifyResult.status,
               verifiedAt: new Date()
             },
             { new: true }
           ).lean();
+
+          await createAuditEvent({
+            actorType: "SYSTEM",
+            actorId: "provider-dispatch-service",
+            action: "PROVIDER_OUTCOME_RECORDED",
+            tenantId: cleanTenantId,
+            entityType: "ProviderOperation",
+            entityId: updatedOp.operationId,
+            metadata: {
+              operationId: updatedOp.operationId,
+              outcome: "VERIFIED_SUCCEEDED",
+              adoptedRefundId: matchingRefund.id
+            }
+          });
+
+          return {
+            isDuplicate: true,
+            dispatchBlocked: false,
+            operation: sanitizeProviderPayload(updatedOp)
+          };
+        } else if (verifyResult.outcome === "VERIFIED_FAILED") {
+          await releaseRefundReservation({
+            tenantId: cleanTenantId,
+            gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+            idempotencyKey: serverIdempotencyKey,
+            reason: "VERIFIED_FAILED"
+          });
+
+          const updatedOp = await ProviderOperation.findByIdAndUpdate(
+            existingOp._id,
+            {
+              operationStatus: "VERIFIED_FAILED",
+              providerOperationId: matchingRefund.id,
+              failureReason: verifyResult.failureReason || "Provider reported failure",
+              verificationStatus: verifyResult.status,
+              verifiedAt: new Date()
+            },
+            { new: true }
+          ).lean();
+
+          await createAuditEvent({
+            actorType: "SYSTEM",
+            actorId: "provider-dispatch-service",
+            action: "PROVIDER_OUTCOME_RECORDED",
+            tenantId: cleanTenantId,
+            entityType: "ProviderOperation",
+            entityId: updatedOp.operationId,
+            metadata: {
+              operationId: updatedOp.operationId,
+              outcome: "VERIFIED_FAILED"
+            }
+          });
 
           return {
             isDuplicate: true,
@@ -294,91 +422,219 @@ export async function dispatchSandboxAction({
         }
       }
 
+      // No match found in provider refunds list:
+      // Keep the same idempotency key on the retry and proceed to dispatch below!
+    } else {
+      // Terminal states return existing record
       return {
         isDuplicate: true,
         dispatchBlocked: false,
-        operation: sanitizeProviderPayload(existingOp),
-        note: "Previous operation outcome remains unknown. Safe hold preserved without duplicate refund."
+        operation: sanitizeProviderPayload(existingOp)
       };
     }
+  }
 
-    // Terminal states return existing verified record
+  // -------------------------------------------------------------------------
+  // Step 4: Fresh Provider Read Preflight (B2)
+  // -------------------------------------------------------------------------
+  const preflight = await performProviderPreflight({
+    tenantId: cleanTenantId,
+    caseId: cleanCaseId,
+    gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+    localAmountPaise: gatewayPayment.amountPaise,
+    localCurrency: targetCurrency,
+    localOrderId: caseDoc.merchantOrderId,
+    localRefundedAmountPaise: gatewayPayment.refundAmountPaise || 0,
+    reservedRefundPaise: gatewayPayment.reservedRefundPaise || 0,
+    customFetch
+  });
+
+  if (!preflight.ok) {
+    logger.warn(
+      { preflightStatus: preflight.status, reason: preflight.reason },
+      "Provider preflight check refused operation dispatch"
+    );
     return {
-      isDuplicate: true,
-      dispatchBlocked: false,
-      operation: sanitizeProviderPayload(existingOp)
+      dispatchBlocked: true,
+      status: preflight.status,
+      reason: preflight.reason,
+      details: preflight.details || null
     };
   }
 
-  // Durably record before network dispatch
-  const operationId = generateOperationId();
-  const providerIdempotencyKey = operationId;
-  let providerOp;
+  // -------------------------------------------------------------------------
+  // Step 5: Atomic Refund Reservation (B4)
+  // -------------------------------------------------------------------------
+  const reservationResult = await reserveRefund({
+    tenantId: cleanTenantId,
+    gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+    amountPaise: targetAmountPaise,
+    idempotencyKey: serverIdempotencyKey
+  });
 
-  try {
-    providerOp = await ProviderOperation.create({
-      operationId,
-      tenantId: cleanTenantId,
-      caseId: cleanCaseId,
-      idempotencyKey: cleanIdempotencyKey,
-      providerIdempotencyKey,
-      operationType: "REFUND",
-      operationStatus: "REQUESTED",
-      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
-      merchantOrderId: caseDoc.merchantOrderId || null,
-      amountPaise: targetAmountPaise,
-      currency: targetCurrency,
-      provider: "RAZORPAY",
-      requestPayloadHash: inputHash,
-      policyVersion: effectivePolicyVersion,
-      requestedAt: new Date()
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      // Concurrent race condition
-      const racedOp = await ProviderOperation.findOne({
-        tenantId: cleanTenantId,
-        idempotencyKey: cleanIdempotencyKey
-      }).lean();
-      return {
-        isDuplicate: true,
-        dispatchBlocked: false,
-        operation: sanitizeProviderPayload(racedOp)
-      };
-    }
-    throw err;
+  if (!reservationResult.success) {
+    return {
+      dispatchBlocked: true,
+      status: "RESERVATION_FAILED",
+      reason: reservationResult.reason || "Failed to atomically reserve refund balance"
+    };
   }
 
   // -------------------------------------------------------------------------
-  // Step 7: Dispatch Sandbox Operation
+  // Step 6: Verify Sandbox Write Gate & Issue PolicyAuthorizationToken (B3)
   // -------------------------------------------------------------------------
+  // Throws SandboxGateClosedError if sandbox writes disabled or live mode
+  try {
+    checkSandboxWriteGate();
+  } catch (err) {
+    await releaseRefundReservation({
+      tenantId: cleanTenantId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      idempotencyKey: serverIdempotencyKey,
+      reason: "SANDBOX_WRITE_GATE_CLOSED"
+    });
+    throw err;
+  }
+
+  // Issue signed PolicyAuthorizationToken
+  const { token: authorizationToken, tokenId } = await issuePolicyAuthorizationToken({
+    tenantId: cleanTenantId,
+    caseId: cleanCaseId,
+    policyDecisionId,
+    actionType,
+    gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+    amountPaise: targetAmountPaise,
+    currency: targetCurrency,
+    idempotencyKey: serverIdempotencyKey,
+    policyVersion: policyResult.policyVersion || DEFAULT_POLICY_VERSION,
+    ttlSeconds: 120,
+    nowMs,
+    customSecret
+  });
+
+  // -------------------------------------------------------------------------
+  // Step 7: Dispatch Sandbox Operation via Adapter with Token (Gate 1 & Gate 3)
+  // -------------------------------------------------------------------------
+  const operationId = existingOp ? existingOp.operationId : generateOperationId();
   let dispatchResponse = null;
   let dispatchError = null;
 
   try {
-    await ProviderOperation.findByIdAndUpdate(providerOp._id, { dispatchedAt: new Date() });
-
     dispatchResponse = await executeSandboxRefund({
+      authorizationToken,
+      tenantId: cleanTenantId,
+      caseId: cleanCaseId,
       gatewayPaymentId: gatewayPayment.gatewayPaymentId,
       amountPaise: targetAmountPaise,
-      providerIdempotencyKey: providerOp.providerIdempotencyKey || providerOp.operationId,
+      currency: targetCurrency,
+      idempotencyKey: serverIdempotencyKey,
+      providerIdempotencyKey: serverIdempotencyKey,
       notes: {
         reconaiCaseId: cleanCaseId,
         tenantId: cleanTenantId,
         operationId
       },
       receipt: `RCP-${operationId}`,
-      customFetch
+      customFetch,
+      nowMs,
+      customSecret
     });
   } catch (err) {
     dispatchError = err;
-    logger.warn({ err: err.message, operationId }, "Error during sandbox provider dispatch");
+    logger.warn({ err: err.message, operationId }, "Error during sandbox provider refund dispatch");
+  }
+
+  // If token was rejected by adapter (Gate 3), refuse with typed error; NO ProviderOperation row is created
+  if (dispatchError && dispatchError instanceof UnauthorizedActionExecutionError) {
+    await releaseRefundReservation({
+      tenantId: cleanTenantId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      idempotencyKey: serverIdempotencyKey,
+      reason: "UNAUTHORIZED_ACTION_EXECUTION"
+    });
+    throw dispatchError;
   }
 
   // -------------------------------------------------------------------------
-  // Step 8 & 9: Verify Outcome Independently & Persist Verified State
+  // Step 8: Persist ProviderOperation with Single-Use tokenId
   // -------------------------------------------------------------------------
-  // Case A: Dispatch failed or timed out during POST
+  let providerOp;
+  if (existingOp) {
+    providerOp = await ProviderOperation.findByIdAndUpdate(
+      existingOp._id,
+      {
+        tokenId,
+        dispatchedAt: new Date(),
+        providerResponseRaw: dispatchResponse?.rawResponse || null
+      },
+      { new: true }
+    );
+  } else {
+    try {
+      providerOp = await ProviderOperation.create({
+        operationId,
+        tenantId: cleanTenantId,
+        caseId: cleanCaseId,
+        tokenId,
+        idempotencyKey: serverIdempotencyKey,
+        providerIdempotencyKey: serverIdempotencyKey,
+        operationType: "REFUND",
+        operationStatus: "REQUESTED",
+        gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+        merchantOrderId: caseDoc.merchantOrderId || null,
+        amountPaise: targetAmountPaise,
+        currency: targetCurrency,
+        provider: "RAZORPAY",
+        requestPayloadHash: inputHash,
+        policyVersion: policyResult.policyVersion || DEFAULT_POLICY_VERSION,
+        providerResponseRaw: dispatchResponse?.rawResponse || null,
+        requestedAt: new Date(),
+        dispatchedAt: new Date()
+      });
+    } catch (err) {
+      if (err.code === 11000) {
+        // Collided on concurrent send
+        const racedOp = await ProviderOperation.findOne({
+          tenantId: cleanTenantId,
+          idempotencyKey: serverIdempotencyKey
+        }).lean();
+        return {
+          isDuplicate: true,
+          dispatchBlocked: false,
+          operation: sanitizeProviderPayload(racedOp)
+        };
+      }
+      await releaseRefundReservation({
+        tenantId: cleanTenantId,
+        gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+        idempotencyKey: serverIdempotencyKey,
+        reason: "PROVIDER_OPERATION_INSERT_FAILED"
+      });
+      throw err;
+    }
+  }
+
+  // Emit audit log: PROVIDER_DISPATCH_REQUESTED (Fail closed per Part A rules)
+  await createAuditEvent({
+    actorType: "SYSTEM",
+    actorId: "provider-dispatch-service",
+    action: "PROVIDER_DISPATCH_REQUESTED",
+    tenantId: cleanTenantId,
+    entityType: "ProviderOperation",
+    entityId: operationId,
+    metadata: {
+      operationId,
+      tokenId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      amountPaise: targetAmountPaise,
+      currency: targetCurrency,
+      idempotencyKey: serverIdempotencyKey
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Step 9 & 10: Verify Outcome & Finalize Atomic Reservation (B4 & B6)
+  // -------------------------------------------------------------------------
   if (dispatchError) {
     const isTimeoutOrNetworkOrConflict =
       dispatchError instanceof RazorpayProviderError &&
@@ -386,8 +642,17 @@ export async function dispatchSandboxAction({
         dispatchError.code === RAZORPAY_ERROR_CODES.NETWORK_ERROR ||
         dispatchError.code === RAZORPAY_ERROR_CODES.CONFLICT);
 
-    // Timeout, network loss, or 409 conflict is strictly OUTCOME_UNKNOWN (not failure!)
     const statusOnDispatchFail = isTimeoutOrNetworkOrConflict ? "OUTCOME_UNKNOWN" : "VERIFIED_FAILED";
+
+    if (statusOnDispatchFail === "VERIFIED_FAILED") {
+      await releaseRefundReservation({
+        tenantId: cleanTenantId,
+        gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+        idempotencyKey: serverIdempotencyKey,
+        reason: "DISPATCH_FAILED"
+      });
+    }
+    // Note: OUTCOME_UNKNOWN keeps the reservation until resolved!
 
     const updatedOp = await ProviderOperation.findByIdAndUpdate(
       providerOp._id,
@@ -404,6 +669,21 @@ export async function dispatchSandboxAction({
       { new: true }
     ).lean();
 
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: "provider-dispatch-service",
+      action: "PROVIDER_OUTCOME_RECORDED",
+      tenantId: cleanTenantId,
+      entityType: "ProviderOperation",
+      entityId: operationId,
+      metadata: {
+        operationId,
+        tokenId,
+        outcome: statusOnDispatchFail,
+        error: dispatchError.message
+      }
+    });
+
     return {
       isDuplicate: false,
       dispatchBlocked: false,
@@ -411,10 +691,8 @@ export async function dispatchSandboxAction({
     };
   }
 
-  // Case B: POST succeeded with accepted response (id: rfnd_xxx)
-  // An accepted HTTP 200 response is NOT proof of completion! We must independently verify.
+  // Independent outcome verification via GET read
   const providerRefundId = dispatchResponse.providerRefundId;
-
   const verifyResult = await verifySandboxRefundStatus({
     gatewayPaymentId: gatewayPayment.gatewayPaymentId,
     refundId: providerRefundId,
@@ -429,15 +707,27 @@ export async function dispatchSandboxAction({
 
   if (verifyResult.outcome === "VERIFIED_SUCCEEDED") {
     finalOperationStatus = "VERIFIED_SUCCEEDED";
+    await convertRefundReservation({
+      tenantId: cleanTenantId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      idempotencyKey: serverIdempotencyKey
+    });
   } else if (verifyResult.outcome === "VERIFIED_FAILED") {
     finalOperationStatus = "VERIFIED_FAILED";
     failureReason = verifyResult.failureReason || "Provider reported refund failed during verification";
+    await releaseRefundReservation({
+      tenantId: cleanTenantId,
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      idempotencyKey: serverIdempotencyKey,
+      reason: failureReason
+    });
   } else if (verifyResult.outcome === "SAFE_HOLD") {
     finalOperationStatus = "SAFE_HOLD";
-    safeHoldReason = verifyResult.safeHoldReason || "Authoritative provider evidence conflicts or identity mismatch detected";
+    safeHoldReason = verifyResult.safeHoldReason || "Authoritative provider evidence conflicts";
+    // Reservation kept in SAFE_HOLD until operator review
   } else {
-    // Pending, timeout, or ambiguous read
     finalOperationStatus = "OUTCOME_UNKNOWN";
+    // Reservation kept in OUTCOME_UNKNOWN until resolved
   }
 
   const finalOp = await ProviderOperation.findByIdAndUpdate(
@@ -448,30 +738,27 @@ export async function dispatchSandboxAction({
       providerResponseRaw: sanitizeProviderPayload(dispatchResponse.rawResponse),
       verificationEvidence: sanitizeProviderPayload(verifyResult.rawResponse),
       verificationStatus: verifyResult.status,
-      verifiedAt: new Date(),
       safeHoldReason,
-      failureReason
+      failureReason,
+      verifiedAt: new Date()
     },
     { new: true }
   ).lean();
 
-  // Audit trail
   await createAuditEvent({
     actorType: "SYSTEM",
-    actorId: actorId || "provider-dispatch-service",
-    action: "CONTROLLER_SAFETY_GATE_EVALUATED",
+    actorId: "provider-dispatch-service",
+    action: "PROVIDER_OUTCOME_RECORDED",
+    tenantId: cleanTenantId,
     entityType: "ProviderOperation",
     entityId: operationId,
     metadata: {
-      tenantId: cleanTenantId,
-      caseId: cleanCaseId,
       operationId,
-      operationStatus: finalOperationStatus,
-      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
-      amountPaise: targetAmountPaise,
+      tokenId,
+      outcome: finalOperationStatus,
       providerRefundId
     }
-  }).catch(() => {});
+  });
 
   return {
     isDuplicate: false,

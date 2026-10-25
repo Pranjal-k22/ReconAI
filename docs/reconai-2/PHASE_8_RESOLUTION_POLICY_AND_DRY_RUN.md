@@ -11,7 +11,7 @@ It evaluates proposed payment resolutions against:
 - Role-based authorization, tenant isolation, and provider capability constraints.
 - Durable idempotency keys and concurrency controls.
 
-**Phase 8 is strictly simulation-only.** Local dry-run simulations produce structured records (`actionStatus: "SIMULATED"`, `executionState: "NON_EXECUTABLE_SIMULATION"`, `isExecutable: false`). No real financial operations, refund dispatches, ledger mutations, or external messages are executed or enabled.
+**Phase 8 is strictly simulation-only.** Local dry-run simulations produce structured records (`actionStatus: "SIMULATED"`, `executionState: "NON_EXECUTABLE_SIMULATION"`, `isExecutable: false`). No real financial operations, refund dispatches, ledger mutations, or external messages are executed in Phase 8 simulation mode. In Stage 3, a dedicated hardened sandbox write adapter (`razorpaySandboxAdapter.js`) exists for test-mode write operations; it remains disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), strictly requires a cryptographically signed single-use Gate 3 `PolicyAuthorizationToken`, enforces fail-closed policy limits, and permits only `rzp_test_` test keys.
 
 ---
 

@@ -1,4 +1,5 @@
 import express from "express";
+import { z } from "zod";
 import {
   createPaymentCase,
   getPaymentCaseById,
@@ -311,40 +312,44 @@ router.get(
  * Dispatches an approved sandbox provider action (e.g. Test Mode refund).
  * Strictly gated by Test Mode, RAZORPAY_SANDBOX_WRITES_ENABLED, and deterministic policy eligibility.
  */
+/**
+ * POST /api/payment-cases/:caseId/provider/dispatch
+ * Dispatches an approved sandbox provider action (e.g. Test Mode refund).
+ * Strictly gated: accepts ONLY { actionType: "REQUEST_REFUND" } plus :caseId path parameter.
+ * Any extra body field -> 400 Bad Request, no side effects.
+ * Amount and idempotency key are derived strictly server-side.
+ */
 router.post(
   "/:caseId/provider/dispatch",
   requireRoles(ROLES.ADMIN, ROLES.PAYMENT_CONTROLLER),
   async (req, res, next) => {
     try {
-      const { caseId } = req.params;
-      const {
-        proposedActionType = "REQUEST_REFUND",
-        amountPaise,
-        currency = "INR",
-        idempotencyKey,
-        policyVersion
-      } = req.body || {};
+      // 1. Strict schema validation: route accepts ONLY { actionType: "REQUEST_REFUND" }
+      const strictDispatchSchema = z
+        .object({
+          actionType: z.literal("REQUEST_REFUND")
+        })
+        .strict();
 
-      if (!idempotencyKey) {
-        throw AppError.badRequest("idempotencyKey is required");
-      }
-
-      // Security: Select active policy version server-side; reject unsupported versions
-      const effectivePolicyVersion = policyVersion || DEFAULT_POLICY_VERSION;
-      if (!SUPPORTED_POLICY_VERSIONS.includes(effectivePolicyVersion)) {
+      const parseResult = strictDispatchSchema.safeParse(req.body);
+      if (!parseResult.success) {
         throw AppError.badRequest(
-          `Policy version '${effectivePolicyVersion}' is unsupported. Supported: ${SUPPORTED_POLICY_VERSIONS.join(", ")}`
+          "Invalid dispatch request body: route accepts strictly { actionType: 'REQUEST_REFUND' } and no other fields",
+          parseResult.error.format()
         );
       }
 
-      // Security: Provider dispatch cannot accept caller-supplied refund limits.
-      // Must fail closed if server-side approved refund limits are absent.
-      const effectivePolicyConfig = null;
+      const { actionType } = parseResult.data;
+      const { caseId } = req.params;
+
+      if (!caseId || typeof caseId !== "string" || !caseId.trim()) {
+        throw AppError.badRequest("Canonical :caseId path parameter is required");
+      }
 
       const isGlobal =
         req.user.role === ROLES.ADMIN ||
         req.user.role === ROLES.PAYMENT_CONTROLLER;
-      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
+      const scopedTenantId = req.user.tenantId || (isGlobal ? req.tenantFilter : null);
 
       if (!scopedTenantId) {
         throw AppError.badRequest("tenantId could not be determined for provider dispatch");
@@ -352,15 +357,10 @@ router.post(
 
       const result = await dispatchSandboxAction({
         tenantId: scopedTenantId,
-        caseId,
+        caseId: caseId.trim(),
         actorId: req.user.sub || req.user.userId,
         actorRole: req.user.role,
-        proposedActionType,
-        amountPaise,
-        currency,
-        idempotencyKey,
-        policyConfig: effectivePolicyConfig,
-        policyVersion: effectivePolicyVersion
+        actionType
       });
 
       if (result.dispatchBlocked) {

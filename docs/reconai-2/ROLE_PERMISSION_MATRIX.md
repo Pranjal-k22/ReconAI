@@ -85,11 +85,19 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 | **Payment Case** | Diagnose / Reason | ❌ | ❌ | ❌ | ❌ | ✅ (Claim side) | ✅ (Shop side) | ✅ (Investigator) |
 | **Resolution Action** | Recommend | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (Planner Agent) |
 | **Resolution Policy** | Validate / Authorize | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (Deterministic Engine) |
-| **Provider Write API** | Execute Refund | ❌ | ❌ | ✅ (Manual) | ❌ | ❌ | ❌ | ✅ (Idempotent Sandbox) |
+| **Provider Write API** | Execute Refund | ❌ | ❌ | ✅ (Manual Protected Route; Gate 3 Token Required) | ❌ | ❌ | ❌ | ❌ (Autonomous Worker Refunds Prohibited) |
 | **Safe-Hold Queue** | Review / Release | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Audit Ledger** | View Events | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | **Audit Ledger** | Append Event | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (System Central) |
 | **System Configuration** | Read / Write | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+> **Provider Write Dispatch Hardening (Stage 3)**:
+> 1. Provider write execution is restricted to authenticated `ADMIN` principals triggering `POST /api/cases/:caseId/dispatch-sandbox-action`.
+> 2. The dispatch route accepts ONLY `{ actionType }` alongside `:caseId`. Caller-supplied amounts, limits, approval flags, or idempotency keys are strictly rejected with HTTP 400.
+> 3. Autonomous refunds by background workers remain strictly prohibited.
+> 4. Execution requires a valid, unexpired, single-use `PolicyAuthorizationToken` (Gate 3) signed with `POLICY_TOKEN_SECRET`.
+> 5. Writes are disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`) and restricted to test keys (`rzp_test_...`).
+
 
 ---
 

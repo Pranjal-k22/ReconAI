@@ -344,5 +344,43 @@ graph TD
 4. **Immediate Invalidation on Every Request**: `authMiddleware.authenticate` queries authoritative datastore records in-flight. Disabling an account or service immediately rejects active tokens (`HTTP 401 Unauthorized`). Privilege downgrades, scope removals, and tenant changes immediately enforce updated boundaries (`HTTP 403 Forbidden`) with zero stale-token latency.
 5. **Auditor Scoping & Global Audit Verification**: `AUDITOR` is tenant-scoped by default. Cross-tenant queries require verified `GLOBAL_AUDIT` claims and emit structured audit events. All mutation verbs (`POST`, `PUT`, `PATCH`, `DELETE`) are unconditionally blocked with `HTTP 403 Forbidden`.
 6. **Production Fail-Closed Invariant**: In `NODE_ENV === "production"`, persistent datastore unavailability triggers fail-closed denial (`HTTP 503 Service Unavailable`).
-7. **Non-Executing Financial Boundaries**: Payment actions remain strictly restricted to `["PROPOSED", "SIMULATED", "REJECTED_BY_POLICY", "HELD_IN_SAFE_HOLD"]`. Autonomous provider write execution endpoints remain completely absent.
+7. **Controlled Sandbox Write Adapter (Stage 3)**: A sandbox write adapter exists in `razorpaySandboxAdapter.js` strictly for controlled test simulation, default OFF (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`). Autonomous refunds by background workers are strictly prohibited. Production policy limits resolve null (fail closed).
 
+---
+
+## 11. ReconAI 2.0 Stage 3 — Hardened Dispatch Architecture & Gate 3 Cryptographic Authorization
+
+Stage 3 hardens the provider dispatch path against unauthorized mutations, double refunds, and client spoofing:
+
+1. **Server-Derived Dispatch Evidence (Nothing from Client)**:
+   - Route `POST /api/payment-cases/:caseId/provider-actions` accepts strictly `{ actionType }` plus `:caseId` path parameter (Zod strict validation).
+   - Any client-supplied amounts, currencies, limits, idempotency keys, or approval flags return `400 Bad Request` with zero side effects.
+   - Evidence collector loads case, payment, order, refunds, findings, and in-flight commitments from authoritative MongoDB records.
+   - Refund amount is derived strictly server-side from policy decision (full refundable balance).
+   - Idempotency key is derived server-side from `policyDecisionId + actionType + gatewayPaymentId`.
+   - Case 22 (Late Capture on Cancelled Order) remains unconditionally blocked in `SAFE_HOLD`.
+
+2. **Fresh Provider Read Preflight (Gate B2)**:
+   - Before issuing an authorization token or dispatching, authoritative `GET /v1/payments/:id` and `GET /v1/payments/:id/refunds` reads verify: status is `captured`, currency matches, captured amount matches, refunded amount is consistent with local records, and order ID matches.
+   - Any mismatch fails closed to `SAFE_HOLD` (`PROVIDER_PREFLIGHT_MISMATCH`). Provider timeouts fail closed to `INSUFFICIENT_EVIDENCE`.
+
+3. **Cryptographically Signed PolicyAuthorizationToken (Gate 3)**:
+   - New environment variable `POLICY_TOKEN_SECRET` (minimum 32 characters, distinct from `JWT_SECRET` and `SERVICE_TOKEN_SECRET`, validated at startup in production and whenever sandbox writes are enabled).
+   - Token structure: `base64url(payload).base64url(HMAC-SHA256(payload))`.
+   - Payload binds: `version`, `tokenId` (UUID), `tenantId`, `caseId`, `policyDecisionId`, `actionType`, `gatewayPaymentId`, `amountPaise`, `currency`, `idempotencyKey`, `policyVersion`, `issuedAt`, `expiresAt` (120s TTL, max 300s).
+   - Adapter refuses mutation (`UnauthorizedActionExecutionError`, zero network calls, zero `ProviderOperation` rows) if token is missing, malformed, tampered, expired, signed with wrong secret, bound to mismatched entities, or already used.
+   - Single use enforced via unique index on `tokenId` in `ProviderOperation`.
+   - Redacted audit events: `TOKEN_ISSUED` (tokenId only) and `TOKEN_REJECTED` (tokenId only, no secrets or raw tokens logged).
+
+4. **Atomic Refund Reservation (Gate B4)**:
+   - Single conditional atomic update on `GatewayPayment`:
+     `findOneAndUpdate({ tenantId, gatewayPaymentId, $expr: captured - refunded - reserved >= amount }, { $inc: { reservedRefundPaise: amount } })`
+   - Same idempotency key yields same reservation (no double reservation).
+   - Converted to permanent refunded amount on `VERIFIED_SUCCEEDED`.
+   - Released back to payment on rejection, `VERIFIED_FAILED`, or expiry.
+   - `OUTCOME_UNKNOWN` retains reservation until verified.
+
+5. **No Blind Retry After OUTCOME_UNKNOWN (Gate B5)**:
+   - Prior to any re-send for an `OUTCOME_UNKNOWN` operation, provider refunds list is fetched and matched by idempotency key/reference/receipt and amount.
+   - Match found: adopts provider refund ID and verifies outcome.
+   - No match found: keeps the same stable idempotency key on retry.
