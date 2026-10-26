@@ -70,6 +70,8 @@ const policyConfigVersionSchema = new mongoose.Schema(
         enum: ["INR"],
         required: true
       },
+      // Plain meaning today: Evaluated against refundableBalancePaise for single refund authorization.
+      // If refundableBalancePaise > maxSingleRefundPaise, the evaluator rejects or requires escalation.
       maxSingleRefundPaise: {
         type: Number,
         required: [true, "maxSingleRefundPaise is required"],
@@ -78,6 +80,9 @@ const policyConfigVersionSchema = new mongoose.Schema(
           message: "maxSingleRefundPaise must be a positive safe integer"
         }
       },
+      // Plain meaning today: Evaluator checks (currentCumulativeDailyPaise + refundableBalancePaise) <= maxCumulativeRefundPaise.
+      // NOTE: "per-day velocity cap" and "cumulative-per-payment cap" across historical transactions are NOT IMPLEMENTED
+      // in production because currentCumulativeDailyPaise is never populated from DB history in production workflows.
       maxCumulativeRefundPaise: {
         type: Number,
         required: [true, "maxCumulativeRefundPaise is required"],

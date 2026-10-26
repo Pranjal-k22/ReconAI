@@ -296,4 +296,99 @@ describe("PolicyConfigRoutes - RBAC, Two-Person Rule, and Schema Guards", () => 
       expect(res.body.error.message).toMatch(/strictly prohibited on policy configuration resources/);
     });
   });
+
+  describe("6. POST /api/policy-config/:id/rollback - RBAC & Strict Body Validation", () => {
+    beforeEach(() => {
+      vi.spyOn(policyConfigService, "getPolicyConfigById").mockResolvedValue({
+        _id: "cfg_prev_01",
+        tenantId: TENANT_A,
+        configVersion: 1,
+        status: "SUPERSEDED",
+        limits: { currency: "INR", maxSingleRefundPaise: 50000, maxCumulativeRefundPaise: 100000 }
+      });
+      vi.spyOn(policyConfigService, "rollbackPolicyConfig").mockResolvedValue({
+        _id: "cfg_new_02",
+        tenantId: TENANT_A,
+        configVersion: 2,
+        status: "PENDING_APPROVAL",
+        proposedBy: "usr_admin_01",
+        proposalReason: "Rolling back to v1 due to configuration issue",
+        sourceConfigVersion: 1
+      });
+    });
+
+    it("unauthenticated request returns 401 Unauthorized", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .send({ reason: "Rolling back to v1 due to configuration issue" });
+      expect(res.status).toBe(401);
+    });
+
+    it("machine service token returns 403 Forbidden", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${machineServiceToken}`)
+        .send({ reason: "Rolling back to v1 due to configuration issue" });
+      expect(res.status).toBe(403);
+    });
+
+    it("CUSTOMER role returns 403 Forbidden", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${customerToken}`)
+        .send({ reason: "Rolling back to v1 due to configuration issue" });
+      expect(res.status).toBe(403);
+    });
+
+    it("SHOP role returns 403 Forbidden", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${shopToken}`)
+        .send({ reason: "Rolling back to v1 due to configuration issue" });
+      expect(res.status).toBe(403);
+    });
+
+    it("AUDITOR role returns 403 Forbidden", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${auditorToken}`)
+        .send({ reason: "Rolling back to v1 due to configuration issue" });
+      expect(res.status).toBe(403);
+    });
+
+    it("ADMIN role returns 201 Created and creates PENDING_APPROVAL version", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${admin1Token}`)
+        .send({ reason: "Rolling back to v1 due to configuration issue" });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe("PENDING_APPROVAL");
+      expect(res.body.data.sourceConfigVersion).toBe(1);
+    });
+
+    it("strict body rejects unexpected extra fields with 400 Bad Request", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${admin1Token}`)
+        .send({
+          reason: "Rolling back to v1 due to configuration issue",
+          unexpectedField: "malicious"
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/Invalid rollback payload/);
+    });
+
+    it("strict body rejects reason shorter than 10 characters with 400 Bad Request", async () => {
+      const res = await request(app)
+        .post("/api/policy-config/cfg_prev_01/rollback")
+        .set("Authorization", `Bearer ${admin1Token}`)
+        .send({ reason: "short" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/Invalid rollback payload/);
+    });
+  });
 });

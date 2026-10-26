@@ -65,6 +65,12 @@ const RollbackPolicyConfigSchema = z
   })
   .strict();
 
+const RollbackByIdSchema = z
+  .object({
+    reason: z.string().trim().min(10).max(500)
+  })
+  .strict();
+
 // -----------------------------------------------------------------------------
 // Global route protection:
 // - All routes require authentication
@@ -306,6 +312,32 @@ router.post(
     });
 
     res.status(200).json({ success: true, data: result });
+  })
+);
+
+// -----------------------------------------------------------------------------
+// POST /api/policy-config/:id/rollback - Rollback to an earlier version (ADMIN only)
+// -----------------------------------------------------------------------------
+router.post(
+  "/:id/rollback",
+  requireRoles(ROLES.ADMIN),
+  asyncHandler(async (req, res) => {
+    const parsed = RollbackByIdSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw AppError.badRequest("Invalid rollback payload: " + parsed.error.issues.map((i) => i.message).join(", "));
+    }
+
+    const configDoc = await getPolicyConfigById(req.params.id);
+    const actorId = req.user.sub || req.user.userId;
+
+    const result = await rollbackPolicyConfig({
+      tenantId: configDoc.tenantId,
+      sourceVersion: configDoc.configVersion,
+      proposedBy: actorId,
+      proposalReason: parsed.data.reason
+    });
+
+    res.status(201).json({ success: true, data: result });
   })
 );
 

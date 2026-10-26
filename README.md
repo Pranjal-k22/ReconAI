@@ -231,6 +231,7 @@ npm run build
 - `POST /api/policy-config/:id/approve` — Approve proposed policy configuration (Two-person rule: different `ADMIN`)
 - `POST /api/policy-config/:id/reject` — Reject proposed policy configuration (`ADMIN`)
 - `POST /api/policy-config/:id/deactivate` — Emergency deactivation of active configuration (`ADMIN`)
+- `POST /api/policy-config/:id/rollback` — Propose rollback to prior active version (`ADMIN` only; creates PENDING_APPROVAL version requiring different approver)
 
 ---
 
@@ -242,6 +243,8 @@ npm run build
 - **Two-Person Governance Boundary**: An `ADMIN` cannot approve their own proposed configuration (`approvedBy !== proposedBy`). Approval requires a second distinct authenticated platform administrator.
 - **Fail-Closed Guarantee**: In the absence of an active configuration or upon deactivation, refund policy evaluation unconditionally yields `INSUFFICIENT_EVIDENCE`. Zero preflight GETs, zero reservations, zero tokens, and zero provider HTTP requests are initiated.
 - **Decision Binding & Concurrency Safety**: Policy decisions persist `policyConfigVersion` and `contentHash`. Provider dispatch validates that the active configuration matches the decision state; any divergence aborts with `HTTP 409 POLICY_CONFIG_CHANGED`. `PolicyAuthorizationToken` cryptographically binds version and hash for execution verification.
+- **Limit Semantics Plain Meaning**: `maxSingleRefundPaise` caps single refund transaction balance. True per-day velocity caps and cumulative-per-payment caps are NOT IMPLEMENTED in production today (history aggregation is unpopulated). Second ADMIN accounts are provisioned via `accountService.provisionUserAccount`.
+- **Honest Scenario Reachability**: 30 deterministic rules are implemented; 8 are reachable from production data (DB_DERIVABLE: Cases 5, 6, 10, 11, 12, 18, 19, 22). The remaining 22 require claim intake, ingestion-time interception, reserved status, or synthetic context. There is no claim that 30 scenarios are supported end to end.
 
 
 ---

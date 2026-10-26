@@ -10,7 +10,7 @@
 
 ## 1. Overview & Governance Principles
 
-Phase 6 implements a deterministic, explainable classification and evidence-collection engine covering all 30 payment lifecycle edge cases specified in `EDGE_CASE_POLICY_MATRIX.md`.
+Phase 6 implements a deterministic, explainable classification and evidence-collection engine covering all 30 payment lifecycle edge cases specified in `EDGE_CASE_POLICY_MATRIX.md`. Note on production reachability: 30 deterministic rules are implemented; 8 are reachable from production data (DB_DERIVABLE: Cases 5, 6, 10, 11, 12, 18, 19, 22). The remaining 22 require claim intake, ingestion-time interception, reserved capabilities, or synthetic context. There is no claim that 30 scenarios are supported end to end from live production feeds without intake routes.
 
 ### Core Safety Safeguards Enforced:
 1. **Rule of Positive Evidence**: Only cryptographically verified provider events establish gateway authorization, capture, failure, or refund facts.

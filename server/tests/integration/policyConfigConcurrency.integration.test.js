@@ -13,6 +13,7 @@ import { AuditUnavailableError } from "../../src/services/audit/auditService.js"
 import { dispatchSandboxAction } from "../../src/services/policy/providerDispatchService.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
+import { AuditLog } from "../../src/models/AuditLog.js";
 import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
 const DEFAULT_TEST_URI = "mongodb://127.0.0.1:27017/reconai_test_policy_concurrency";
@@ -31,6 +32,7 @@ describe("PolicyConfigConcurrency - Real MongoDB Concurrency, Indices & Fail-Clo
     await UserAccount.syncIndexes();
     await PaymentCase.syncIndexes();
     await GatewayPayment.syncIndexes();
+    await AuditLog.syncIndexes();
   });
 
   afterAll(async () => {
@@ -53,6 +55,7 @@ describe("PolicyConfigConcurrency - Real MongoDB Concurrency, Indices & Fail-Clo
     await UserAccount.deleteMany({});
     await PaymentCase.deleteMany({});
     await GatewayPayment.deleteMany({});
+    await AuditLog.deleteMany({});
 
     // Seed known platform user for tenant
     await UserAccount.create({
@@ -113,6 +116,18 @@ describe("PolicyConfigConcurrency - Real MongoDB Concurrency, Indices & Fail-Clo
       const activeConfigs = await PolicyConfigVersion.find({ tenantId: TENANT_A, status: "ACTIVE" });
       expect(activeConfigs).toHaveLength(1);
       expect(activeConfigs[0].status).toBe("ACTIVE");
+
+      // Assert audit log counts computed by real query:
+      // Exactly 10 REQUESTED, exactly 1 APPROVED, exactly 1 ACTIVATED, exactly 9 CHANGE_BLOCKED
+      const requestedAudits = await AuditLog.find({ action: "POLICY_CONFIG_APPROVAL_REQUESTED" }).lean();
+      const approvedAudits = await AuditLog.find({ action: "POLICY_CONFIG_APPROVED" }).lean();
+      const activatedAudits = await AuditLog.find({ action: "POLICY_CONFIG_ACTIVATED" }).lean();
+      const blockedAudits = await AuditLog.find({ action: "POLICY_CONFIG_CHANGE_BLOCKED" }).lean();
+
+      expect(requestedAudits).toHaveLength(10);
+      expect(approvedAudits).toHaveLength(1);
+      expect(activatedAudits).toHaveLength(1);
+      expect(blockedAudits).toHaveLength(9);
     });
 
     it("two pending versions approved concurrently yields exactly one ACTIVE and one SUPERSEDED config", async () => {

@@ -79,6 +79,9 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       await PaymentLifecycleEvent.deleteMany({
         deduplicationKey: { $in: Array.from(trackedDeduplicationKeys) }
       });
+      await AuditLog.deleteMany({
+        "metadata.deduplicationKey": { $in: Array.from(trackedDeduplicationKeys) }
+      });
     }
 
     if (trackedPaymentIds.size > 0) {
@@ -255,12 +258,14 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
 
     const testEventId = `evt_integ_concurrent_${Date.now()}`;
     const paymentId = `pay_integ_concurrent_${Date.now()}`;
+    const caseId = `case_integ_concurrent_${Date.now()}`;
     const accountId = "acc_integ_concurrent";
     const deduplicationKey = `RAZORPAY:${accountId}:${testEventId}`;
 
     trackedDeduplicationKeys.add(deduplicationKey);
     trackedPaymentIds.add(paymentId);
     trackedOrderIds.add("order_concurrent_01");
+    trackedCaseIds.add(caseId);
 
     await MerchantOrder.create({
       tenantId: "sh_integ_merchant",
@@ -279,6 +284,20 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       status: "AUTHORIZED",
       amountPaise: 50000,
       currency: "INR"
+    });
+
+    // Pre-seed PaymentCase to assert orthogonal dimension updates
+    await PaymentCase.create({
+      tenantId: "sh_integ_merchant",
+      caseId,
+      merchantOrderId: "order_concurrent_01",
+      gatewayPaymentId: paymentId,
+      discrepancyCategory: "STATUS_MISMATCH",
+      captureStatus: "CAPTURE_NONE",
+      orderStatus: "ORDER_PENDING",
+      refundStatus: "REFUND_NONE",
+      resolutionCaseStatus: "CASE_DETECTED",
+      detectedAt: new Date()
     });
 
     const rawBody = JSON.stringify({
@@ -327,14 +346,21 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
       expect([200, 503]).toContain(r.status);
       if (r.status === 200) {
         expect(["ACCEPTED", "DUPLICATE_ACKNOWLEDGED"]).toContain(r.body?.data?.status);
+        if (r.body?.data?.status === "DUPLICATE_ACKNOWLEDGED") {
+          const stored = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
+          expect(stored?.processingStatus).toBe("PROCESSED");
+        }
       }
     }
 
-    // Mutation is applied exactly once in MongoDB
+    // Mutation is applied exactly once across all DB models
     const paymentDoc = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
     expect(paymentDoc.status).toBe("CAPTURED");
     const orderDoc = await MerchantOrder.findOne({ merchantOrderId: "order_concurrent_01" }).lean();
     expect(orderDoc.status).toBe("PAID");
+    const caseDoc = await PaymentCase.findOne({ caseId }).lean();
+    expect(caseDoc.captureStatus).toBe("CAPTURE_CAPTURED");
+    expect(caseDoc.orderStatus).toBe("ORDER_PAID");
 
     // Exactly one audit set is created for the ingested event
     const auditEntries = await AuditLog.find({

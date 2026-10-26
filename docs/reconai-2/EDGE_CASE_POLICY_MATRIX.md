@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Complete Edge-Case Policy & Resolution Matrix (30 Scenarios)
 
 > **DOCUMENT STATUS: PROPOSED — AWAITING OWNER REVIEW**  
-> *This document provides the definitive policy specifications, authoritative evidence requirements, autonomous eligibility rules, and test criteria for all 30 payment edge cases in ReconAI 2.0. No application code has been modified.*
+> *This document provides the definitive policy specifications, authoritative evidence requirements, autonomous eligibility rules, and test criteria for all 30 payment edge cases in ReconAI 2.0. 30 deterministic rules are implemented; 8 are reachable from production data (DB_DERIVABLE: Cases 5, 6, 10, 11, 12, 18, 19, 22). The remaining 22 require claim intake, ingestion-time interception, reserved capabilities, or synthetic context. There is no claim that all 30 scenarios are supported end to end without intake routes.*
 
 ---
 

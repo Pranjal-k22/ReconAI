@@ -215,23 +215,12 @@ export async function approvePolicyConfig({ configId, approvedBy, approvalReason
     throw AppError.notFound(`PolicyConfigVersion '${configId}' not found`);
   }
 
-  if (target.status !== "PENDING_APPROVAL") {
-    throw AppError.conflict(
-      `PolicyConfigVersion '${configId}' is not pending approval (current status: ${target.status})`
-    );
-  }
-
-  // Enforce Two-Person Rule: Proposer cannot approve their own configuration
-  if (target.proposedBy === cleanApprovedBy) {
-    throw AppError.forbidden("Two-person rule violation: Proposer cannot approve their own policy config proposal.");
-  }
-
-  // Audit events written BEFORE the state transition (Fail-closed)
+  // 1. BEFORE the conditional update: write POLICY_CONFIG_APPROVAL_REQUESTED (intent); fail closed (503)
   try {
     await createAuditEvent({
       actorType: "HUMAN",
       actorId: cleanApprovedBy,
-      action: "POLICY_CONFIG_APPROVED",
+      action: "POLICY_CONFIG_APPROVAL_REQUESTED",
       tenantId: target.tenantId,
       entityType: "PolicyConfigVersion",
       entityId: String(target.configVersion),
@@ -244,61 +233,157 @@ export async function approvePolicyConfig({ configId, approvedBy, approvalReason
         approvalReason: cleanReason
       }
     });
-
-    await createAuditEvent({
-      actorType: "SYSTEM",
-      actorId: cleanApprovedBy,
-      action: "POLICY_CONFIG_ACTIVATED",
-      tenantId: target.tenantId,
-      entityType: "PolicyConfigVersion",
-      entityId: String(target.configVersion),
-      metadata: {
-        configId: String(target._id),
-        configVersion: target.configVersion,
-        contentHash: target.contentHash,
-        limits: target.limits
-      }
-    });
   } catch (auditErr) {
     throw new AuditUnavailableError(
-      `Failed to persist audit log for POLICY_CONFIG_APPROVED/ACTIVATED: ${auditErr.message}`,
+      `Failed to persist audit log for POLICY_CONFIG_APPROVAL_REQUESTED: ${auditErr.message}`,
       auditErr
     );
   }
 
-  // Two-step conditional atomic transition per B2:
-  // 1. Verify target is still pending approval before touching any existing active config
-  const isStillPending = await PolicyConfigVersion.exists({ _id: target._id, status: "PENDING_APPROVAL" });
-  if (!isStillPending) {
-    throw AppError.conflict("Policy config could not be activated (no longer pending approval)");
+  if (target.status !== "PENDING_APPROVAL") {
+    try {
+      await createAuditEvent({
+        actorType: "HUMAN",
+        actorId: cleanApprovedBy,
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: target.tenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(target.configVersion),
+        metadata: {
+          configId: String(target._id),
+          configVersion: target.configVersion,
+          reason: "STATUS_NOT_PENDING",
+          currentStatus: target.status
+        }
+      });
+    } catch (auditErr) {
+      logger.error({ err: auditErr.message }, "Failed to write audit for blocked attempt");
+    }
+    throw AppError.conflict(
+      `PolicyConfigVersion '${configId}' is not pending approval (current status: ${target.status})`
+    );
   }
 
-  // Supersede any existing ACTIVE config for this tenant (excluding target)
+  // Enforce Two-Person Rule: Proposer cannot approve their own configuration
+  if (target.proposedBy === cleanApprovedBy) {
+    try {
+      await createAuditEvent({
+        actorType: "HUMAN",
+        actorId: cleanApprovedBy,
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: target.tenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(target.configVersion),
+        metadata: {
+          configId: String(target._id),
+          configVersion: target.configVersion,
+          reason: "TWO_PERSON_RULE_VIOLATION"
+        }
+      });
+    } catch (auditErr) {
+      logger.error({ err: auditErr.message }, "Failed to write audit for blocked attempt");
+    }
+    throw AppError.forbidden("Two-person rule violation: Proposer cannot approve their own policy config proposal.");
+  }
+
+  // 2. Supersede any existing ACTIVE config for this tenant (excluding target)
   await PolicyConfigVersion.updateMany(
     { tenantId: target.tenantId, status: "ACTIVE", _id: { $ne: target._id } },
     { $set: { status: "SUPERSEDED", supersededAt: new Date() } }
   );
 
-  // 2. Conditionally activate the target pending config
-  const activated = await PolicyConfigVersion.findOneAndUpdate(
-    { _id: target._id, status: "PENDING_APPROVAL" },
-    {
-      $set: {
-        status: "ACTIVE",
-        approvedBy: cleanApprovedBy,
-        approvedAt: new Date(),
-        approvalReason: cleanReason,
-        activatedAt: new Date()
-      }
-    },
-    { new: true }
-  );
+  // 3. Conditionally activate the target pending config
+  let activated;
+  try {
+    activated = await PolicyConfigVersion.findOneAndUpdate(
+      { _id: target._id, status: "PENDING_APPROVAL" },
+      {
+        $set: {
+          status: "ACTIVE",
+          approvedBy: cleanApprovedBy,
+          approvedAt: new Date(),
+          approvalReason: cleanReason,
+          activatedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+  } catch (err) {
+    if (err.code === 11000) {
+      activated = null;
+    } else {
+      throw err;
+    }
+  }
 
+  // 4. Losing or failed attempts write POLICY_CONFIG_CHANGE_BLOCKED with the reason
   if (!activated) {
+    try {
+      await createAuditEvent({
+        actorType: "HUMAN",
+        actorId: cleanApprovedBy,
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: target.tenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(target.configVersion),
+        metadata: {
+          configId: String(target._id),
+          configVersion: target.configVersion,
+          reason: "CONCURRENT_APPROVAL_CONFLICT",
+          attemptedAction: "APPROVE",
+          approvedBy: cleanApprovedBy
+        }
+      });
+    } catch (blockedAuditErr) {
+      logger.warn({ err: blockedAuditErr.message }, "Failed to write POLICY_CONFIG_CHANGE_BLOCKED audit event");
+    }
     throw AppError.conflict("Policy config could not be activated (may have been concurrently processed)");
   }
 
-  return activated.toObject();
+  // 5. Winning attempt: write POLICY_CONFIG_APPROVED and POLICY_CONFIG_ACTIVATED
+  // The config record itself (approvedBy, approvedAt, status) is authoritative if an outcome audit write fails
+  const resObj = activated.toObject();
+  try {
+    await createAuditEvent({
+      actorType: "HUMAN",
+      actorId: cleanApprovedBy,
+      action: "POLICY_CONFIG_APPROVED",
+      tenantId: activated.tenantId,
+      entityType: "PolicyConfigVersion",
+      entityId: String(activated.configVersion),
+      metadata: {
+        configId: String(activated._id),
+        configVersion: activated.configVersion,
+        contentHash: activated.contentHash,
+        proposedBy: activated.proposedBy,
+        approvedBy: cleanApprovedBy,
+        approvalReason: cleanReason
+      }
+    });
+
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: cleanApprovedBy,
+      action: "POLICY_CONFIG_ACTIVATED",
+      tenantId: activated.tenantId,
+      entityType: "PolicyConfigVersion",
+      entityId: String(activated.configVersion),
+      metadata: {
+        configId: String(activated._id),
+        configVersion: activated.configVersion,
+        contentHash: activated.contentHash,
+        limits: activated.limits
+      }
+    });
+  } catch (auditErr) {
+    logger.error(
+      { err: auditErr.message, configId: String(activated._id), configVersion: activated.configVersion },
+      "[CRITICAL] Failed to persist outcome audit log for POLICY_CONFIG_APPROVED/ACTIVATED. PolicyConfig record remains authoritative."
+    );
+    resObj._auditWarning = "OUTCOME_AUDIT_WRITE_FAILED";
+  }
+
+  return resObj;
 }
 
 /**
@@ -319,13 +404,95 @@ export async function rejectPolicyConfig({ configId, rejectedBy, rejectionReason
     throw AppError.notFound(`PolicyConfigVersion '${configId}' not found`);
   }
 
+  // 1. BEFORE the conditional update: write POLICY_CONFIG_REJECTION_REQUESTED (intent); fail closed (503)
+  try {
+    await createAuditEvent({
+      actorType: "HUMAN",
+      actorId: cleanRejectedBy,
+      action: "POLICY_CONFIG_REJECTION_REQUESTED",
+      tenantId: target.tenantId,
+      entityType: "PolicyConfigVersion",
+      entityId: String(target.configVersion),
+      metadata: {
+        configId: String(target._id),
+        configVersion: target.configVersion,
+        contentHash: target.contentHash,
+        proposedBy: target.proposedBy,
+        rejectedBy: cleanRejectedBy,
+        rejectionReason: cleanReason
+      }
+    });
+  } catch (auditErr) {
+    throw new AuditUnavailableError(
+      `Failed to persist audit log for POLICY_CONFIG_REJECTION_REQUESTED: ${auditErr.message}`,
+      auditErr
+    );
+  }
+
   if (target.status !== "PENDING_APPROVAL") {
+    try {
+      await createAuditEvent({
+        actorType: "HUMAN",
+        actorId: cleanRejectedBy,
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: target.tenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(target.configVersion),
+        metadata: {
+          configId: String(target._id),
+          configVersion: target.configVersion,
+          reason: "STATUS_NOT_PENDING",
+          currentStatus: target.status
+        }
+      });
+    } catch (auditErr) {
+      logger.error({ err: auditErr.message }, "Failed to write audit for blocked attempt");
+    }
     throw AppError.conflict(
       `PolicyConfigVersion '${configId}' is not pending approval (current status: ${target.status})`
     );
   }
 
-  // Fail-closed audit write BEFORE state transition
+  // 2. Conditionally update status to REJECTED
+  const rejected = await PolicyConfigVersion.findOneAndUpdate(
+    { _id: target._id, status: "PENDING_APPROVAL" },
+    {
+      $set: {
+        status: "REJECTED",
+        rejectedBy: cleanRejectedBy,
+        rejectedAt: new Date(),
+        rejectionReason: cleanReason
+      }
+    },
+    { new: true }
+  );
+
+  // 3. Losing or failed attempt writes POLICY_CONFIG_CHANGE_BLOCKED
+  if (!rejected) {
+    try {
+      await createAuditEvent({
+        actorType: "HUMAN",
+        actorId: cleanRejectedBy,
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: target.tenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(target.configVersion),
+        metadata: {
+          configId: String(target._id),
+          configVersion: target.configVersion,
+          reason: "CONCURRENT_REJECTION_CONFLICT",
+          attemptedAction: "REJECT",
+          rejectedBy: cleanRejectedBy
+        }
+      });
+    } catch (blockedAuditErr) {
+      logger.warn({ err: blockedAuditErr.message }, "Failed to write POLICY_CONFIG_CHANGE_BLOCKED audit event");
+    }
+    throw AppError.conflict("Policy config could not be rejected (may have been concurrently processed)");
+  }
+
+  // 4. Winning attempt: write POLICY_CONFIG_REJECTED
+  const resObj = rejected.toObject();
   try {
     await createAuditEvent({
       actorType: "HUMAN",
@@ -344,30 +511,14 @@ export async function rejectPolicyConfig({ configId, rejectedBy, rejectionReason
       }
     });
   } catch (auditErr) {
-    throw new AuditUnavailableError(
-      `Failed to persist audit log for POLICY_CONFIG_REJECTED: ${auditErr.message}`,
-      auditErr
+    logger.error(
+      { err: auditErr.message, configId: String(rejected._id), configVersion: rejected.configVersion },
+      "[CRITICAL] Failed to persist outcome audit log for POLICY_CONFIG_REJECTED. PolicyConfig record remains authoritative."
     );
+    resObj._auditWarning = "OUTCOME_AUDIT_WRITE_FAILED";
   }
 
-  const rejected = await PolicyConfigVersion.findOneAndUpdate(
-    { _id: target._id, status: "PENDING_APPROVAL" },
-    {
-      $set: {
-        status: "REJECTED",
-        rejectedBy: cleanRejectedBy,
-        rejectedAt: new Date(),
-        rejectionReason: cleanReason
-      }
-    },
-    { new: true }
-  );
-
-  if (!rejected) {
-    throw AppError.conflict("Policy config could not be rejected (may have been concurrently processed)");
-  }
-
-  return rejected.toObject();
+  return resObj;
 }
 
 /**
@@ -387,7 +538,70 @@ export async function deactivatePolicyConfig({ tenantId, deactivatedBy, deactiva
     throw AppError.notFound("No active policy configuration found to deactivate");
   }
 
-  // Fail-closed audit write BEFORE state transition
+  // 1. BEFORE the conditional update: write POLICY_CONFIG_DEACTIVATION_REQUESTED (intent); fail closed (503)
+  try {
+    await createAuditEvent({
+      actorType: "HUMAN",
+      actorId: cleanDeactivatedBy,
+      action: "POLICY_CONFIG_DEACTIVATION_REQUESTED",
+      tenantId: target.tenantId,
+      entityType: "PolicyConfigVersion",
+      entityId: String(target.configVersion),
+      metadata: {
+        configId: String(target._id),
+        configVersion: target.configVersion,
+        contentHash: target.contentHash,
+        deactivatedBy: cleanDeactivatedBy,
+        deactivationReason: cleanReason
+      }
+    });
+  } catch (auditErr) {
+    throw new AuditUnavailableError(
+      `Failed to persist audit log for POLICY_CONFIG_DEACTIVATION_REQUESTED: ${auditErr.message}`,
+      auditErr
+    );
+  }
+
+  // 2. Conditionally update status to DEACTIVATED
+  const deactivated = await PolicyConfigVersion.findOneAndUpdate(
+    { _id: target._id, status: "ACTIVE" },
+    {
+      $set: {
+        status: "DEACTIVATED",
+        deactivatedBy: cleanDeactivatedBy,
+        deactivatedAt: new Date(),
+        deactivationReason: cleanReason
+      }
+    },
+    { new: true }
+  );
+
+  // 3. Losing or failed attempt writes POLICY_CONFIG_CHANGE_BLOCKED
+  if (!deactivated) {
+    try {
+      await createAuditEvent({
+        actorType: "HUMAN",
+        actorId: cleanDeactivatedBy,
+        action: "POLICY_CONFIG_CHANGE_BLOCKED",
+        tenantId: target.tenantId,
+        entityType: "PolicyConfigVersion",
+        entityId: String(target.configVersion),
+        metadata: {
+          configId: String(target._id),
+          configVersion: target.configVersion,
+          reason: "CONCURRENT_DEACTIVATION_CONFLICT",
+          attemptedAction: "DEACTIVATE",
+          deactivatedBy: cleanDeactivatedBy
+        }
+      });
+    } catch (blockedAuditErr) {
+      logger.warn({ err: blockedAuditErr.message }, "Failed to write POLICY_CONFIG_CHANGE_BLOCKED audit event");
+    }
+    throw AppError.conflict("Active policy config was concurrently deactivated or modified");
+  }
+
+  // 4. Winning attempt: write POLICY_CONFIG_DEACTIVATED
+  const resObj = deactivated.toObject();
   try {
     await createAuditEvent({
       actorType: "HUMAN",
@@ -405,30 +619,14 @@ export async function deactivatePolicyConfig({ tenantId, deactivatedBy, deactiva
       }
     });
   } catch (auditErr) {
-    throw new AuditUnavailableError(
-      `Failed to persist audit log for POLICY_CONFIG_DEACTIVATED: ${auditErr.message}`,
-      auditErr
+    logger.error(
+      { err: auditErr.message, configId: String(deactivated._id), configVersion: deactivated.configVersion },
+      "[CRITICAL] Failed to persist outcome audit log for POLICY_CONFIG_DEACTIVATED. PolicyConfig record remains authoritative."
     );
+    resObj._auditWarning = "OUTCOME_AUDIT_WRITE_FAILED";
   }
 
-  const deactivated = await PolicyConfigVersion.findOneAndUpdate(
-    { _id: target._id, status: "ACTIVE" },
-    {
-      $set: {
-        status: "DEACTIVATED",
-        deactivatedBy: cleanDeactivatedBy,
-        deactivatedAt: new Date(),
-        deactivationReason: cleanReason
-      }
-    },
-    { new: true }
-  );
-
-  if (!deactivated) {
-    throw AppError.conflict("Active policy config was concurrently deactivated or modified");
-  }
-
-  return deactivated.toObject();
+  return resObj;
 }
 
 /**
