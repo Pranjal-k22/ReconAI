@@ -484,7 +484,18 @@ router.get(
         (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
       const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.query?.tenantId : req.user.tenantId;
 
-      const tasks = await OrchestrationTask.find({ caseId, tenantId: scopedTenantId })
+      if (scopedTenantId && String(scopedTenantId).trim() === "unassigned_provider_quarantine") {
+        return res.status(200).json({ success: true, data: [] });
+      }
+
+      const query = { caseId };
+      if (scopedTenantId) {
+        query.tenantId = scopedTenantId;
+      } else {
+        query.tenantId = { $ne: "unassigned_provider_quarantine" };
+      }
+
+      const tasks = await OrchestrationTask.find(query)
         .sort({ createdAt: -1 })
         .lean();
 
@@ -550,6 +561,10 @@ router.post(
       const scopedTenantId = req.tenantFilter || req.query?.tenantId || req.user.tenantId;
       if (!scopedTenantId) {
         throw AppError.badRequest("tenantId could not be determined for classification");
+      }
+
+      if (String(scopedTenantId).trim() === "unassigned_provider_quarantine") {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
       }
 
       // Tenant ownership check: tenant mismatch returns 404
@@ -635,6 +650,10 @@ router.get(
         }
       } else if (req.user.role === ROLES.SHOP) {
         scopedTenantId = req.user.tenantId;
+      }
+
+      if (scopedTenantId && String(scopedTenantId).trim() === "unassigned_provider_quarantine") {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
       }
 
       // Tenant ownership check: tenant mismatch returns 404

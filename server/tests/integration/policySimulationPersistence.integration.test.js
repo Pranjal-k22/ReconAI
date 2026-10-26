@@ -5,6 +5,8 @@ import { PaymentAction } from "../../src/models/PaymentAction.js";
 import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { GatewayPayment } from "../../src/models/GatewayPayment.js";
 import { MerchantOrder } from "../../src/models/MerchantOrder.js";
+import { EvidenceRecord } from "../../src/models/EvidenceRecord.js";
+import { AuditLog } from "../../src/models/AuditLog.js";
 import {
   evaluateAndSimulateResolution,
   getDecisionsByCaseId
@@ -53,6 +55,8 @@ describe("Deterministic Resolution Policy & Dry-Run Simulator - MongoDB Integrat
       await PaymentCase.deleteMany({});
       await GatewayPayment.deleteMany({});
       await MerchantOrder.deleteMany({});
+      await EvidenceRecord.deleteMany({});
+      await AuditLog.deleteMany({});
     }
 
     // Seed test case in Tenant A (Captured payment, pending order)

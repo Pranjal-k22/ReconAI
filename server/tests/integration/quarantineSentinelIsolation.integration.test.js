@@ -10,6 +10,7 @@ import { ProviderOperation } from "../../src/models/ProviderOperation.js";
 import { PolicyConfigVersion, computePolicyConfigHash } from "../../src/models/PolicyConfigVersion.js";
 import { AiInvestigationRun } from "../../src/models/AiInvestigationRun.js";
 import { PaymentAction } from "../../src/models/PaymentAction.js";
+import { OrchestrationTask } from "../../src/models/OrchestrationTask.js";
 import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
@@ -53,7 +54,8 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
         ProviderOperation.deleteMany({}),
         PolicyConfigVersion.deleteMany({}),
         AiInvestigationRun.deleteMany({}),
-        PaymentAction.deleteMany({})
+        PaymentAction.deleteMany({}),
+        OrchestrationTask.deleteMany({})
       ]);
 
       // Seed Quarantined (Sentinel) records
@@ -158,6 +160,14 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
         proposedAt: new Date()
       });
 
+      await OrchestrationTask.create({
+        taskId: "task_sentinel_001",
+        tenantId: SENTINEL_TENANT,
+        caseId: "case_sentinel_001",
+        idempotencyKey: "idem_task_sentinel_001",
+        state: "QUEUED"
+      });
+
       // Seed Valid Tenant records to verify real data is returned
       await PaymentLifecycleEvent.create({
         eventId: "ple_valid_001",
@@ -256,6 +266,14 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
         idempotencyKey: "idem_valid_001",
         reasonCode: "SAFE_HOLD_PENDING",
         proposedAt: new Date()
+      });
+
+      await OrchestrationTask.create({
+        taskId: "task_valid_001",
+        tenantId: VALID_TENANT,
+        caseId: "case_valid_001",
+        idempotencyKey: "idem_task_valid_001",
+        state: "QUEUED"
       });
     }
   });
@@ -381,6 +399,24 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data).toEqual([]);
+    });
+
+    it("GET /api/payment-cases/:caseId/classification returns 404 for sentinel case", async () => {
+      const res = await request(app)
+        .get("/api/payment-cases/case_sentinel_001/classification")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+    });
+
+    it("GET /api/payment-cases/:caseId/classification?tenantId=<sentinel> returns 404", async () => {
+      const res = await request(app)
+        .get(`/api/payment-cases/case_valid_001/classification?tenantId=${SENTINEL_TENANT}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
     });
   });
 
@@ -533,6 +569,28 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
     it("GET /api/payment-actions/case/:caseId?tenantId=<sentinel> returns empty list", async () => {
       const res = await request(app)
         .get(`/api/payment-actions/case/case_valid_001?tenantId=${SENTINEL_TENANT}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual([]);
+    });
+  });
+
+  describe("9. orchestration endpoints", () => {
+    it("GET /api/payment-cases/:caseId/orchestration/tasks returns empty list for sentinel case", async () => {
+      const res = await request(app)
+        .get("/api/payment-cases/case_sentinel_001/orchestration/tasks")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual([]);
+    });
+
+    it("GET /api/payment-cases/:caseId/orchestration/tasks?tenantId=<sentinel> returns empty list", async () => {
+      const res = await request(app)
+        .get(`/api/payment-cases/case_valid_001/orchestration/tasks?tenantId=${SENTINEL_TENANT}`)
         .set("Authorization", `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);

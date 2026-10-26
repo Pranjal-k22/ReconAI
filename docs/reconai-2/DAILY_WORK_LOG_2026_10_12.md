@@ -1065,3 +1065,55 @@ ReconAI/
 - **A6. Deterministic In-Flight Race Verification**:
   - Added test-only hook `setInFlightPauseHook` in `webhookService.js` (strictly active only when `NODE_ENV === "test"`).
   - Added deterministic race test in `server/tests/integration/webhookPersistence.integration.test.js`: holds Request 1 in flight in `RECEIVED` state, sends concurrent Request 2, asserts HTTP 503 at receipt time, releases Request 1, asserts HTTP 200 `ACCEPTED` at receipt time, then sends Request 3 retry and asserts HTTP 200 `DUPLICATE_ACKNOWLEDGED`. All statuses recorded strictly at the time of receipt.
+
+### Entry 20: Stage 5.5 Classifier Governance, Sentinel Proof, and Clock Stability Audit
+
+- **Historical Commit Note (`git show --stat`)**:
+  - From `git show --stat` data in `evidence/stage5_6/01-generic-commits-stat.txt`:
+    - `f8cc174` ("feat: add comprehensive payment monitoring service, state machine, and webhook integration for ReconAI 2.0"): 30 files changed, 1012 insertions(+), 453 deletions(-).
+    - `a5c236d` ("docs: add comprehensive architecture, RBAC, edge case, and provider capability documentation with new routes and tests"): 11 files changed, 185 insertions(+), 38 deletions(-).
+    - `768ea53` ("feat: add scripts to audit classifier reachability and run concurrent webhook tests"): 2 files changed, 74 insertions(+).
+    - Note: These commits carry generic messages and contain stage work (recorded as factual file counts from commit objects without guessing their cause).
+
+- **Classifier Precedence & Invariant Audit**:
+  - Evaluated 41 deterministic classifier rules across 6 evaluation tiers (`evidence/stage5_5/17b-classifier-behavior-audit.txt`).
+  - Standalone fixture comparison: 0 differences across all 30 standalone edge-case scenario fixtures.
+  - Merged input pairs: Audited behavior differences between legacy and reordered rule precedence (`evidence/stage5_5/17c-merged-conflict-diffs.txt`).
+
+- **Input Hash Clock Stability**:
+  - Redesigned `computeClassifierInputHash` to bind to `recordHash` and `outcome`, eliminating artificial timestamp-based staleness on pure clock movements (`evidence/stage5_5/16a-context-builder-fields.txt`).
+
+- **Strict Reachability Audit**:
+  - Categorized all 30 scenarios into 6 categories: PROVEN_END_TO_END (8), SEEDABLE_ONLY (6), INGESTION_TIME (5), NEEDS_CLAIM_INTAKE (3), RESERVED (6), NO_SOURCE (2) (`evidence/stage5_5/16b-strict-reachability.json`).
+
+- **Verification Totals (Stage 5.5, from JSON evidence files)**:
+  - Unit Tests: 786 passed across 78 test files (`evidence/stage5_5/18-unit-tests.json`).
+  - Integration Tests: 142 passed across 13 test files (`evidence/stage5_5/19-integration-tests.json`).
+  - 120-Scenario Reconciliation Benchmark: 120/120 scenarios passed (`evidence/stage5_5/20-benchmark.json`).
+  - Monitoring Smoke Test: 7/7 gates passed (`evidence/stage5_5/21-smoke.txt`).
+  - Client Build: Clean build (`evidence/stage5_5/22-client-build.txt`).
+  - Code Cleanliness: 0 whitespace / conflict errors (`evidence/stage5_5/23-diff-check.txt`).
+
+### Entry 21: Stage 5.6 Proof Standardization and Invariant Verification
+
+- **Classifier Precedence & 52 Merged Input Differences**:
+  - Sourced from `evidence/stage5_6/02-classifier-behavior-audit.json` and `.txt`:
+  - 52 merged pairs differed between pre-reorder and HEAD.
+  - All 52 transitions flipped from not-held (`safeHold: false`) to held (`safeHold: true`).
+  - Confirmed standalone fixtures maintained 0 differences across all 30 scenarios.
+
+- **Sentinel Leak Proof Standardization**:
+  - Sourced from `evidence/stage5_6/04-sentinel-leak-proof.txt`:
+  - Executed proof on pre-quarantine code baseline demonstrating 21 tests failing when sentinel tenant exclusion queries are absent.
+
+- **Clock Stability & Dispatch Integration Tests**:
+  - Added unit test suite `server/tests/classification/inputHashClockStability.test.js` (4 tests).
+  - Added real-Mongo integration suite `server/tests/integration/classificationHashDispatch.integration.test.js` (5 tests initially, verifying dispatch staleness rejection and replay stability).
+
+- **Verification Totals (Stage 5.6, from JSON evidence files)**:
+  - Unit Tests: 788 passed across 79 test files (`evidence/stage5_6/07-unit-tests.json`).
+  - Integration Tests: 149 passed across 14 test files (`evidence/stage5_6/07-integration-tests.json`).
+  - 120-Scenario Reconciliation Benchmark: 120/120 scenarios passed (`evidence/stage5_6/07-benchmark.json`).
+  - Monitoring Smoke Test: 7/7 gates passed (`evidence/stage5_6/07-smoke.txt`).
+  - Client Build: Clean build (`evidence/stage5_6/07-client-build.txt`).
+  - Code Cleanliness: 0 whitespace / conflict errors (`evidence/stage5_6/07-diff-check.txt`).

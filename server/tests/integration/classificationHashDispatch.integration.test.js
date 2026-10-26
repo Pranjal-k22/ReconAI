@@ -8,12 +8,20 @@ import { EvidenceRecord } from "../../src/models/EvidenceRecord.js";
 import { AuditLog } from "../../src/models/AuditLog.js";
 import { PolicyDecision } from "../../src/models/PolicyDecision.js";
 import { PolicyConfigVersion, computePolicyConfigHash } from "../../src/models/PolicyConfigVersion.js";
+import { PaymentMonitoringTask } from "../../src/models/PaymentMonitoringTask.js";
+import { PaymentLifecycleEvent } from "../../src/models/PaymentLifecycleEvent.js";
 import {
   setClassifierClock,
-  resetClassifierClock
+  resetClassifierClock,
+  buildClassifierContext,
+  isClassificationStale
 } from "../../src/services/classification/classifierContextBuilder.js";
 import { classifyCase } from "../../src/services/classification/classificationService.js";
 import { dispatchSandboxAction } from "../../src/services/policy/providerDispatchService.js";
+import {
+  schedulePaymentMonitoring,
+  executeMonitoringRecheck
+} from "../../src/services/monitoring/paymentMonitoringService.js";
 import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 import { ROLES } from "../../src/services/auth/tokenService.js";
 
@@ -73,7 +81,9 @@ describe("Classification Hash Clock-Stability & Dispatch Integration (Real Mongo
         EvidenceRecord.deleteMany({}),
         AuditLog.deleteMany({}),
         PolicyDecision.deleteMany({}),
-        PolicyConfigVersion.deleteMany({})
+        PolicyConfigVersion.deleteMany({}),
+        PaymentMonitoringTask.deleteMany({}),
+        PaymentLifecycleEvent.deleteMany({})
       ]);
 
       // Seed approved active PolicyConfigVersion for dispatch eligibility
@@ -407,5 +417,300 @@ describe("Classification Hash Clock-Stability & Dispatch Integration (Real Mongo
     // Exactly 2 EvidenceRecords exist in the database across 25 evaluations over 24 hours
     const totalRecords = await EvidenceRecord.countDocuments({ tenantId: TENANT, caseId });
     expect(totalRecords).toBe(2);
+  });
+
+  describe("Material-State Only Invariants & Real Monitoring Recheck (A1)", () => {
+    it("(a) classify, then run real monitoring recheck writing same provider status -> not stale and dispatch staleness gate passes", async () => {
+      const caseId = "CASE-MON-SAME-STATUS";
+      const paymentId = "pay_mon_same_status";
+      const orderId = "ord_mon_same_status";
+
+      await PaymentCase.create({
+        caseId,
+        tenantId: TENANT,
+        status: "OPEN",
+        captureStatus: "CAPTURE_CAPTURED",
+        discrepancyCategory: "STATUS_MISMATCH",
+        gatewayPaymentId: paymentId,
+        merchantOrderId: orderId
+      });
+
+      await GatewayPayment.create({
+        gatewayPaymentId: paymentId,
+        tenantId: TENANT,
+        amountPaise: 10000,
+        currency: "INR",
+        status: "CAPTURED",
+        method: "UPI",
+        createdAt: new Date(baseTime),
+        updatedAt: new Date(baseTime)
+      });
+
+      await MerchantOrder.create({
+        merchantOrderId: orderId,
+        tenantId: TENANT,
+        amountPaise: 10000,
+        currency: "INR",
+        status: "CREATED",
+        createdAt: new Date(baseTime),
+        updatedAt: new Date(baseTime)
+      });
+
+      // Seed initial webhook event so zeroWebhooks is false both before and after monitoring recheck
+      await PaymentLifecycleEvent.create({
+        eventId: "evt_init_webhook_mon_same",
+        tenantId: TENANT,
+        caseId,
+        gatewayPaymentId: paymentId,
+        merchantOrderId: orderId,
+        sourceSystem: "GATEWAY_WEBHOOK",
+        deduplicationKey: "dedup_webhook_mon_same",
+        payloadFingerprint: "fp_test_webhook_01",
+        normalizedEventType: "PAYMENT_CAPTURED",
+        amountPaise: 10000,
+        currency: "INR",
+        occurredAt: new Date(baseTime)
+      });
+
+      setClassifierClock(() => baseTime);
+
+      // 1. Initial classification
+      const classification = await classifyCase({ tenantId: TENANT, caseId, actor });
+      expect(classification.finding.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+
+      // 2. Schedule real monitoring task without merchantOrderId so order is not prematurely marked PAID
+      const task = await schedulePaymentMonitoring({
+        tenantId: TENANT,
+        gatewayPaymentId: paymentId,
+        caseId,
+        asOfTime: new Date(baseTime)
+      });
+
+      // 3. Execute real monitoring recheck with mocked fetch returning SAME status ("captured")
+      const mockFetchSameStatus = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: paymentId,
+          entity: "payment",
+          amount: 10000,
+          currency: "INR",
+          status: "captured"
+        })
+      });
+
+      const recheckResult = await executeMonitoringRecheck(task, {
+        asOfTime: new Date(baseTime + 30000),
+        customFetch: mockFetchSameStatus
+      });
+      expect(recheckResult.success).toBe(true);
+
+      // Verify payment status is still CAPTURED in DB
+      const updatedPayment = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+      expect(updatedPayment.status).toBe("CAPTURED");
+
+      // Verify staleness check passes
+      const currentCtx = await buildClassifierContext({ tenantId: TENANT, caseId });
+      expect(currentCtx.inputHash).toBe(classification.inputHash);
+
+      // 4. Attempt dispatch: staleness check must pass because material state is unchanged
+      try {
+        await dispatchSandboxAction({
+          tenantId: TENANT,
+          caseId,
+          actorId: actor.userId,
+          actorRole: ROLES.ADMIN,
+          actionType: "REQUEST_REFUND",
+          idempotencyKey: "idem_mon_same_status_dispatch",
+          amountPaise: 5000,
+          customFetch: mockCustomFetch
+        });
+        expect.fail("Expected dispatch to reach sandbox write gate");
+      } catch (err) {
+        expect(err.code).not.toBe("CLASSIFICATION_STALE");
+        expect(err.code).toBe("SANDBOX_GATE_CLOSED");
+      }
+    });
+
+    it("(b) monitoring recheck returns changed status -> stale", async () => {
+      const caseId = "CASE-MON-CHANGED-STATUS";
+      const paymentId = "pay_mon_changed_status";
+      const orderId = "ord_mon_changed_status";
+
+      await PaymentCase.create({
+        caseId,
+        tenantId: TENANT,
+        status: "OPEN",
+        discrepancyCategory: "STATUS_MISMATCH",
+        gatewayPaymentId: paymentId,
+        merchantOrderId: orderId
+      });
+
+      await GatewayPayment.create({
+        gatewayPaymentId: paymentId,
+        tenantId: TENANT,
+        amountPaise: 10000,
+        currency: "INR",
+        status: "CAPTURED",
+        method: "UPI",
+        createdAt: new Date(baseTime),
+        updatedAt: new Date(baseTime)
+      });
+
+      await MerchantOrder.create({
+        merchantOrderId: orderId,
+        tenantId: TENANT,
+        amountPaise: 10000,
+        currency: "INR",
+        status: "CREATED",
+        createdAt: new Date(baseTime),
+        updatedAt: new Date(baseTime)
+      });
+
+      setClassifierClock(() => baseTime);
+
+      // 1. Initial classification (finding is Case 6)
+      const initial = await classifyCase({ tenantId: TENANT, caseId, actor });
+      expect(initial.finding.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+
+      // 2. Schedule and execute monitoring recheck returning CHANGED status ("refunded")
+      const task = await schedulePaymentMonitoring({
+        tenantId: TENANT,
+        gatewayPaymentId: paymentId,
+        caseId,
+        asOfTime: new Date(baseTime)
+      });
+
+      const mockFetchChangedStatus = async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: paymentId,
+          entity: "payment",
+          amount: 10000,
+          currency: "INR",
+          status: "refunded"
+        })
+      });
+
+      await executeMonitoringRecheck(task, {
+        asOfTime: new Date(baseTime + 30000),
+        customFetch: mockFetchChangedStatus
+      });
+
+      // Verify payment status mutated in DB to REFUNDED
+      const updatedPayment = await GatewayPayment.findOne({ gatewayPaymentId: paymentId }).lean();
+      expect(updatedPayment.status).toBe("REFUNDED");
+
+      // 3. Verify classification is STALE
+      const { recordHash: newRecordHash, outcome: newOutcome, inputHash: newInputHash } = await buildClassifierContext({
+        tenantId: TENANT,
+        caseId
+      });
+
+      const stale = isClassificationStale({
+        storedRecordHash: initial.evidenceRecord.recordHash,
+        storedOutcome: {
+          scenarioId: initial.evidenceRecord.scenarioId,
+          safeHoldCode: initial.evidenceRecord.safeHoldCode,
+          reasonCode: initial.evidenceRecord.reasonCode
+        },
+        currentRecordHash: newRecordHash,
+        currentOutcome: newOutcome
+      });
+
+      expect(stale).toBe(true);
+      expect(newInputHash).not.toBe(initial.inputHash);
+      expect(newRecordHash).not.toBe(initial.evidenceRecord.recordHash);
+    });
+
+    it("(c) non-material write (touch updatedAt, bump poll counter) -> not stale and dispatch staleness gate passes", async () => {
+      const caseId = "CASE-MON-NON-MATERIAL";
+      const paymentId = "pay_mon_non_material";
+      const orderId = "ord_mon_non_material";
+
+      await PaymentCase.create({
+        caseId,
+        tenantId: TENANT,
+        status: "OPEN",
+        discrepancyCategory: "STATUS_MISMATCH",
+        gatewayPaymentId: paymentId,
+        merchantOrderId: orderId
+      });
+
+      await GatewayPayment.create({
+        gatewayPaymentId: paymentId,
+        tenantId: TENANT,
+        amountPaise: 10000,
+        currency: "INR",
+        status: "CAPTURED",
+        method: "UPI",
+        createdAt: new Date(baseTime),
+        updatedAt: new Date(baseTime)
+      });
+
+      await MerchantOrder.create({
+        merchantOrderId: orderId,
+        tenantId: TENANT,
+        amountPaise: 10000,
+        currency: "INR",
+        status: "CREATED",
+        createdAt: new Date(baseTime),
+        updatedAt: new Date(baseTime)
+      });
+
+      setClassifierClock(() => baseTime);
+      const initial = await classifyCase({ tenantId: TENANT, caseId, actor });
+
+      // Non-material writes:
+      // 1. Touch updatedAt on GatewayPayment
+      await GatewayPayment.updateOne(
+        { gatewayPaymentId: paymentId },
+        { $set: { updatedAt: new Date(baseTime + 120000) } }
+      );
+
+      // 2. Touch updatedAt on PaymentCase
+      await PaymentCase.updateOne(
+        { caseId },
+        { $set: { updatedAt: new Date(baseTime + 120000) } }
+      );
+
+      // 3. Create a monitoring task with poll attempts
+      await PaymentMonitoringTask.create({
+        taskId: "task_bump_poll_01",
+        tenantId: TENANT,
+        gatewayPaymentId: paymentId,
+        caseId,
+        status: "IN_PROGRESS",
+        attemptCount: 3,
+        maxAttempts: 4
+      });
+
+      // Verify classification is NOT stale
+      const { recordHash: currentRecordHash, inputHash: currentInputHash } = await buildClassifierContext({
+        tenantId: TENANT,
+        caseId
+      });
+      expect(currentRecordHash).toBe(initial.evidenceRecord.recordHash);
+      expect(currentInputHash).toBe(initial.inputHash);
+
+      // Attempt dispatch: staleness check must pass because material state is unchanged
+      try {
+        await dispatchSandboxAction({
+          tenantId: TENANT,
+          caseId,
+          actorId: actor.userId,
+          actorRole: ROLES.ADMIN,
+          actionType: "REQUEST_REFUND",
+          idempotencyKey: "idem_non_material_dispatch",
+          amountPaise: 5000,
+          customFetch: mockCustomFetch
+        });
+        expect.fail("Expected dispatch to reach sandbox write gate");
+      } catch (err) {
+        expect(err.code).not.toBe("CLASSIFICATION_STALE");
+        expect(err.code).toBe("SANDBOX_GATE_CLOSED");
+      }
+    });
   });
 });

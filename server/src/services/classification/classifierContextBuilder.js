@@ -54,9 +54,11 @@ export function canonicalizeContext(val) {
 }
 
 /**
- * Computes deterministic recordHash over stable database record identifiers,
- * versions / updatedAt timestamps, statuses, and amounts.
- * NEVER incorporates clock-derived or mutable counter values.
+ * Computes deterministic recordHash over material business state only.
+ * Incorporates strictly: document IDs, statuses, amounts in paise, currency,
+ * refund/settlement/dispute/capture states, and linked IDs.
+ * Strictly EXCLUDES: updatedAt, createdAt, __v, poll counters, lease counters,
+ * and any other mutable counter or non-material metadata that changes without a business-state change.
  */
 export function computeClassifierRecordHash({
   paymentCase,
@@ -65,7 +67,6 @@ export function computeClassifierRecordHash({
   duplicatePayments = [],
   refundRecords = [],
   settlementRecords = [],
-  lifecycleEvents = [],
   customerClaims = [],
   inertClaims = []
 }) {
@@ -76,52 +77,49 @@ export function computeClassifierRecordHash({
       gatewayPaymentId: paymentCase.gatewayPaymentId || null,
       merchantOrderId: paymentCase.merchantOrderId || null,
       resolutionCaseStatus: paymentCase.resolutionCaseStatus,
+      captureStatus: paymentCase.captureStatus || null,
+      authorizationStatus: paymentCase.authorizationStatus || null,
+      refundStatus: paymentCase.refundStatus || null,
       disputeStatus: paymentCase.disputeStatus || null,
       customerDebitStatus: paymentCase.customerDebitStatus || null,
-      safeHoldReason: paymentCase.safeHoldReason || null,
-      updatedAt: paymentCase.updatedAt ? new Date(paymentCase.updatedAt).toISOString() : null
+      safeHoldReason: paymentCase.safeHoldReason || null
     } : null,
     gatewayPayment: gatewayPayment ? {
       gatewayPaymentId: gatewayPayment.gatewayPaymentId,
       merchantOrderId: gatewayPayment.merchantOrderId || null,
       status: gatewayPayment.status,
       amountPaise: gatewayPayment.amountPaise,
+      currency: (gatewayPayment.currency || "INR").toUpperCase(),
       amountAuthorizedPaise: gatewayPayment.amountAuthorizedPaise ?? null,
       amountCapturedPaise: gatewayPayment.amountCapturedPaise ?? null,
       amountRefundedPaise: gatewayPayment.amountRefundedPaise || gatewayPayment.refundAmountPaise || 0,
       refundStatus: gatewayPayment.refundStatus || null,
-      dispute: Boolean(gatewayPayment.dispute),
-      updatedAt: gatewayPayment.updatedAt ? new Date(gatewayPayment.updatedAt).toISOString() : null
+      dispute: Boolean(gatewayPayment.dispute)
     } : null,
     merchantOrder: merchantOrder ? {
       merchantOrderId: merchantOrder.merchantOrderId,
       orderStatus: merchantOrder.orderStatus || merchantOrder.status,
       amountPaise: merchantOrder.amountPaise,
-      updatedAt: merchantOrder.updatedAt ? new Date(merchantOrder.updatedAt).toISOString() : null
+      currency: (merchantOrder.currency || "INR").toUpperCase()
     } : null,
     duplicatePayments: (duplicatePayments || []).map((p) => ({
       gatewayPaymentId: p.gatewayPaymentId,
       status: p.status,
       amountPaise: p.amountPaise,
-      updatedAt: p.updatedAt ? new Date(p.updatedAt).toISOString() : null
+      currency: (p.currency || "INR").toUpperCase()
     })).sort((a, b) => String(a.gatewayPaymentId).localeCompare(String(b.gatewayPaymentId))),
     refundRecords: (refundRecords || []).map((r) => ({
       operationId: r.operationId,
       status: r.operationStatus || r.status,
       amountPaise: r.amountPaise,
-      updatedAt: r.updatedAt ? new Date(r.updatedAt).toISOString() : null
+      currency: (r.currency || "INR").toUpperCase()
     })).sort((a, b) => String(a.operationId).localeCompare(String(b.operationId))),
     settlementRecords: (settlementRecords || []).map((s) => ({
       settlementId: s.settlementId,
       status: s.status,
       amountPaise: s.amountPaise,
-      updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null
+      currency: (s.currency || "INR").toUpperCase()
     })).sort((a, b) => String(a.settlementId).localeCompare(String(b.settlementId))),
-    lifecycleEvents: (lifecycleEvents || []).map((e) => ({
-      eventId: e.eventId,
-      normalizedEventType: e.normalizedEventType,
-      sourceSystem: e.sourceSystem
-    })).sort((a, b) => String(a.eventId).localeCompare(String(b.eventId))),
     customerClaims: (customerClaims || []).map((c) => ({
       claimType: c.claimType,
       statement: c.statement
@@ -478,7 +476,6 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     duplicatePayments,
     refundRecords,
     settlementRecords,
-    lifecycleEvents,
     customerClaims,
     inertClaims
   });

@@ -141,3 +141,62 @@ A rigorous security analysis of frontend evidence provenance established that:
 | 9 | Frontend production build (`npm run build`) | Built in 7.68s with zero errors | **PASS** |
 | 10 | `git diff --check` | Clean diff, zero trailing whitespace/conflict markers | **PASS** |
 | 11 | 120-scenario reconciliation benchmark | 120/120 classifications match (100.00% match rate) | **PASS** |
+
+---
+
+## 6. Strict Production Reachability Audit (Per-Case Table)
+
+Below is the per-case reachability analysis generated directly from `evidence/stage5_6/05-strict-reachability.json`.
+
+| Case | Scenario ID | Category | Decisive Doc Line | Production Writer (file:line) | One-Line Reachability Reason |
+|---|---|---|---|---|---|
+| 1 | `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:16` | `NONE` | Requires authenticated client telemetry beacon endpoint with server-verified signature (not yet implemented). |
+| 2 | `CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:32` | `NONE` | Requires customer portal claim intake route (out of scope for Stage 5). |
+| 3 | `CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:48` | `NONE` | Requires customer portal claim intake route for debit claims on failed payments. |
+| 4 | `CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:64` | `NONE` | Requires late-auth timeout correlation worker; reserved in classifier and policy domain models. |
+| 5 | `CASE_5_CAPTURED_PAYMENT_DELAYED_SETTLEMENT` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:80` | `server/src/services/webhook/webhookService.js:1165 (status: CAPTURED)` | Standard webhook ingestion writes CAPTURED; absence of settlements is initial ingestion state within 72h window. |
+| 6 | `CASE_6_PAID_GATEWAY_UNPAID_ORDER` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:96` | `server/src/services/webhook/webhookService.js:1165 (Payment) & server/src/services/reconciliation/normalizationService.js:70 (Order)` | Webhook writes payment capture while order remains in created/pending state in merchant ledger. |
+| 7 | `CASE_7_DUPLICATE_PAYMENT_ATTEMPTS` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:112` | `server/src/services/webhook/webhookService.js:1145` | Webhook service ingests distinct payment attempts for the same merchant order ID. |
+| 8 | `CASE_8_PARTIAL_CAPTURE` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:145` | `NONE (Defined in schema server/src/models/GatewayPayment.js:107,118; zero production writers in server/src)` | Schema fields added in Part B enable test seeding, but standard Razorpay webhook ingestion has zero production writers for split capture. |
+| 9 | `CASE_9_PARTIAL_PAYMENT` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:161` | `NONE` | Installment agreement tracking model reserved for future stage. |
+| 10 | `CASE_10_PARTIAL_REFUND` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:177` | `NONE in webhook ingestion (legacy CSV import server/src/services/reconciliation/normalizationService.js:94; sandbox dispatch server/src/services/policy/providerDispatchService.js:667)` | No production webhook populates partial refund amount on GatewayPayment; seedable in database. |
+| 11 | `CASE_11_FULL_REFUND_INITIATED_NOT_COMPLETED` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:193` | `NONE in webhook ingestion (sandbox dispatch server/src/services/policy/providerDispatchService.js:667)` | Refund initiation performed only through sandbox dispatch; no production webhook sets in-flight pending refund state without manual seed. |
+| 12 | `CASE_12_FAILED_REFUND` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:209` | `NONE in webhook ingestion (sandbox dispatch error handler server/src/services/policy/providerDispatchService.js:770)` | Webhook handler does not update GatewayPayment refundStatus to uppercase 'FAILED' matching classifier check; seedable in database. |
+| 13 | `CASE_13_STALE_EVENT_AFTER_REFUND` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:225` | `server/src/services/webhook/webhookService.js:235 & server/src/services/webhook/webhookService.js:994` | Terminal state idempotency and stale event rejection are enforced at ingestion time by webhook service. |
+| 14 | `CASE_14_DUPLICATE_WEBHOOK_DELIVERY` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:241` | `server/src/services/webhook/webhookService.js:210` | Enforced at ingestion time via unique deduplicationKey index; returns HTTP 200 DUPLICATE_ACKNOWLEDGED. |
+| 15 | `CASE_15_FORGED_WEBHOOK` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:257` | `server/src/services/webhook/webhookService.js:193` | Enforced at network boundary; invalid HMAC signature triggers immediate HTTP 401 rejection before DB write. |
+| 16 | `CASE_16_OUT_OF_ORDER_WEBHOOK` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:273` | `server/src/services/webhook/webhookService.js:1022,1047` | Monotonic state machine drops out-of-order and lower-rank events at ingestion boundary. |
+| 17 | `CASE_17_LOST_WEBHOOK` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:289` | `server/src/services/razorpay/razorpayClient.js:180 (API poll status ingestion)` | Background poller queries Razorpay API directly, creating payment record without corresponding webhook event. |
+| 18 | `CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:305` | `NONE` | Requires cross-provider settlement audit interface; reserved in domain matrix. |
+| 19 | `CASE_19_AMOUNT_OR_CURRENCY_MISMATCH` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:321` | `server/src/services/webhook/webhookService.js:1165 (Payment) & server/src/services/reconciliation/normalizationService.js:70 (Order)` | Webhook records actual payment currency/amount; order normalization records merchant requested currency/amount. |
+| 20 | `CASE_20_DUPLICATE_SETTLEMENT_RECORD` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:337` | `server/src/services/reconciliation/normalizationService.js:125` | Settlement file importer ingests bank settlement batches containing duplicate UTR reference numbers. |
+| 21 | `CASE_21_MISSING_SETTLEMENT_RECORD` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:353` | `server/src/services/webhook/webhookService.js:1165` | Webhook writes CAPTURED; absence of settlement beyond 120 hours (T+5 days) is derived from payment timestamp drift. |
+| 22 | `CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:369` | `server/src/services/webhook/webhookService.js:1165 (Payment) & server/src/services/reconciliation/normalizationService.js:70 (Order)` | Webhook captures payment after order is cancelled in merchant system; triggers Safeguard 6 safe-hold. |
+| 23 | `CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:385` | `NONE` | Multi-candidate ambiguity resolver reserved for AI investigator phase. |
+| 24 | `CASE_24_PROVIDER_UNAVAILABLE_RATE_LIMITED` | **NO_SOURCE** | `EDGE_CASE_POLICY_MATRIX.md:401` | `NONE` | Runtime transient network fault; not persisted in database collections. |
+| 25 | `CASE_25_DATABASE_OUTAGE_DURING_ACTION` | **NO_SOURCE** | `EDGE_CASE_POLICY_MATRIX.md:417` | `NONE` | Infrastructure connectivity fault; not stored as a domain database record. |
+| 26 | `CASE_26_WORKER_CRASH_ACTION_PENDING` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:433` | `NONE (Defined in schema server/src/models/PaymentCase.js:105; zero background worker lease writers in server/src)` | Schema supports lease expiration, but no background worker actively claims/renews action leases in server/src. |
+| 27 | `CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:449` | `NONE` | Concurrent case locking protocol reserved for Stage 6 multi-operator workspace. |
+| 28 | `CASE_28_CROSS_TENANT_ACCESS_ATTEMPT` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:465` | `server/src/middleware/authMiddleware.js:230` | Enforced at API gateway boundary by auth middleware; returns HTTP 403 before ledger operations. |
+| 29 | `CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:481` | `NONE` | Requires customer fraud report submission route (out of scope for Stage 5). |
+| 30 | `CASE_30_CHARGEBACK_OR_FORMAL_DISPUTE` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:497` | `NONE` | Razorpay dispute webhook ingestion pipeline not yet implemented; representable only via seed. |
+
+### Production Inactive Cases: Cases 18 & 23
+
+Cases 18 and 23 (conflicting and ambiguous records) have no production source and therefore never fire today:
+- **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Represents contradictory status or amount across multiple gateway records for the same transaction. In the current production pipeline, incoming webhook deliveries and polling jobs enforce single-record upsert semantics. No production component writes or persists conflicting duplicate gateway payment documents, so Case 18 never fires in production.
+- **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Represents ambiguous partial matching across order references where multiple candidate orders match payment details. In current production normalization, order references are mapped 1-to-1 via strict `merchantOrderId` index lookups without heuristic fuzzy or partial candidate matching. Hence, Case 23 has no production source and never fires today.
+
+### Six Reserved Cases and Reasons
+
+- **Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`):** Requires authenticated client telemetry beacon endpoint with server-verified signature (not yet implemented). (Doc line: `EDGE_CASE_POLICY_MATRIX.md:16`).
+- **Case 4 (`CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT`):** Requires late-auth timeout correlation worker; reserved in classifier and policy domain models. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:64`).
+- **Case 9 (`CASE_9_PARTIAL_PAYMENT`):** Installment agreement tracking model reserved for future stage. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:161`).
+- **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Requires cross-provider settlement audit interface; reserved in domain matrix. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:305`).
+- **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Multi-candidate ambiguity resolver reserved for AI investigator phase. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:385`).
+- **Case 27 (`CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS`):** Concurrent case locking protocol reserved for Stage 6 multi-operator workspace. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:449`).
+
+### Owner Decision: Precedence Reordering Impact on Merged Inputs
+
+> [!IMPORTANT]
+> **OWNER DECISION:** Stage 5B reorder changed 52 outcomes on merged inputs, all from not-held to held; classifications persisted before ac18699 for such inputs may differ. The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.

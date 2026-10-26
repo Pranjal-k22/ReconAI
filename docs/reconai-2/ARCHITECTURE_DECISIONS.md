@@ -292,6 +292,10 @@ In prior stages, the edge-case classification engine accepted an arbitrary in-me
    - Downstream consumers (`multiAgentInvestigator`, `dryRunSimulatorService`) obtain classification via `classifyCase` or verify `inputHash === currentBuilderHash`. If hashes diverge, evaluation yields `INSUFFICIENT_EVIDENCE`.
    - `PolicyDecision` stores `classificationRecordId` and `classificationInputHash`.
    - `providerDispatchService` recomputes the current builder hash and refuses dispatch with HTTP 409 `CLASSIFICATION_STALE` if the hash has changed since the policy decision was made.
+   - **Renewal of Stale Policy Decisions:** When a classification goes stale (underlying material records mutated or an aging threshold crossed):
+     1. An authenticated operator with role `ADMIN` calls `POST /api/payment-cases/:caseId/classify` (with an empty body `{}`). This reads the authoritative datastores, computes the new `recordHash` and `outcome`, generates a fresh `EvidenceRecord`, and commits an audit log.
+     2. An `ADMIN` re-evaluates the policy decision against the new `EvidenceRecord`, updating `PolicyDecision.classificationRecordId` and `PolicyDecision.classificationInputHash`.
+     3. Subsequent dispatch via `providerDispatchService.dispatchSandboxAction` checks `policyDecision.classificationInputHash === currentBuilderHash`. With both hashes aligned to current material database state, the staleness gate passes.
 6. **Code-Derived Precedence (Safe-Hold Priority):**
    - 41 deterministic rules are structured into 6 evaluation tiers.
    - Any rule triggering a safe hold strictly outranks non-safe-hold rules within and across tiers. Specifically, Case 21 (`MISSING_SETTLEMENT`, safe-hold) takes priority over Case 6 (`STATUS_MISMATCH`, non-safe-hold) when settlement records are absent after the aging threshold.
@@ -310,3 +314,7 @@ In prior stages, the edge-case classification engine accepted an arbitrary in-me
      - **RESERVED (6):** Cases 1, 4, 9, 18, 23, 27.
      - **NO_SOURCE (2):** Cases 24, 25 (transient infrastructure faults not stored in DB records).
    - "Reachable" claims in production count strictly only **PROVEN_END_TO_END (8)**.
+
+8. **Owner Decision on Precedence Reordering Impact (52 Merged Input Pairs):**
+   - **OWNER DECISION:** Stage 5B reorder changed 52 outcomes on merged inputs, all from not-held to held; classifications persisted before ac18699 for such inputs may differ.
+   - The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.

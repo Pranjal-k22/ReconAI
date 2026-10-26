@@ -148,8 +148,16 @@ describe("Classifier Precedence Invariant Suite", () => {
     context: { workerCrash: true, leaseExpirations: 1, tenantId: TENANT }
   };
 
-  it("extracts 40 rules with explicit held/not-held/can-return-both annotations", () => {
+  it("extracts 40 rules with explicit held/not-held/can-return-both annotations matching Function#toString return branches", () => {
+    // Derive rule count independently via Function#toString without using comment regex
+    const fnStr = classifyPaymentScenario.toString();
+    const returnBranches = (fnStr.match(/return\s*\{[\s\S]*?safeHold\s*:/g) || [])
+      .filter(block => !block.includes("UNKNOWN_SCENARIO"));
+
+    // Precedence test fails if extracted rules differs from number of rule-returning branches
+    expect(rules.length).toBe(returnBranches.length);
     expect(rules.length).toBe(40);
+
     const conditionalRules = rules.filter(r => r.isConditional);
     expect(conditionalRules.length).toBe(18); // 9 cases * 2 branches each
     for (const cr of conditionalRules) {
@@ -194,5 +202,15 @@ describe("Classifier Precedence Invariant Suite", () => {
     expect(pairsGenerated).toBe(191);
     expect(pairsMerged).toBe(155);
     expect(unmergeable.length).toBe(36);
+
+    // Stable contradiction list assertions for all 36 unmergeable pairs
+    const contradictionReasons = unmergeable.map(u => ({
+      pair: `${u.ruleA} vs ${u.ruleB}`,
+      reason: u.reason
+    }));
+    expect(contradictionReasons).toHaveLength(36);
+    for (const item of contradictionReasons) {
+      expect(item.reason).toMatch(/contradiction/i);
+    }
   });
 });
