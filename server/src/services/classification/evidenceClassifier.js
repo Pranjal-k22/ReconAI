@@ -234,7 +234,104 @@ export function classifyPaymentScenario({
   }
 
   // =========================================================================
-  // 1. SECURITY & BOUNDARY RULES
+  // TIER-BASED PRECEDENCE ENGINE (B4 Governed Precedence Architecture)
+  //
+  // Strict Safety Precedence Invariant:
+  // When multiple predicates match, ANY rule that enforces a safe hold MUST
+  // strictly outrank any rule that does not hold.
+  //
+  // Tier 1: Absolute Security & Boundary Safe-Holds (Case 28, Case 15)
+  // Tier 2: Legal, Formal Dispute & Fraud Safe-Holds (Case 30, Case 29)
+  // Tier 3: Core Financial Integrity Safe-Holds (Case 22, Case 18, Case 19, Case 8, Case 12, Case 23, Case 21)
+  // Tier 4: Conditional Operational Safe-Holds (Case 25, Case 26, Case 24, Case 11, Case 7, Case 9, Case 10, Case 2, Case 3)
+  // Tier 5: Operational Non-Safe-Hold Resolutions (Case 27, Case 14, Case 13, Case 16, Case 25, Case 26, Case 24, Case 11, Case 10, Case 7, Case 9, Case 4, Case 2, Case 3, Case 17, Case 20, Case 1, Case 6, Case 5)
+  // Tier 6: Uncertainty Fallback Safe-Hold (UNKNOWN_SCENARIO)
+  // =========================================================================
+
+  const isCaptured = gatewayPayment?.status === "CAPTURED";
+  const isOrderCancelled = merchantOrder?.status === "CANCELLED";
+  const isOrderPending =
+    !merchantOrder ||
+    merchantOrder.status === "PENDING" ||
+    merchantOrder.status === "CREATED" ||
+    merchantOrder.status === "ORDER_PENDING";
+  const amountCaptured = gatewayPayment?.amountCapturedPaise ?? gatewayPayment?.amountPaise ?? null;
+  const amountAuthorized = gatewayPayment?.amountAuthorizedPaise ?? null;
+  const amountRefunded = gatewayPayment?.amountRefundedPaise || gatewayPayment?.refundAmountPaise || 0;
+  const elapsedHours = context.elapsedHoursSincePayment || 0;
+  const paymentOrderId = gatewayPayment?.merchantOrderId || gatewayPayment?.notes?.merchantOrderId || null;
+  const directOrderId = merchantOrder?.merchantOrderId || null;
+
+  const hasDispute =
+    context.incomingEvent?.eventType === "dispute.created" ||
+    gatewayPayment?.dispute ||
+    paymentCase?.disputeStatus === "DISPUTE_FORMAL_CHARGEBACK" ||
+    context.formalDispute === true;
+
+  const hasFraudClaim =
+    customerClaims.some((c) => FRAUD_KEYWORDS_REGEX.test(c.text || "") || c.claimType === "FRAUD_CLAIM" || c.fraudAllegation === true) ||
+    context.fraudAllegation === true ||
+    (context.riskScore && context.riskScore > 85);
+
+  const isProviderThrottled =
+    context.providerError?.status === 429 ||
+    (context.providerError?.status >= 500 && context.providerError?.status < 600) ||
+    context.providerError?.code === "RATE_LIMITED" ||
+    context.providerError?.code === "GATEWAY_TIMEOUT";
+
+  const isLeaseExpired =
+    paymentCase?.resolutionCaseStatus === "CASE_ACTION_IN_PROGRESS" &&
+    paymentCase?.actionLeaseExpiresAt &&
+    new Date(paymentCase.actionLeaseExpiresAt) < new Date();
+
+  const renewalCount = paymentCase?.metadata?.leaseRenewalCount || context.leaseRenewalCount || 0;
+
+  const isRefundPending =
+    gatewayPayment?.refundStatus === "PENDING" ||
+    paymentCase?.refundStatus === "REFUND_PENDING" ||
+    context.refundPending === true;
+
+  const isFailedRefund =
+    gatewayPayment?.refundStatus === "FAILED" ||
+    context.incomingEvent?.eventType === "refund.failed" ||
+    context.refundStatus === "failed" ||
+    context.refundFailed === true;
+
+  const isDuplicatePaymentAttempt =
+    context.duplicatePaymentAttempts === true ||
+    (context.capturedPayments && context.capturedPayments.length > 1);
+
+  const isPartialPayment =
+    gatewayPayment &&
+    merchantOrder &&
+    typeof gatewayPayment.amountPaise === "number" &&
+    typeof merchantOrder.amountPaise === "number" &&
+    gatewayPayment.amountPaise < merchantOrder.amountPaise &&
+    context.isInstallment !== false &&
+    !context.amountMismatch;
+
+  const isGatewayPending =
+    !gatewayPayment ||
+    gatewayPayment.status === "PENDING" ||
+    gatewayPayment.status === "CREATED" ||
+    gatewayPayment.status === "UNKNOWN";
+
+  const isGatewayFailed = gatewayPayment?.status === "FAILED";
+
+  const isTerminalState =
+    paymentCase?.refundStatus === "REFUND_CONFIRMED" ||
+    gatewayPayment?.status === "REFUNDED" ||
+    (gatewayPayment?.status === "CAPTURED" && context.incomingEvent?.eventType === "payment.authorized");
+
+  const isLateAuth =
+    gatewayPayment?.status === "AUTHORIZED" &&
+    (context.isLateAuthorization === true || context.incomingEvent?.eventType === "payment.authorized");
+
+  const isApiPoll = context.pollResult === true || context.source === "GATEWAY_API_POLL";
+  const zeroWebhooks = lifecycleEvents.filter((e) => e.sourceSystem === "GATEWAY_WEBHOOK").length === 0;
+
+  // =========================================================================
+  // TIER 1: ABSOLUTE SECURITY & BOUNDARY SAFE-HOLDS
   // =========================================================================
 
   // Case 28: Cross-Tenant Access Attempt
@@ -308,140 +405,11 @@ export function classifyPaymentScenario({
     };
   }
 
-  // Case 27: Concurrent Resolution Attempts
-  if (context.concurrentAttempt?.lockConflict === true || context.lockConflict === true) {
-    contradictions.push("Concurrency lock collision: case is currently locked by another worker lease.");
-    return {
-      scenarioId: "CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS",
-      category: "CONCURRENT_ATTEMPT",
-      reasonCode: "CONCURRENT_MUTATION_RACE",
-      ruleId: "RULE_CASE_27_CONCURRENT_MUTATION",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions,
-      missingEvidence: [],
-      safeHold: false,
-      safeHoldCode: "NONE",
-      safeHoldReason: null,
-      recommendation: "LOCK_ACQUISITION_REJECT",
-      suggestedNextStep: "ADVISORY_REJECT_CONCURRENT_MUTATION",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: "Concurrent mutation attempt detected on active lease. Secondary attempt safely rejected without state mutation.",
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 25: Database Outage During Action
-  if (context.databaseError?.connectionDropped === true || context.databaseOutage === true) {
-    contradictions.push("Database connection interrupted during operation.");
-    const unresolvable = Boolean(context.unresolvableOnReconnect);
-    return {
-      scenarioId: "CASE_25_DATABASE_OUTAGE_DURING_ACTION",
-      category: "DATABASE_OUTAGE_RECOVERY",
-      reasonCode: "DATABASE_OUTAGE_RECOVERY",
-      ruleId: "RULE_CASE_25_DATABASE_OUTAGE",
-      confidence: 0.9,
-      facts,
-      claims,
-      contradictions,
-      missingEvidence: ["Database connectivity confirmation"],
-      safeHold: unresolvable,
-      safeHoldCode: unresolvable ? "DATABASE_OUTAGE_RECOVERY" : "NONE",
-      safeHoldReason: unresolvable ? "Database outage recovery failed to reconcile provider state." : null,
-      recommendation: "DATABASE_LEASE_RECOVERY",
-      suggestedNextStep: "ADVISORY_RECOVER_DATABASE_LEASE",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: "Database network failure encountered during processing. In-flight action lease preserves state until safe reconnect query.",
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 26: Worker Crash While Action Is Pending
-  const isLeaseExpired =
-    paymentCase?.resolutionCaseStatus === "CASE_ACTION_IN_PROGRESS" &&
-    paymentCase?.actionLeaseExpiresAt &&
-    new Date(paymentCase.actionLeaseExpiresAt) < new Date();
-
-  if (isLeaseExpired || context.workerCrashedLeaseExpired === true) {
-    const renewalCount = (paymentCase?.metadata?.leaseRenewalCount || context.leaseRenewalCount || 0);
-    const excessiveExpirations = renewalCount >= 3;
-    contradictions.push("Worker action lease expired without state finalization.");
-    return {
-      scenarioId: "CASE_26_WORKER_CRASH_ACTION_PENDING",
-      category: "WORKER_LEASE_EXPIRED",
-      reasonCode: "EXPIRED_LEASE_RECOVERY",
-      ruleId: "RULE_CASE_26_EXPIRED_LEASE",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions,
-      missingEvidence: ["Worker completion heartbeat"],
-      safeHold: excessiveExpirations,
-      safeHoldCode: excessiveExpirations ? "WORKER_LEASE_EXPIRED" : "NONE",
-      safeHoldReason: excessiveExpirations ? "Action lease expired more than 3 times." : null,
-      recommendation: "EXPIRED_LEASE_RECLAIM",
-      suggestedNextStep: "ADVISORY_RECLAIM_EXPIRED_LEASE",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: "Action lease expired while case in progress. Reclaimed by recovery scheduler to query provider idempotency key.",
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 24: Provider Unavailable or Rate-Limited
-  const isProviderThrottled =
-    context.providerError?.status === 429 ||
-    (context.providerError?.status >= 500 && context.providerError?.status < 600) ||
-    context.providerError?.code === "RATE_LIMITED" ||
-    context.providerError?.code === "GATEWAY_TIMEOUT";
-
-  if (isProviderThrottled) {
-    const attempts = context.providerError?.attempts || 1;
-    const maxRetriesExceeded = attempts >= 5;
-    return {
-      scenarioId: "CASE_24_PROVIDER_UNAVAILABLE_RATE_LIMITED",
-      category: "PROVIDER_UNAVAILABLE",
-      reasonCode: "PROVIDER_THROTTLED_OR_UNAVAILABLE",
-      ruleId: "RULE_CASE_24_PROVIDER_UNAVAILABLE",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions: ["Provider returned HTTP 429 / 5xx error."],
-      missingEvidence: ["Provider endpoint availability"],
-      safeHold: maxRetriesExceeded,
-      safeHoldCode: maxRetriesExceeded ? "PROVIDER_ERROR" : "NONE",
-      safeHoldReason: maxRetriesExceeded ? "Provider API unavailable after 5 retries." : null,
-      recommendation: "EXPONENTIAL_BACKOFF_RETRY",
-      suggestedNextStep: "ADVISORY_EXPONENTIAL_BACKOFF_RETRY",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: `Provider API returned throttled or unavailable response (HTTP ${context.providerError?.status || "error"}). Retrying with jittered exponential backoff.`,
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
   // =========================================================================
-  // 2. FORMAL DISPUTES & FRAUD ALLEGATIONS
+  // TIER 2: LEGAL, FORMAL DISPUTE & FRAUD SAFE-HOLDS
   // =========================================================================
 
   // Case 30: Chargeback or Formal Dispute
-  const hasDispute =
-    context.incomingEvent?.eventType === "dispute.created" ||
-    gatewayPayment?.dispute ||
-    paymentCase?.disputeStatus === "DISPUTE_FORMAL_CHARGEBACK" ||
-    context.formalDispute === true;
-
   if (hasDispute) {
     return {
       scenarioId: "CASE_30_CHARGEBACK_OR_FORMAL_DISPUTE",
@@ -453,16 +421,16 @@ export function classifyPaymentScenario({
         ...facts,
         {
           dimension: "DISPUTE",
-          value: "DISPUTE_FORMAL_CHARGEBACK",
-          source: "GATEWAY_WEBHOOK",
-          authority: "PROVIDER_VERIFIED",
+          value: "DISPUTE_INITIATED",
+          source: "GATEWAY_DISPUTE_NOTIFICATION",
+          authority: "BANK_STATEMENT",
           verifiedAt: new Date(),
-          evidenceRef: gatewayPayment?.gatewayPaymentId || "DISPUTE_REF"
+          evidenceRef: gatewayPayment?.dispute?.id || "DISPUTE_NOTICE"
         }
       ],
       claims,
-      contradictions: ["Formal dispute opened by issuing bank."],
-      missingEvidence: ["Merchant proof of fulfillment"],
+      contradictions: ["Payment is under formal chargeback dispute from acquiring bank."],
+      missingEvidence: ["Bank dispute documentation package"],
       safeHold: true,
       safeHoldCode: "FORMAL_DISPUTE",
       safeHoldReason: "Formal chargeback opened with payment network. Automated refund prohibited.",
@@ -478,11 +446,6 @@ export function classifyPaymentScenario({
   }
 
   // Case 29: Fraud Allegation or Unauthorized Payment Claim
-  const hasFraudClaim =
-    customerClaims.some((c) => FRAUD_KEYWORDS_REGEX.test(c.text || "") || c.claimType === "FRAUD_CLAIM" || c.fraudAllegation === true) ||
-    context.fraudAllegation === true ||
-    (context.riskScore && context.riskScore > 85);
-
   if (hasFraudClaim) {
     return {
       scenarioId: "CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT",
@@ -509,8 +472,540 @@ export function classifyPaymentScenario({
   }
 
   // =========================================================================
-  // 3. EVENT REPLAY, DEDUPLICATION, STALE & OUT-OF-ORDER CHECKS
+  // TIER 3: CORE FINANCIAL INTEGRITY SAFE-HOLDS
   // =========================================================================
+
+  // Case 22: Payment Captured But Order Cancelled (Safeguard 6)
+  if (isCaptured && isOrderCancelled && !isFailedRefund && !isRefundPending) {
+    return {
+      scenarioId: "CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED",
+      category: "CANCELLED_ORDER_CAPTURED",
+      reasonCode: "CANCELLED_ORDER_CAPTURED",
+      ruleId: "RULE_CASE_22_CANCELLED_ORDER_CAPTURED",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Payment is CAPTURED but merchant order is CANCELLED."],
+      missingEvidence: [],
+      safeHold: true,
+      safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER",
+      safeHoldReason: "Late capture received for cancelled order. Order cancellation preserved.",
+      recommendation: "SAFE_HOLD_PRESERVE_CANCELLATION",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_PRESERVE_CANCELLATION",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Capture arrived on cancelled merchant order. Per ReconAI Safeguard 6: Order cancellation preserved under safe hold; no automatic refund or reopen.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 18: Conflicting Provider and Merchant Records
+  if (
+    paymentOrderId &&
+    directOrderId &&
+    paymentOrderId !== directOrderId &&
+    context.conflictingRecords !== false
+  ) {
+    contradictions.push(`Gateway payment references order ${paymentOrderId}, but merchant order is ${directOrderId}.`);
+    return {
+      scenarioId: "CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS",
+      category: "CONFLICTING_PROVIDER_MERCHANT_RECORDS",
+      reasonCode: "CONFLICTING_PROVIDER_MERCHANT_RECORDS",
+      ruleId: "RULE_CASE_18_CONFLICTING_RECORDS",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: ["Intended order cross-reference authority"],
+      safeHold: true,
+      safeHoldCode: "CONFLICTING_RECORDS",
+      safeHoldReason: "Conflicting order identifiers between gateway payment and merchant order.",
+      recommendation: "IMMEDIATE_SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Cross-record conflict detected: provider notes point to a different order than merchant ledger. Placed in immediate safe hold.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 19: Amount or Currency Mismatch (Currency mismatch)
+  if (
+    gatewayPayment &&
+    merchantOrder &&
+    gatewayPayment.currency &&
+    merchantOrder.currency &&
+    gatewayPayment.currency !== merchantOrder.currency
+  ) {
+    contradictions.push(`Currency mismatch: Payment is in ${gatewayPayment.currency}, Order is in ${merchantOrder.currency}.`);
+    return {
+      scenarioId: "CASE_19_AMOUNT_OR_CURRENCY_MISMATCH",
+      category: "AMOUNT_CURRENCY_MISMATCH",
+      reasonCode: "AMOUNT_CURRENCY_MISMATCH",
+      ruleId: "RULE_CASE_19_AMOUNT_CURRENCY_MISMATCH",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: [],
+      safeHold: true,
+      safeHoldCode: "AMOUNT_CURRENCY_MISMATCH",
+      safeHoldReason: "Currency code mismatch between order and payment.",
+      recommendation: "IMMEDIATE_SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Payment currency (${gatewayPayment.currency}) does not match order currency (${merchantOrder.currency}). Automation locked into safe hold.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 8: Partial Capture
+  if (
+    gatewayPayment?.status === "PARTIALLY_CAPTURED" ||
+    (amountAuthorized && amountCaptured && amountCaptured < amountAuthorized) ||
+    context.partialCapture === true
+  ) {
+    return {
+      scenarioId: "CASE_8_PARTIAL_CAPTURE",
+      category: "PARTIAL_CAPTURE",
+      reasonCode: "PARTIAL_CAPTURE",
+      ruleId: "RULE_CASE_8_PARTIAL_CAPTURE",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Amount captured is less than authorized amount."],
+      missingEvidence: ["Merchant partial fulfillment terms"],
+      safeHold: true,
+      safeHoldCode: "PARTIAL_CAPTURE",
+      safeHoldReason: "Partial capture detected without approved merchant policy.",
+      recommendation: "IMMEDIATE_SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Gateway amount captured (${amountCaptured} paise) is less than authorized (${amountAuthorized} paise). Safe hold applied.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 19: Amount Mismatch (non-partial)
+  if (
+    gatewayPayment &&
+    merchantOrder &&
+    typeof gatewayPayment.amountPaise === "number" &&
+    typeof merchantOrder.amountPaise === "number" &&
+    gatewayPayment.amountPaise !== merchantOrder.amountPaise &&
+    !context.partialPaymentExplicit
+  ) {
+    contradictions.push(`Amount mismatch: Order is ${merchantOrder.amountPaise} paise, Payment is ${gatewayPayment.amountPaise} paise.`);
+    return {
+      scenarioId: "CASE_19_AMOUNT_OR_CURRENCY_MISMATCH",
+      category: "AMOUNT_CURRENCY_MISMATCH",
+      reasonCode: "AMOUNT_CURRENCY_MISMATCH",
+      ruleId: "RULE_CASE_19_AMOUNT_CURRENCY_MISMATCH",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: ["Authorized discount code or pricing override"],
+      safeHold: true,
+      safeHoldCode: "AMOUNT_CURRENCY_MISMATCH",
+      safeHoldReason: "Discrepancy between order amount and payment amount.",
+      recommendation: "IMMEDIATE_SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Integer paise amount mismatch detected (${gatewayPayment.amountPaise} vs ${merchantOrder.amountPaise}). Case locked in safe hold.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 12: Failed Refund
+  if (isFailedRefund) {
+    return {
+      scenarioId: "CASE_12_FAILED_REFUND",
+      category: "REFUND_FAILED",
+      reasonCode: "REFUND_FAILED",
+      ruleId: "RULE_CASE_12_REFUND_FAILED",
+      confidence: 1.0,
+      facts: [
+        ...facts,
+        {
+          dimension: "REFUND",
+          value: "REFUND_FAILED",
+          source: "GATEWAY_WEBHOOK",
+          authority: "PROVIDER_VERIFIED",
+          verifiedAt: new Date(),
+          evidenceRef: "REFUND_FAILURE"
+        }
+      ],
+      claims,
+      contradictions: ["Gateway refund rejected by acquiring bank or issuer."],
+      missingEvidence: ["Alternative customer bank payout details"],
+      safeHold: true,
+      safeHoldCode: "REFUND_FAILED",
+      safeHoldReason: "Refund attempt failed at provider network.",
+      recommendation: "IMMEDIATE_SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Provider refund failure recorded. Immediate safe-hold applied; automated retry prohibited without admin review.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 23: Multiple Plausible Payment Candidates (Ambiguity)
+  if (
+    context.ambiguousCandidates === true ||
+    (context.candidateMatches && context.candidateMatches.length > 1 && (context.confidence || 0) < 0.95)
+  ) {
+    contradictions.push("Multiple unlinked gateway payments match order criteria.");
+    return {
+      scenarioId: "CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES",
+      category: "AMBIGUOUS_CANDIDATE_MATCH",
+      reasonCode: "AMBIGUOUS_PAYMENTS",
+      ruleId: "RULE_CASE_23_AMBIGUOUS_CANDIDATES",
+      confidence: Number(context.confidence || 0.6),
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: ["Definitive gateway-order linkage key"],
+      safeHold: true,
+      safeHoldCode: "AMBIGUOUS_PAYMENTS",
+      safeHoldReason: "Multiple plausible payment candidates matched without deterministic linkage.",
+      recommendation: "IMMEDIATE_SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Ambiguous payment pairing candidates detected. Confidence below threshold (< 0.95); immediate safe-hold enforced for operator review.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 21: Missing Settlement Record (> 5 days)
+  if (
+    isCaptured &&
+    (!settlementRecords || settlementRecords.length === 0) &&
+    (elapsedHours > 120 || context.missingSettlementOverdue === true)
+  ) {
+    return {
+      scenarioId: "CASE_21_MISSING_SETTLEMENT_RECORD",
+      category: "MISSING_SETTLEMENT",
+      reasonCode: "MISSING_SETTLEMENT_RECORD",
+      ruleId: "RULE_CASE_21_MISSING_SETTLEMENT",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Captured payment has zero settlement records after T+5 days."],
+      missingEvidence: ["Bank payout NEFT/RTGS UTR"],
+      safeHold: true,
+      safeHoldCode: "MISSING_SETTLEMENT",
+      safeHoldReason: "Settlement record missing beyond T+5 days SLA.",
+      recommendation: "ESCALATE_TO_GATEWAY_SUPPORT",
+      suggestedNextStep: "ADVISORY_ESCALATE_TO_GATEWAY_SUPPORT",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Payment captured successfully but settlement missing beyond statutory T+5 days. Customer funds untouched; escalated to gateway support.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // =========================================================================
+  // TIER 4: CONDITIONAL OPERATIONAL SAFE-HOLDS
+  // (Evaluated only when the specific safe-hold condition is met)
+  // =========================================================================
+
+  // Case 25 (Safe Hold): Database Outage with unresolvable state
+  if ((context.databaseError?.connectionDropped === true || context.databaseOutage === true) && Boolean(context.unresolvableOnReconnect)) {
+    contradictions.push("Database connection interrupted during operation.");
+    return {
+      scenarioId: "CASE_25_DATABASE_OUTAGE_DURING_ACTION",
+      category: "DATABASE_OUTAGE_RECOVERY",
+      reasonCode: "DATABASE_OUTAGE_RECOVERY",
+      ruleId: "RULE_CASE_25_DATABASE_OUTAGE",
+      confidence: 0.9,
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: ["Database connectivity confirmation"],
+      safeHold: true,
+      safeHoldCode: "DATABASE_OUTAGE_RECOVERY",
+      safeHoldReason: "Database outage recovery failed to reconcile provider state.",
+      recommendation: "DATABASE_LEASE_RECOVERY",
+      suggestedNextStep: "ADVISORY_RECOVER_DATABASE_LEASE",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Database network failure encountered during processing. In-flight action lease preserves state until safe reconnect query.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 26 (Safe Hold): Worker Crash with excessive expirations
+  if ((isLeaseExpired || context.workerCrashedLeaseExpired === true) && renewalCount >= 3) {
+    contradictions.push("Worker action lease expired without state finalization.");
+    return {
+      scenarioId: "CASE_26_WORKER_CRASH_ACTION_PENDING",
+      category: "WORKER_LEASE_EXPIRED",
+      reasonCode: "EXPIRED_LEASE_RECOVERY",
+      ruleId: "RULE_CASE_26_EXPIRED_LEASE",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: ["Worker completion heartbeat"],
+      safeHold: true,
+      safeHoldCode: "WORKER_LEASE_EXPIRED",
+      safeHoldReason: "Action lease expired more than 3 times.",
+      recommendation: "EXPIRED_LEASE_RECLAIM",
+      suggestedNextStep: "ADVISORY_RECLAIM_EXPIRED_LEASE",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Action lease expired while case in progress. Reclaimed by recovery scheduler to query provider idempotency key.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 24 (Safe Hold): Provider Unavailable with max retries exceeded
+  if (isProviderThrottled && ((context.providerError?.attempts || 1) >= 5)) {
+    return {
+      scenarioId: "CASE_24_PROVIDER_UNAVAILABLE_RATE_LIMITED",
+      category: "PROVIDER_UNAVAILABLE",
+      reasonCode: "PROVIDER_THROTTLED_OR_UNAVAILABLE",
+      ruleId: "RULE_CASE_24_PROVIDER_UNAVAILABLE",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Provider returned HTTP 429 / 5xx error."],
+      missingEvidence: ["Provider endpoint availability"],
+      safeHold: true,
+      safeHoldCode: "PROVIDER_ERROR",
+      safeHoldReason: "Provider API unavailable after 5 retries.",
+      recommendation: "EXPONENTIAL_BACKOFF_RETRY",
+      suggestedNextStep: "ADVISORY_EXPONENTIAL_BACKOFF_RETRY",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Provider API returned throttled or unavailable response (HTTP ${context.providerError?.status || "error"}). Retrying with jittered exponential backoff.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 11 (Safe Hold): Full Refund Initiated But Overdue (> 7 days)
+  if (isRefundPending && ((context.refundPendingDays || 0) > 7)) {
+    return {
+      scenarioId: "CASE_11_FULL_REFUND_INITIATED_NOT_COMPLETED",
+      category: "REFUND_PENDING_TIMEOUT",
+      reasonCode: "REFUND_PENDING_TIMEOUT",
+      ruleId: "RULE_CASE_11_REFUND_PENDING",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: [],
+      missingEvidence: ["Acquiring bank clearance confirmation"],
+      safeHold: true,
+      safeHoldCode: "REFUND_PENDING_TIMEOUT",
+      safeHoldReason: "Refund pending for longer than 7 business days.",
+      recommendation: "MONITOR_REFUND",
+      suggestedNextStep: "ADVISORY_MONITOR_REFUND",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Refund is currently in flight with the provider/banking network. Duplicate refund requests strictly blocked; scheduled for monitoring.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 7 (Safe Hold): Duplicate Payment Attempts with differing amounts
+  if (isDuplicatePaymentAttempt && Boolean(context.amountsDiffer)) {
+    return {
+      scenarioId: "CASE_7_DUPLICATE_PAYMENT_ATTEMPTS",
+      category: "DUPLICATE_PAYMENT",
+      reasonCode: "DUPLICATE_PAYMENT",
+      ruleId: "RULE_CASE_7_DUPLICATE_PAYMENTS",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Two distinct captured payments exist for a single order."],
+      missingEvidence: ["Merchant multi-order fulfillment consent"],
+      safeHold: true,
+      safeHoldCode: "DUPLICATE_PAYMENT_AMOUNTS_DIFFER",
+      safeHoldReason: "Duplicate payment attempts have different amounts.",
+      recommendation: "REFUND_DUPLICATE_PAYMENT",
+      suggestedNextStep: "ADVISORY_FLAG_DUPLICATE_PAYMENT",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Multiple captured payment attempts identified for single merchant order. Primary payment retained; second attempt isolated for refund recommendation.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 9 (Safe Hold): Partial Payment with expired installment window
+  if (isPartialPayment && context.partialPaymentExplicit === true && Boolean(context.partialPaymentWindowExpired)) {
+    return {
+      scenarioId: "CASE_9_PARTIAL_PAYMENT",
+      category: "PARTIAL_PAYMENT",
+      reasonCode: "PARTIAL_PAYMENT",
+      ruleId: "RULE_CASE_9_PARTIAL_PAYMENT",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Payment amount is less than total merchant order amount."],
+      missingEvidence: ["Second installment or balance payment"],
+      safeHold: true,
+      safeHoldCode: "PARTIAL_PAYMENT",
+      safeHoldReason: "Partial payment window expired without remaining balance.",
+      recommendation: "HOLD_PARTIALLY_PAID",
+      suggestedNextStep: "ADVISORY_HOLD_PARTIALLY_PAID",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Payment amount (${gatewayPayment.amountPaise} paise) is less than order amount (${merchantOrder.amountPaise} paise). Held in PARTIALLY_PAID.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 10 (Safe Hold): Partial Refund exceeding captured amount
+  if (amountRefunded > 0 && amountCaptured && amountRefunded > amountCaptured) {
+    return {
+      scenarioId: "CASE_10_PARTIAL_REFUND",
+      category: "PARTIAL_REFUND",
+      reasonCode: "PARTIAL_REFUND",
+      ruleId: "RULE_CASE_10_PARTIAL_REFUND",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Refunded amount exceeds captured amount."],
+      missingEvidence: [],
+      safeHold: true,
+      safeHoldCode: "PARTIAL_REFUND_EXCEEDS_CAPTURED",
+      safeHoldReason: "Refunded amount exceeds captured total.",
+      recommendation: "UPDATE_MERCHANT_LOCAL_LEDGER",
+      suggestedNextStep: "ADVISORY_RECONCILE_LOCAL_LEDGER",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Partial refund of ${amountRefunded} paise recorded. Recommend adjusting merchant ledger balance.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 2 (Safe Hold): Customer Debit Claim on Gateway Pending Overdue (>= 60m)
+  if (
+    customerClaims.length > 0 &&
+    isGatewayPending &&
+    (context.customerDebitClaim === true || claims.length > 0 || customerClaims.length > 0) &&
+    ((context.pendingMinutes || 0) >= 60)
+  ) {
+    return {
+      scenarioId: "CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING",
+      category: "CUSTOMER_DEBIT_ON_GATEWAY_PENDING",
+      reasonCode: "CUSTOMER_DEBIT_ON_GATEWAY_PENDING",
+      ruleId: "RULE_CASE_2_CUSTOMER_DEBIT_PENDING",
+      confidence: 0.85,
+      facts,
+      claims,
+      contradictions: [],
+      missingEvidence: ["Authoritative bank clearance proof (NPCI/Bank confirmation)"],
+      safeHold: true,
+      safeHoldCode: "CUSTOMER_DEBIT_ON_GATEWAY_PENDING",
+      safeHoldReason: "Payment remains pending past 60 minutes window.",
+      recommendation: "WAIT_AND_MONITOR",
+      suggestedNextStep: "ADVISORY_WAIT_AND_MONITOR",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Customer submitted bank debit claim while gateway status remains PENDING. Debit claim labeled unverified claim; scheduled for automated polling without refund.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // Case 3 (Safe Hold): Customer Debit Claim on Failed Payment with Reversal Overdue
+  if (
+    isGatewayFailed &&
+    (customerClaims.length > 0 || context.customerDebitClaim === true) &&
+    Boolean(context.reversalOverdue)
+  ) {
+    return {
+      scenarioId: "CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED",
+      category: "CUSTOMER_DEBIT_ON_GATEWAY_FAILURE",
+      reasonCode: "CUSTOMER_DEBIT_ON_GATEWAY_FAILURE",
+      ruleId: "RULE_CASE_3_CUSTOMER_DEBIT_FAILED",
+      confidence: 0.9,
+      facts,
+      claims,
+      contradictions: ["Customer claims debit on confirmed failed payment."],
+      missingEvidence: ["Automatic bank reversal confirmation"],
+      safeHold: true,
+      safeHoldCode: "CUSTOMER_DEBIT_ON_GATEWAY_FAILURE",
+      safeHoldReason: "Auto-reversal not confirmed within statutory window.",
+      recommendation: "TRACK_AUTO_REVERSAL",
+      suggestedNextStep: "ADVISORY_TRACK_AUTO_REVERSAL",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Gateway payment confirmed FAILED with cardholder debit claim. Auto-reversal tracking initiated per RBI statutory TAT window.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
+
+  // =========================================================================
+  // TIER 5: OPERATIONAL NON-SAFE-HOLD RESOLUTIONS (SafeHold: false)
+  // =========================================================================
+
+  // Case 27: Concurrent Resolution Attempts
+  if (context.concurrentAttempt?.lockConflict === true || context.lockConflict === true) {
+    contradictions.push("Concurrency lock collision: case is currently locked by another worker lease.");
+    return {
+      scenarioId: "CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS",
+      category: "CONCURRENT_ATTEMPT",
+      reasonCode: "CONCURRENT_MUTATION_RACE",
+      ruleId: "RULE_CASE_27_CONCURRENT_MUTATION",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions,
+      missingEvidence: [],
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
+      recommendation: "LOCK_ACQUISITION_REJECT",
+      suggestedNextStep: "ADVISORY_REJECT_CONCURRENT_MUTATION",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: "Concurrent mutation attempt detected on active lease. Secondary attempt safely rejected without state mutation.",
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
 
   // Case 14: Duplicate Webhook Delivery
   if (context.isDuplicateWebhook === true || context.duplicateEvent === true) {
@@ -539,11 +1034,6 @@ export function classifyPaymentScenario({
   }
 
   // Case 13: Stale Event After Refund / Terminal State
-  const isTerminalState =
-    paymentCase?.refundStatus === "REFUND_CONFIRMED" ||
-    gatewayPayment?.status === "REFUNDED" ||
-    (gatewayPayment?.status === "CAPTURED" && context.incomingEvent?.eventType === "payment.authorized");
-
   if (isTerminalState && context.isStaleEvent === true) {
     return {
       scenarioId: "CASE_13_STALE_EVENT_AFTER_REFUND",
@@ -599,267 +1089,88 @@ export function classifyPaymentScenario({
     };
   }
 
-  // =========================================================================
-  // 4. MULTI-CANDIDATE & RECORD LINKAGE AMBIGUITY
-  // =========================================================================
-
-  // Case 23: Multiple Plausible Payment Candidates (Ambiguity)
-  if (
-    context.ambiguousCandidates === true ||
-    (context.candidateMatches && context.candidateMatches.length > 1 && (context.confidence || 0) < 0.95)
-  ) {
-    contradictions.push("Multiple unlinked gateway payments match order criteria.");
+  // Case 25: Database Outage During Action (reconnectable)
+  if (context.databaseError?.connectionDropped === true || context.databaseOutage === true) {
+    contradictions.push("Database connection interrupted during operation.");
     return {
-      scenarioId: "CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES",
-      category: "AMBIGUOUS_CANDIDATE_MATCH",
-      reasonCode: "AMBIGUOUS_PAYMENTS",
-      ruleId: "RULE_CASE_23_AMBIGUOUS_CANDIDATES",
-      confidence: Number(context.confidence || 0.6),
+      scenarioId: "CASE_25_DATABASE_OUTAGE_DURING_ACTION",
+      category: "DATABASE_OUTAGE_RECOVERY",
+      reasonCode: "DATABASE_OUTAGE_RECOVERY",
+      ruleId: "RULE_CASE_25_DATABASE_OUTAGE",
+      confidence: 0.9,
       facts,
       claims,
       contradictions,
-      missingEvidence: ["Definitive gateway-order linkage key"],
-      safeHold: true,
-      safeHoldCode: "AMBIGUOUS_PAYMENTS",
-      safeHoldReason: "Multiple plausible payment candidates matched without deterministic linkage.",
-      recommendation: "IMMEDIATE_SAFE_HOLD",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      missingEvidence: ["Database connectivity confirmation"],
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
+      recommendation: "DATABASE_LEASE_RECOVERY",
+      suggestedNextStep: "ADVISORY_RECOVER_DATABASE_LEASE",
       isExecutable: false,
       authoritative: false,
       requiresPolicyEngine: true,
       supportingEvidence,
-      explanation: "Ambiguous payment pairing candidates detected. Confidence below threshold (< 0.95); immediate safe-hold enforced for operator review.",
+      explanation: "Database network failure encountered during processing. In-flight action lease preserves state until safe reconnect query.",
       redactedMetadata: sanitizeMetadata(context)
     };
   }
 
-  // Case 18: Conflicting Provider and Merchant Records
-  const paymentOrderId = gatewayPayment?.merchantOrderId || gatewayPayment?.notes?.merchantOrderId || null;
-  const directOrderId = merchantOrder?.merchantOrderId || null;
-  if (
-    paymentOrderId &&
-    directOrderId &&
-    paymentOrderId !== directOrderId &&
-    context.conflictingRecords !== false
-  ) {
-    contradictions.push(`Gateway payment references order ${paymentOrderId}, but merchant order is ${directOrderId}.`);
+  // Case 26: Worker Crash While Action Is Pending (reclaimable)
+  if (isLeaseExpired || context.workerCrashedLeaseExpired === true) {
+    contradictions.push("Worker action lease expired without state finalization.");
     return {
-      scenarioId: "CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS",
-      category: "CONFLICTING_PROVIDER_MERCHANT_RECORDS",
-      reasonCode: "CONFLICTING_PROVIDER_MERCHANT_RECORDS",
-      ruleId: "RULE_CASE_18_CONFLICTING_RECORDS",
+      scenarioId: "CASE_26_WORKER_CRASH_ACTION_PENDING",
+      category: "WORKER_LEASE_EXPIRED",
+      reasonCode: "EXPIRED_LEASE_RECOVERY",
+      ruleId: "RULE_CASE_26_EXPIRED_LEASE",
       confidence: 1.0,
       facts,
       claims,
       contradictions,
-      missingEvidence: ["Intended order cross-reference authority"],
-      safeHold: true,
-      safeHoldCode: "CONFLICTING_RECORDS",
-      safeHoldReason: "Conflicting order identifiers between gateway payment and merchant order.",
-      recommendation: "IMMEDIATE_SAFE_HOLD",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      missingEvidence: ["Worker completion heartbeat"],
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
+      recommendation: "EXPIRED_LEASE_RECLAIM",
+      suggestedNextStep: "ADVISORY_RECLAIM_EXPIRED_LEASE",
       isExecutable: false,
       authoritative: false,
       requiresPolicyEngine: true,
       supportingEvidence,
-      explanation: "Cross-record conflict detected: provider notes point to a different order than merchant ledger. Placed in immediate safe hold.",
+      explanation: "Action lease expired while case in progress. Reclaimed by recovery scheduler to query provider idempotency key.",
       redactedMetadata: sanitizeMetadata(context)
     };
   }
 
-  // =========================================================================
-  // 5. AMOUNT & CURRENCY INTEGRITY
-  // =========================================================================
-
-  // Currency mismatch check
-  if (
-    gatewayPayment &&
-    merchantOrder &&
-    gatewayPayment.currency &&
-    merchantOrder.currency &&
-    gatewayPayment.currency !== merchantOrder.currency
-  ) {
-    contradictions.push(`Currency mismatch: Payment is in ${gatewayPayment.currency}, Order is in ${merchantOrder.currency}.`);
+  // Case 24: Provider Unavailable or Rate-Limited (backoff retry)
+  if (isProviderThrottled) {
     return {
-      scenarioId: "CASE_19_AMOUNT_OR_CURRENCY_MISMATCH",
-      category: "AMOUNT_CURRENCY_MISMATCH",
-      reasonCode: "AMOUNT_CURRENCY_MISMATCH",
-      ruleId: "RULE_CASE_19_AMOUNT_CURRENCY_MISMATCH",
+      scenarioId: "CASE_24_PROVIDER_UNAVAILABLE_RATE_LIMITED",
+      category: "PROVIDER_UNAVAILABLE",
+      reasonCode: "PROVIDER_THROTTLED_OR_UNAVAILABLE",
+      ruleId: "RULE_CASE_24_PROVIDER_UNAVAILABLE",
       confidence: 1.0,
       facts,
       claims,
-      contradictions,
-      missingEvidence: [],
-      safeHold: true,
-      safeHoldCode: "AMOUNT_CURRENCY_MISMATCH",
-      safeHoldReason: "Currency code mismatch between order and payment.",
-      recommendation: "IMMEDIATE_SAFE_HOLD",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
+      contradictions: ["Provider returned HTTP 429 / 5xx error."],
+      missingEvidence: ["Provider endpoint availability"],
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
+      recommendation: "EXPONENTIAL_BACKOFF_RETRY",
+      suggestedNextStep: "ADVISORY_EXPONENTIAL_BACKOFF_RETRY",
       isExecutable: false,
       authoritative: false,
       requiresPolicyEngine: true,
       supportingEvidence,
-      explanation: `Payment currency (${gatewayPayment.currency}) does not match order currency (${merchantOrder.currency}). Automation locked into safe hold.`,
+      explanation: `Provider API returned throttled or unavailable response (HTTP ${context.providerError?.status || "error"}). Retrying with jittered exponential backoff.`,
       redactedMetadata: sanitizeMetadata(context)
     };
   }
 
-  // Case 8: Partial Capture
-  const amountCaptured = gatewayPayment?.amountCapturedPaise ?? gatewayPayment?.amountPaise ?? null;
-  const amountAuthorized = gatewayPayment?.amountAuthorizedPaise ?? null;
-  if (
-    gatewayPayment?.status === "PARTIALLY_CAPTURED" ||
-    (amountAuthorized && amountCaptured && amountCaptured < amountAuthorized) ||
-    context.partialCapture === true
-  ) {
-    return {
-      scenarioId: "CASE_8_PARTIAL_CAPTURE",
-      category: "PARTIAL_CAPTURE",
-      reasonCode: "PARTIAL_CAPTURE",
-      ruleId: "RULE_CASE_8_PARTIAL_CAPTURE",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions: ["Amount captured is less than authorized amount."],
-      missingEvidence: ["Merchant partial fulfillment terms"],
-      safeHold: true,
-      safeHoldCode: "PARTIAL_CAPTURE",
-      safeHoldReason: "Partial capture detected without approved merchant policy.",
-      recommendation: "IMMEDIATE_SAFE_HOLD",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: `Gateway amount captured (${amountCaptured} paise) is less than authorized (${amountAuthorized} paise). Safe hold applied.`,
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 9: Partial Payment
-  const isPartialPayment =
-    gatewayPayment &&
-    merchantOrder &&
-    typeof gatewayPayment.amountPaise === "number" &&
-    typeof merchantOrder.amountPaise === "number" &&
-    gatewayPayment.amountPaise < merchantOrder.amountPaise &&
-    context.isInstallment !== false &&
-    !context.amountMismatch;
-
-  if (isPartialPayment && context.partialPaymentExplicit === true) {
-    const expired = Boolean(context.partialPaymentWindowExpired);
-    return {
-      scenarioId: "CASE_9_PARTIAL_PAYMENT",
-      category: "PARTIAL_PAYMENT",
-      reasonCode: "PARTIAL_PAYMENT",
-      ruleId: "RULE_CASE_9_PARTIAL_PAYMENT",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions: ["Payment amount is less than total merchant order amount."],
-      missingEvidence: ["Second installment or balance payment"],
-      safeHold: expired,
-      safeHoldCode: expired ? "PARTIAL_PAYMENT" : "NONE",
-      safeHoldReason: expired ? "Partial payment window expired without remaining balance." : null,
-      recommendation: "HOLD_PARTIALLY_PAID",
-      suggestedNextStep: "ADVISORY_HOLD_PARTIALLY_PAID",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: `Payment amount (${gatewayPayment.amountPaise} paise) is less than order amount (${merchantOrder.amountPaise} paise). Held in PARTIALLY_PAID.`,
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 19: Amount Mismatch (non-partial)
-  if (
-    gatewayPayment &&
-    merchantOrder &&
-    typeof gatewayPayment.amountPaise === "number" &&
-    typeof merchantOrder.amountPaise === "number" &&
-    gatewayPayment.amountPaise !== merchantOrder.amountPaise &&
-    !context.partialPaymentExplicit
-  ) {
-    contradictions.push(`Amount mismatch: Order is ${merchantOrder.amountPaise} paise, Payment is ${gatewayPayment.amountPaise} paise.`);
-    return {
-      scenarioId: "CASE_19_AMOUNT_OR_CURRENCY_MISMATCH",
-      category: "AMOUNT_CURRENCY_MISMATCH",
-      reasonCode: "AMOUNT_CURRENCY_MISMATCH",
-      ruleId: "RULE_CASE_19_AMOUNT_CURRENCY_MISMATCH",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions,
-      missingEvidence: ["Authorized discount code or pricing override"],
-      safeHold: true,
-      safeHoldCode: "AMOUNT_CURRENCY_MISMATCH",
-      safeHoldReason: "Discrepancy between order amount and payment amount.",
-      recommendation: "IMMEDIATE_SAFE_HOLD",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: `Integer paise amount mismatch detected (${gatewayPayment.amountPaise} vs ${merchantOrder.amountPaise}). Case locked in safe hold.`,
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // =========================================================================
-  // 6. REFUND LIFECYCLE CHECKS
-  // =========================================================================
-
-  // Case 12: Failed Refund
-  const isFailedRefund =
-    gatewayPayment?.refundStatus === "FAILED" ||
-    context.incomingEvent?.eventType === "refund.failed" ||
-    context.refundStatus === "failed" ||
-    context.refundFailed === true;
-
-  if (isFailedRefund) {
-    return {
-      scenarioId: "CASE_12_FAILED_REFUND",
-      category: "REFUND_FAILED",
-      reasonCode: "REFUND_FAILED",
-      ruleId: "RULE_CASE_12_REFUND_FAILED",
-      confidence: 1.0,
-      facts: [
-        ...facts,
-        {
-          dimension: "REFUND",
-          value: "REFUND_FAILED",
-          source: "GATEWAY_WEBHOOK",
-          authority: "PROVIDER_VERIFIED",
-          verifiedAt: new Date(),
-          evidenceRef: "REFUND_FAILURE"
-        }
-      ],
-      claims,
-      contradictions: ["Gateway refund rejected by acquiring bank or issuer."],
-      missingEvidence: ["Alternative customer bank payout details"],
-      safeHold: true,
-      safeHoldCode: "REFUND_FAILED",
-      safeHoldReason: "Refund attempt failed at provider network.",
-      recommendation: "IMMEDIATE_SAFE_HOLD",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_FOR_HUMAN_REVIEW",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: "Provider refund failure recorded. Immediate safe-hold applied; automated retry prohibited without admin review.",
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 11: Full Refund Initiated But Not Completed
-  const isRefundPending =
-    gatewayPayment?.refundStatus === "PENDING" ||
-    paymentCase?.refundStatus === "REFUND_PENDING" ||
-    context.refundPending === true;
-
+  // Case 11: Full Refund Initiated But Not Completed (active monitoring window)
   if (isRefundPending) {
-    const overdue = (context.refundPendingDays || 0) > 7;
     return {
       scenarioId: "CASE_11_FULL_REFUND_INITIATED_NOT_COMPLETED",
       category: "REFUND_PENDING_TIMEOUT",
@@ -870,9 +1181,9 @@ export function classifyPaymentScenario({
       claims,
       contradictions: [],
       missingEvidence: ["Acquiring bank clearance confirmation"],
-      safeHold: overdue,
-      safeHoldCode: overdue ? "REFUND_PENDING_TIMEOUT" : "NONE",
-      safeHoldReason: overdue ? "Refund pending for longer than 7 business days." : null,
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
       recommendation: "MONITOR_REFUND",
       suggestedNextStep: "ADVISORY_MONITOR_REFUND",
       isExecutable: false,
@@ -884,13 +1195,11 @@ export function classifyPaymentScenario({
     };
   }
 
-  // Case 10: Partial Refund
-  const amountRefunded = gatewayPayment?.amountRefundedPaise || 0;
+  // Case 10: Partial Refund (normal)
   if (
     (amountRefunded > 0 && amountCaptured && amountRefunded < amountCaptured) ||
     context.partialRefund === true
   ) {
-    const exceeds = amountCaptured && amountRefunded > amountCaptured;
     return {
       scenarioId: "CASE_10_PARTIAL_REFUND",
       category: "PARTIAL_REFUND",
@@ -899,11 +1208,11 @@ export function classifyPaymentScenario({
       confidence: 1.0,
       facts,
       claims,
-      contradictions: exceeds ? ["Refunded amount exceeds captured amount."] : [],
+      contradictions: [],
       missingEvidence: [],
-      safeHold: Boolean(exceeds),
-      safeHoldCode: exceeds ? "PARTIAL_REFUND_EXCEEDS_CAPTURED" : "NONE",
-      safeHoldReason: exceeds ? "Refunded amount exceeds captured total." : null,
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
       recommendation: "UPDATE_MERCHANT_LOCAL_LEDGER",
       suggestedNextStep: "ADVISORY_RECONCILE_LOCAL_LEDGER",
       isExecutable: false,
@@ -915,40 +1224,8 @@ export function classifyPaymentScenario({
     };
   }
 
-  // =========================================================================
-  // 7. DUPLICATE PAYMENT ATTEMPTS & ORDER CONFLICTS
-  // =========================================================================
-
-  // Case 22: Payment Captured But Order Cancelled (Safeguard 6)
-  const isCaptured = gatewayPayment?.status === "CAPTURED";
-  const isOrderCancelled = merchantOrder?.status === "CANCELLED";
-  if (isCaptured && isOrderCancelled) {
-    return {
-      scenarioId: "CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED",
-      category: "CANCELLED_ORDER_CAPTURED",
-      reasonCode: "CANCELLED_ORDER_CAPTURED",
-      ruleId: "RULE_CASE_22_CANCELLED_ORDER_CAPTURED",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions: ["Payment is CAPTURED but merchant order is CANCELLED."],
-      missingEvidence: [],
-      safeHold: true,
-      safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER",
-      safeHoldReason: "Late capture received for cancelled order. Order cancellation preserved.",
-      recommendation: "SAFE_HOLD_PRESERVE_CANCELLATION",
-      suggestedNextStep: "ADVISORY_SAFE_HOLD_PRESERVE_CANCELLATION",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: "Capture arrived on cancelled merchant order. Per ReconAI Safeguard 6: Order cancellation preserved under safe hold; no automatic refund or reopen.",
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // Case 7: Duplicate Payment Attempts
-  if (context.duplicatePaymentAttempts === true || (context.capturedPayments && context.capturedPayments.length > 1)) {
+  // Case 7: Duplicate Payment Attempts (identical amounts)
+  if (isDuplicatePaymentAttempt) {
     return {
       scenarioId: "CASE_7_DUPLICATE_PAYMENT_ATTEMPTS",
       category: "DUPLICATE_PAYMENT",
@@ -959,9 +1236,9 @@ export function classifyPaymentScenario({
       claims,
       contradictions: ["Two distinct captured payments exist for a single order."],
       missingEvidence: ["Merchant multi-order fulfillment consent"],
-      safeHold: Boolean(context.amountsDiffer),
-      safeHoldCode: context.amountsDiffer ? "DUPLICATE_PAYMENT_AMOUNTS_DIFFER" : "NONE",
-      safeHoldReason: context.amountsDiffer ? "Duplicate payment attempts have different amounts." : null,
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
       recommendation: "REFUND_DUPLICATE_PAYMENT",
       suggestedNextStep: "ADVISORY_FLAG_DUPLICATE_PAYMENT",
       isExecutable: false,
@@ -973,15 +1250,33 @@ export function classifyPaymentScenario({
     };
   }
 
-  // =========================================================================
-  // 8. CUSTOMER CLAIMS VS GATEWAY STATE
-  // =========================================================================
+  // Case 9: Partial Payment (active window)
+  if (isPartialPayment && context.partialPaymentExplicit === true) {
+    return {
+      scenarioId: "CASE_9_PARTIAL_PAYMENT",
+      category: "PARTIAL_PAYMENT",
+      reasonCode: "PARTIAL_PAYMENT",
+      ruleId: "RULE_CASE_9_PARTIAL_PAYMENT",
+      confidence: 1.0,
+      facts,
+      claims,
+      contradictions: ["Payment amount is less than total merchant order amount."],
+      missingEvidence: ["Second installment or balance payment"],
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
+      recommendation: "HOLD_PARTIALLY_PAID",
+      suggestedNextStep: "ADVISORY_HOLD_PARTIALLY_PAID",
+      isExecutable: false,
+      authoritative: false,
+      requiresPolicyEngine: true,
+      supportingEvidence,
+      explanation: `Payment amount (${gatewayPayment.amountPaise} paise) is less than order amount (${merchantOrder.amountPaise} paise). Held in PARTIALLY_PAID.`,
+      redactedMetadata: sanitizeMetadata(context)
+    };
+  }
 
   // Case 4: Late Authorization After Timeout
-  const isLateAuth =
-    gatewayPayment?.status === "AUTHORIZED" &&
-    (context.isLateAuthorization === true || context.incomingEvent?.eventType === "payment.authorized");
-
   if (isLateAuth) {
     return {
       scenarioId: "CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT",
@@ -1007,15 +1302,12 @@ export function classifyPaymentScenario({
     };
   }
 
-  // Case 2: Customer Debit Claim with Gateway Pending
-  const isGatewayPending =
-    !gatewayPayment ||
-    gatewayPayment.status === "PENDING" ||
-    gatewayPayment.status === "CREATED" ||
-    gatewayPayment.status === "UNKNOWN";
-
-  if (customerClaims.length > 0 && isGatewayPending && (context.customerDebitClaim === true || claims.length > 0)) {
-    const overdue = (context.pendingMinutes || 0) >= 60;
+  // Case 2: Customer Debit Claim with Gateway Pending (< 60 min)
+  if (
+    customerClaims.length > 0 &&
+    isGatewayPending &&
+    (context.customerDebitClaim === true || claims.length > 0 || customerClaims.length > 0)
+  ) {
     return {
       scenarioId: "CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING",
       category: "CUSTOMER_DEBIT_ON_GATEWAY_PENDING",
@@ -1026,9 +1318,9 @@ export function classifyPaymentScenario({
       claims,
       contradictions: [],
       missingEvidence: ["Authoritative bank clearance proof (NPCI/Bank confirmation)"],
-      safeHold: overdue,
-      safeHoldCode: overdue ? "CUSTOMER_DEBIT_ON_GATEWAY_PENDING" : "NONE",
-      safeHoldReason: overdue ? "Payment remains pending past 60 minutes window." : null,
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
       recommendation: "WAIT_AND_MONITOR",
       suggestedNextStep: "ADVISORY_WAIT_AND_MONITOR",
       isExecutable: false,
@@ -1040,10 +1332,8 @@ export function classifyPaymentScenario({
     };
   }
 
-  // Case 3: Customer Debit Claim with Payment Failed
-  const isGatewayFailed = gatewayPayment?.status === "FAILED";
+  // Case 3: Customer Debit Claim with Payment Failed (auto-reversal window)
   if (isGatewayFailed && (customerClaims.length > 0 || context.customerDebitClaim === true)) {
-    const reversalOverdue = Boolean(context.reversalOverdue);
     return {
       scenarioId: "CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED",
       category: "CUSTOMER_DEBIT_ON_GATEWAY_FAILURE",
@@ -1054,9 +1344,9 @@ export function classifyPaymentScenario({
       claims,
       contradictions: ["Customer claims debit on confirmed failed payment."],
       missingEvidence: ["Automatic bank reversal confirmation"],
-      safeHold: reversalOverdue,
-      safeHoldCode: reversalOverdue ? "CUSTOMER_DEBIT_ON_GATEWAY_FAILURE" : "NONE",
-      safeHoldReason: reversalOverdue ? "Auto-reversal not confirmed within statutory window." : null,
+      safeHold: false,
+      safeHoldCode: "NONE",
+      safeHoldReason: null,
       recommendation: "TRACK_AUTO_REVERSAL",
       suggestedNextStep: "ADVISORY_TRACK_AUTO_REVERSAL",
       isExecutable: false,
@@ -1068,13 +1358,7 @@ export function classifyPaymentScenario({
     };
   }
 
-  // =========================================================================
-  // 9. LOST WEBHOOK & STATUS RECONSTRUCTION VIA POLL
-  // =========================================================================
-
   // Case 17: Webhook Never Arrives (Lost Webhook)
-  const isApiPoll = context.pollResult === true || context.source === "GATEWAY_API_POLL";
-  const zeroWebhooks = lifecycleEvents.filter((e) => e.sourceSystem === "GATEWAY_WEBHOOK").length === 0;
   if (isCaptured && isApiPoll && zeroWebhooks) {
     return {
       scenarioId: "CASE_17_LOST_WEBHOOK",
@@ -1099,10 +1383,6 @@ export function classifyPaymentScenario({
       redactedMetadata: sanitizeMetadata(context)
     };
   }
-
-  // =========================================================================
-  // 10. SETTLEMENT DEDUPLICATION
-  // =========================================================================
 
   // Case 20: Duplicate Settlement Record
   if (
@@ -1135,16 +1415,6 @@ export function classifyPaymentScenario({
     };
   }
 
-  // =========================================================================
-  // 11. FRONTEND DROPPED & STATUS MISMATCH CHECKS
-  // =========================================================================
-
-  const isOrderPending =
-    !merchantOrder ||
-    merchantOrder.status === "PENDING" ||
-    merchantOrder.status === "CREATED" ||
-    merchantOrder.status === "ORDER_PENDING";
-
   // Case 1: Frontend Timeout After Payment Success (requires verified server-side evidence)
   if (isCaptured && isOrderPending && trustedFrontendEvent) {
     return {
@@ -1156,7 +1426,7 @@ export function classifyPaymentScenario({
       facts,
       claims,
       contradictions: [],
-      missingEvidence: [], // Positively observed via authoritative server-verified telemetry
+      missingEvidence: [],
       safeHold: false,
       safeHoldCode: "NONE",
       safeHoldReason: null,
@@ -1172,8 +1442,6 @@ export function classifyPaymentScenario({
   }
 
   // Case 6: Paid Gateway Payment But Unpaid Order (General Status Mismatch)
-  // When gateway payment is CAPTURED and merchant order is PENDING, but no authenticated frontend event exists,
-  // do NOT infer causation (frontend timeout). Classify faithfully as a payment/order status mismatch.
   if (isCaptured && isOrderPending) {
     return {
       scenarioId: "CASE_6_PAID_GATEWAY_UNPAID_ORDER",
@@ -1197,41 +1465,6 @@ export function classifyPaymentScenario({
       requiresPolicyEngine: true,
       supportingEvidence,
       explanation: "Verified provider payment is CAPTURED while merchant order remains PENDING. In the absence of authenticated frontend checkout telemetry, causation (frontend drop) is unobserved and not inferred; classified as payment/order status mismatch requiring local ledger reconciliation.",
-      redactedMetadata: sanitizeMetadata(context)
-    };
-  }
-
-  // =========================================================================
-  // 12. SETTLEMENT SLA MONITORING
-  // =========================================================================
-
-  // Case 21: Missing Settlement Record (> 5 days)
-  const elapsedHours = context.elapsedHoursSincePayment || 0;
-  if (
-    isCaptured &&
-    (!settlementRecords || settlementRecords.length === 0) &&
-    (elapsedHours > 120 || context.missingSettlementOverdue === true)
-  ) {
-    return {
-      scenarioId: "CASE_21_MISSING_SETTLEMENT_RECORD",
-      category: "MISSING_SETTLEMENT",
-      reasonCode: "MISSING_SETTLEMENT_RECORD",
-      ruleId: "RULE_CASE_21_MISSING_SETTLEMENT",
-      confidence: 1.0,
-      facts,
-      claims,
-      contradictions: ["Captured payment has zero settlement records after T+5 days."],
-      missingEvidence: ["Bank payout NEFT/RTGS UTR"],
-      safeHold: true,
-      safeHoldCode: "MISSING_SETTLEMENT",
-      safeHoldReason: "Settlement record missing beyond T+5 days SLA.",
-      recommendation: "ESCALATE_TO_GATEWAY_SUPPORT",
-      suggestedNextStep: "ADVISORY_ESCALATE_TO_GATEWAY_SUPPORT",
-      isExecutable: false,
-      authoritative: false,
-      requiresPolicyEngine: true,
-      supportingEvidence,
-      explanation: "Payment captured successfully but settlement missing beyond statutory T+5 days. Customer funds untouched; escalated to gateway support.",
       redactedMetadata: sanitizeMetadata(context)
     };
   }

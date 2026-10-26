@@ -57,7 +57,7 @@ export async function collectDispatchEvidence({ tenantId, caseId }) {
     EvidenceRecord.findOne({
       tenantId: cleanTenantId,
       caseId: cleanCaseId
-    }).lean(),
+    }).sort({ evaluatedAt: -1 }).lean(),
     PaymentAction.find({
       tenantId: cleanTenantId,
       caseId: cleanCaseId,

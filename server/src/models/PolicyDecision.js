@@ -80,6 +80,18 @@ const policyDecisionSchema = new mongoose.Schema(
       default: null,
       trim: true
     },
+    classificationRecordId: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
+    classificationInputHash: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     proposedActionType: {
       type: String,
       required: [true, "proposedActionType is required"],

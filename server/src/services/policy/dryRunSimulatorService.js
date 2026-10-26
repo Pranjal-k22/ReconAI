@@ -14,6 +14,8 @@ import {
   SUPPORTED_POLICY_VERSIONS
 } from "./resolutionPolicyEvaluator.js";
 import { getActivePolicyConfig } from "./policyConfigService.js";
+import { buildClassifierContext } from "../classification/classifierContextBuilder.js";
+import { classifyCase } from "../classification/classificationService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
 
@@ -238,8 +240,19 @@ export async function evaluateAndSimulateResolution({
 
   const effectiveCaseDoc = caseDoc || providedEvidence.paymentCase;
 
+  let currentBuilderHash = null;
   if (!providedEvidence) {
-    const [gatewayPayment, merchantOrder, evidenceRecord, inFlightActions, duplicatePayments] = await Promise.all([
+    try {
+      const builderRes = await buildClassifierContext({
+        tenantId: tenantId.trim(),
+        caseId: caseId.trim()
+      });
+      currentBuilderHash = builderRes.inputHash;
+    } catch (bErr) {
+      // builder error
+    }
+
+    let [gatewayPayment, merchantOrder, evidenceRecord, inFlightActions, duplicatePayments] = await Promise.all([
       effectiveCaseDoc.gatewayPaymentId
         ? GatewayPayment.findOne({ gatewayPaymentId: effectiveCaseDoc.gatewayPaymentId, tenantId: tenantId.trim() }).lean()
         : null,
@@ -261,6 +274,20 @@ export async function evaluateAndSimulateResolution({
         : []
     ]);
 
+    // B3: Consumers obtain finding through classifyCase or latest EvidenceRecord whose inputHash equals current builder hash
+    if (!evidenceRecord || (currentBuilderHash && evidenceRecord.inputHash !== currentBuilderHash)) {
+      try {
+        const classRes = await classifyCase({
+          tenantId: tenantId.trim(),
+          caseId: caseId.trim(),
+          actor: { id: actorId, role: actorRole }
+        });
+        evidenceRecord = classRes.evidenceRecord;
+      } catch (err) {
+        evidenceRecord = null;
+      }
+    }
+
     const inFlightCommitmentsPaise = (inFlightActions || []).reduce((sum, a) => sum + (a.amountPaise || 0), 0);
 
     authoritativeEvidence = {
@@ -277,27 +304,47 @@ export async function evaluateAndSimulateResolution({
   }
 
   // 3. Deterministic Policy Evaluation (Pure Logic)
-  let activePolicyDoc = null;
-  let effectivePolicyConfig = policyConfig;
-  if (!effectivePolicyConfig) {
-    activePolicyDoc = await getActivePolicyConfig(tenantId.trim());
-    effectivePolicyConfig = activePolicyDoc ? activePolicyDoc.limits : null;
-  }
+  const isEvidenceMatching = !currentBuilderHash || (authoritativeEvidence.evidenceRecord && authoritativeEvidence.evidenceRecord.inputHash === currentBuilderHash);
 
-  const policyResult = evaluateResolutionPolicy({
-    tenantId: tenantId.trim(),
-    caseId: caseId.trim(),
-    actorId,
-    actorRole,
-    proposedActionType,
-    amountPaise,
-    currency,
-    classificationFinding: authoritativeEvidence.evidenceRecord || null,
-    authoritativeEvidence,
-    advisoryAiSuggestion,
-    policyConfig: effectivePolicyConfig,
-    policyVersion: effectivePolicyVersion
-  });
+  let activePolicyDoc = null;
+  let policyResult;
+
+  if (!isEvidenceMatching) {
+    policyResult = {
+      outcomeStatus: "INSUFFICIENT_EVIDENCE",
+      appliedRuleIds: ["R_INSUFFICIENT_EVIDENCE_HOLD"],
+      decisionReasons: ["Classification context hash mismatch or unclassified case; treated as INSUFFICIENT_EVIDENCE"],
+      allowReasons: [],
+      denyReasons: ["Fresh matching evidence classification is unavailable for current database state."],
+      missingEvidence: ["Matching EvidenceRecord with current context inputHash"],
+      conflicts: [],
+      approvedEvidenceReferences: [],
+      checksPerformed: { safeHoldCheck: true },
+      amountPaise: null,
+      currency
+    };
+  } else {
+    let effectivePolicyConfig = policyConfig;
+    if (!effectivePolicyConfig) {
+      activePolicyDoc = await getActivePolicyConfig(tenantId.trim());
+      effectivePolicyConfig = activePolicyDoc ? activePolicyDoc.limits : null;
+    }
+
+    policyResult = evaluateResolutionPolicy({
+      tenantId: tenantId.trim(),
+      caseId: caseId.trim(),
+      actorId,
+      actorRole,
+      proposedActionType,
+      amountPaise,
+      currency,
+      classificationFinding: authoritativeEvidence.evidenceRecord || null,
+      authoritativeEvidence,
+      advisoryAiSuggestion,
+      policyConfig: effectivePolicyConfig,
+      policyVersion: effectivePolicyVersion
+    });
+  }
 
   // 4. Generate Local Dry-Run Simulation Semantics
   const simulationResult = generateDryRunSimulation({
@@ -356,6 +403,8 @@ export async function evaluateAndSimulateResolution({
       policyVersion: effectivePolicyVersion,
       policyConfigVersion: activePolicyDoc?.configVersion || policyConfig?.configVersion || null,
       contentHash: activePolicyDoc?.contentHash || policyConfig?.contentHash || null,
+      classificationRecordId: authoritativeEvidence?.evidenceRecord ? authoritativeEvidence.evidenceRecord.recordId : null,
+      classificationInputHash: currentBuilderHash || (authoritativeEvidence?.evidenceRecord ? authoritativeEvidence.evidenceRecord.inputHash : null),
       proposedActionType,
       outcomeStatus: policyResult.outcomeStatus,
       appliedRuleIds: policyResult.appliedRuleIds,

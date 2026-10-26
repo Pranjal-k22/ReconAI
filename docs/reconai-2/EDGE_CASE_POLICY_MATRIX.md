@@ -15,6 +15,21 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 
 ---
 
+## 1.1. Proven Reachability Summary (Stage 5B Code-Computed)
+
+Reachability is determined strictly by runtime proxy tracing and DB-driven classification (Stage 5 Part B). A scenario is `PROVEN_FROM_DB` only if an integration test seeding DB records alone produces that scenario ID without manual context injection.
+
+| Category | Count | Cases | Notes / Enforcement Point |
+|:---|:---:|:---|:---|
+| **PROVEN_FROM_DB** | 14 | 5, 6, 7, 8, 10, 11, 12, 17, 19, 20, 21, 22, 26, 30 | Seeded purely from database records into `buildClassifierContext` |
+| **INGESTION_TIME** | 3 | 14, 15, 28 | Handled at boundary: `webhookService.js:210`, `webhookService.js:193`, `authMiddleware.js:230` |
+| **NEEDS_CLAIM_INTAKE** | 3 | 2, 3, 29 | Requires customer claim-intake endpoints not yet implemented |
+| **RESERVED** | 8 | 1, 4, 9, 13, 16, 18, 23, 27 | Reserved pending authoritative data sources or runtime concurrency locks |
+| **NO_SOURCE** | 2 | 24, 25 | Infrastructure runtime faults not persisted in transactional records |
+| **Total** | 30 | | Evaluated across all 30 scenario rules |
+
+---
+
 ## 2. Comprehensive 30 Edge-Case Policy Specifications
 
 ---

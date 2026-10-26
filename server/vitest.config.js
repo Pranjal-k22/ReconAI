@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     testTimeout: isIntegrationRun ? 35000 : 15000,
     hookTimeout: isIntegrationRun ? 35000 : 15000,
+    fileParallelism: !isIntegrationRun,
     exclude: [
       "**/node_modules/**",
       "**/dist/**",

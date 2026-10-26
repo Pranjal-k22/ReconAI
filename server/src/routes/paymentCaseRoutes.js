@@ -28,6 +28,13 @@ import { ROLES } from "../services/auth/tokenService.js";
 import { AppError } from "../utils/AppError.js";
 import { OrchestrationTask } from "../models/OrchestrationTask.js";
 import { queueOrchestrationTask } from "../services/orchestration/orchestrationService.js";
+import {
+  classifyCase,
+  getCaseClassification,
+  redactClassificationResponse
+} from "../services/classification/classificationService.js";
+import { createAuditEvent } from "../services/audit/auditService.js";
+import { PaymentCase } from "../models/PaymentCase.js";
 
 const router = express.Router();
 
@@ -517,6 +524,138 @@ router.post(
       });
 
       res.status(201).json({ success: true, data: task });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/payment-cases/:caseId/classify
+ * Executes authoritative, database-driven evidence classification (B2).
+ * Restricted strictly to ADMIN with strict empty body.
+ */
+router.post(
+  "/:caseId/classify",
+  requireRoles(ROLES.ADMIN),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+
+      // Strict empty body enforcement: caller cannot supply or inject evidence
+      if (req.body && Object.keys(req.body).length > 0) {
+        throw AppError.badRequest("classifyCase requires strict empty body; caller-supplied evidence is prohibited");
+      }
+
+      const scopedTenantId = req.tenantFilter || req.query?.tenantId || req.user.tenantId;
+      if (!scopedTenantId) {
+        throw AppError.badRequest("tenantId could not be determined for classification");
+      }
+
+      // Tenant ownership check: tenant mismatch returns 404
+      const caseDoc = await PaymentCase.findOne({
+        caseId: caseId.trim(),
+        tenantId: scopedTenantId
+      }).lean();
+
+      if (!caseDoc) {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
+      }
+
+      const result = await classifyCase({
+        tenantId: scopedTenantId,
+        caseId: caseId.trim(),
+        actor: req.user
+      });
+
+      res.status(200).json({
+        success: true,
+        data: redactClassificationResponse(result.evidenceRecord),
+        isReplay: result.isReplay
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/payment-cases/:caseId/classification
+ * Retrieves authoritative classification finding for a case (B2).
+ * RBAC: ADMIN, SHOP (own tenant), AUDITOR (own tenant or GLOBAL_AUDIT audited).
+ * CUSTOMER and all machine service roles return HTTP 403.
+ * Tenant mismatch returns HTTP 404.
+ */
+router.get(
+  "/:caseId/classification",
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+
+      // Role check: CUSTOMER and all service roles are strictly forbidden
+      if (
+        req.user.role === ROLES.CUSTOMER ||
+        req.user.role === ROLES.CUSTOMER_AI ||
+        req.user.role === ROLES.SHOP_AI ||
+        req.user.role === ROLES.PAYMENT_CONTROLLER ||
+        (req.user.role && req.user.role.startsWith("SERVICE_"))
+      ) {
+        throw AppError.forbidden("Access denied: role not authorized to view classification findings");
+      }
+
+      // Allowed roles: ADMIN, SHOP, AUDITOR
+      if (
+        req.user.role !== ROLES.ADMIN &&
+        req.user.role !== ROLES.SHOP &&
+        req.user.role !== ROLES.AUDITOR
+      ) {
+        throw AppError.forbidden("Access denied: role not recognized for classification access");
+      }
+
+      let scopedTenantId = req.user.tenantId;
+
+      if (req.user.role === ROLES.ADMIN) {
+        scopedTenantId = req.tenantFilter || req.query.tenantId || req.user.tenantId;
+      } else if (req.user.role === ROLES.AUDITOR) {
+        const hasGlobalAudit = Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT");
+        if (hasGlobalAudit && (req.tenantFilter || req.query.tenantId)) {
+          scopedTenantId = req.tenantFilter || req.query.tenantId;
+          // Emit append-only GLOBAL_AUDIT_ACCESSED audit event per ADR-12
+          await createAuditEvent({
+            tenantId: scopedTenantId,
+            action: "GLOBAL_AUDIT_ACCESSED",
+            entityType: "PaymentCase",
+            entityId: caseId.trim(),
+            actorId: req.user.sub || req.user.id || req.user.userId || "AUDITOR",
+            actorType: "HUMAN",
+            metadata: { endpoint: req.originalUrl, caseId }
+          });
+        } else {
+          scopedTenantId = req.user.tenantId;
+        }
+      } else if (req.user.role === ROLES.SHOP) {
+        scopedTenantId = req.user.tenantId;
+      }
+
+      // Tenant ownership check: tenant mismatch returns 404
+      const caseDoc = await PaymentCase.findOne({
+        caseId: caseId.trim(),
+        tenantId: scopedTenantId
+      }).lean();
+
+      if (!caseDoc) {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
+      }
+
+      const record = await getCaseClassification({
+        tenantId: scopedTenantId,
+        caseId: caseId.trim()
+      });
+
+      res.status(200).json({
+        success: true,
+        data: redactClassificationResponse(record)
+      });
     } catch (err) {
       next(err);
     }

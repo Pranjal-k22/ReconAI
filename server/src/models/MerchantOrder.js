@@ -66,6 +66,11 @@ const merchantOrderSchema = new mongoose.Schema(
       type: Date,
       default: Date.now
     },
+    notes: {
+      type: String,
+      trim: true,
+      default: null
+    },
     metadata: {
       type: mongoose.Schema.Types.Mixed,
       default: {}

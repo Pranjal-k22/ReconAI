@@ -11,6 +11,7 @@ import {
   verifyPolicyAuthorizationToken,
   UnauthorizedActionExecutionError
 } from "./policyAuthorizationToken.js";
+import { buildClassifierContext } from "../classification/classifierContextBuilder.js";
 import {
   reserveRefund,
   releaseRefundReservation,
@@ -168,6 +169,18 @@ export async function dispatchSandboxAction({
   const { paymentCase: caseDoc, gatewayPayment, merchantOrder, evidenceRecord } = evidence;
   let inFlightCommitmentsPaise = evidence.inFlightCommitmentsPaise;
 
+  // B3: Validate that the classification finding is fresh and matches current database state
+  const { inputHash: currentBuilderHash } = await buildClassifierContext({
+    tenantId: cleanTenantId,
+    caseId: cleanCaseId
+  });
+
+  const latestDecision = await PolicyDecision.findOne({
+    tenantId: cleanTenantId,
+    caseId: cleanCaseId
+  }).sort({ createdAt: -1 }).lean();
+  const recordedHash = latestDecision?.classificationInputHash || evidenceRecord?.inputHash;
+
   // When reconciling an in-flight operation (REQUESTED or OUTCOME_UNKNOWN), subtract its own reserved amount so it is not double-counted
   if (earlyExistingOp && (earlyExistingOp.operationStatus === "REQUESTED" || earlyExistingOp.operationStatus === "OUTCOME_UNKNOWN")) {
     inFlightCommitmentsPaise = Math.max(0, inFlightCommitmentsPaise - (earlyExistingOp.amountPaise || 0));
@@ -228,13 +241,6 @@ export async function dispatchSandboxAction({
   }
 
   // Verify configuration has not changed or deactivated since decision (B4)
-  const latestDecision = await PolicyDecision.findOne({
-    tenantId: cleanTenantId,
-    caseId: cleanCaseId
-  })
-    .sort({ createdAt: -1 })
-    .lean();
-
   if (latestDecision && latestDecision.policyConfigVersion != null) {
     if (
       !activePolicyConfigRecord ||
@@ -263,6 +269,19 @@ export async function dispatchSandboxAction({
         "POLICY_CONFIG_CHANGED"
       );
     }
+  }
+
+  // Verify classification has not become stale since decision (B3)
+  if (recordedHash && recordedHash !== currentBuilderHash) {
+    logger.warn(
+      { recordedHash, currentBuilderHash, tenantId: cleanTenantId, caseId: cleanCaseId },
+      "Provider dispatch rejected: classification is stale relative to current database state"
+    );
+    throw new AppError(
+      "Classification is stale relative to current database state; dispatch aborted",
+      409,
+      "CLASSIFICATION_STALE"
+    );
   }
 
   // Derive idempotencyKey server-side: policyDecisionId + actionType + gatewayPaymentId (B1)
@@ -961,3 +980,5 @@ export async function getProviderOperationsByCaseId(caseId, tenantId) {
 
   return ops.map(sanitizeProviderPayload);
 }
+
+export { dispatchSandboxAction as executeAuthorizedDispatch };

@@ -265,3 +265,40 @@ Allowing arbitrary or default monetary refund limits in code or deployment confi
     - Because two-person rule enforcement requires `approvedBy !== proposedBy`, every operating tenant must provision at least two administrator identities.
     - A second ADMIN account is provisioned using `accountService.provisionUserAccount({ tenantId, email, role: "ADMIN", ... })` by an existing bootstrap administrator.
 12. **No UI for Configuration Yet:** Policy configuration is strictly server-side API only in ReconAI 2.0 Stage 4.
+
+---
+
+## ADR-14: Database-Driven Classifier Context, Input Hash Provenance, and Consumer Freshness Invariants
+
+### Context
+In prior stages, the edge-case classification engine accepted an arbitrary in-memory context object. This design allowed callers or test fixtures to inject synthetic context directly, decoupling classification decisions from authoritative datastores and risking ungrounded financial evaluations. Furthermore, consumers (investigators, simulation evaluators, and sandbox dispatchers) did not verify that classification findings matched current database state.
+
+### Decision
+1. **Authoritative Datastore Derivation (`buildClassifierContext`):**
+   - The classifier context builder (`classifierContextBuilder.js`) derives context strictly from tenant-scoped MongoDB collections: `PaymentCase`, `GatewayPayment`, `MerchantOrder`, `ProviderOperation`, `SettlementRecord`, `PaymentLifecycleEvent`, and `OrchestrationTask`.
+   - The caller cannot provide request-body evidence or in-memory overrides.
+   - Cross-tenant boundaries are strictly enforced: tenantId comes solely from authenticated principal context.
+2. **Field Provenance and Cryptographic Input Hash:**
+   - Every populated field records its exact datastore provenance (`collection` and `documentId`).
+   - A deterministic, canonical JSON serialization followed by SHA-256 produces `inputHash`.
+   - `EvidenceRecord` persists `provenance` and `inputHash`.
+3. **Inert Claims Isolation & Zero Defaulting:**
+   - Free-form text fields (notes, customer claims, descriptions) are strictly quarantined into an inert `claims` list and never mapped to decision facts.
+   - Missing database records leave fields undefined; the classifier falls through to `UNKNOWN_SCENARIO` / `UNRESOLVED_UNCERTAINTY` (fail-closed safe hold) without guessing or defaulting to actionable scenarios.
+4. **Governed Classification Routes & Fail-Closed Audit:**
+   - `POST /api/payment-cases/:caseId/classify`: Restricted to `ADMIN` only. Accepts a strictly empty request body (`{}`). Emits a mandatory `CASE_CLASSIFIED` audit log. If the audit log write fails, the uncommitted `EvidenceRecord` is deleted and HTTP 503 is returned (fail-closed).
+   - `GET /api/payment-cases/:caseId/classification`: Restricted to `ADMIN`, `SHOP` (own tenant only), and `AUDITOR` (own tenant or `GLOBAL_AUDIT` audited). Sensitive internal credentials and secrets are stripped via redaction.
+5. **Consumer Freshness & Staleness Invariants:**
+   - Downstream consumers (`multiAgentInvestigator`, `dryRunSimulatorService`) obtain classification via `classifyCase` or verify `inputHash === currentBuilderHash`. If hashes diverge, evaluation yields `INSUFFICIENT_EVIDENCE`.
+   - `PolicyDecision` stores `classificationRecordId` and `classificationInputHash`.
+   - `providerDispatchService` recomputes the current builder hash and refuses dispatch with HTTP 409 `CLASSIFICATION_STALE` if the hash has changed since the policy decision was made.
+6. **Code-Derived Precedence (Safe-Hold Priority):**
+   - 41 deterministic rules are structured into 6 evaluation tiers.
+   - Any rule triggering a safe hold strictly outranks non-safe-hold rules within and across tiers. Specifically, Case 21 (`MISSING_SETTLEMENT`, safe-hold) takes priority over Case 6 (`STATUS_MISMATCH`, non-safe-hold) when settlement records are absent after the aging threshold.
+7. **Proven Reachability Table (Computed from Test JSON):**
+   - Of the 30 edge-case scenarios:
+     - **PROVEN_FROM_DB (14):** Cases 5, 6, 7, 8, 10, 11, 12, 17, 19, 20, 21, 22, 26, 30.
+     - **INGESTION_TIME (3):** Cases 14, 15, 28 (handled at network/webhook/auth boundaries).
+     - **NEEDS_CLAIM_INTAKE (3):** Cases 2, 3, 29 (require authenticated claim intake endpoints).
+     - **RESERVED (8):** Cases 1, 4, 9, 13, 16, 18, 23, 27.
+     - **NO_SOURCE (2):** Cases 24, 25 (external infrastructure faults not stored in DB records).

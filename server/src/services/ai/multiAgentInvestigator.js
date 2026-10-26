@@ -32,7 +32,8 @@ import {
   redactSensitiveData,
   sanitizeEvidenceText
 } from "./promptSanitizer.js";
-import { classifyPaymentScenario } from "../classification/evidenceClassifier.js";
+import { buildClassifierContext } from "../classification/classifierContextBuilder.js";
+import { classifyCase } from "../classification/classificationService.js";
 import { ROLES } from "../auth/tokenService.js";
 import { AppError } from "../../utils/AppError.js";
 import { logger } from "../../config/logger.js";
@@ -167,17 +168,52 @@ export async function runMultiAgentInvestigation({
     });
   }
 
-  // Derive or reuse deterministic classification finding
-  const deterministicClassification =
-    evidenceRecord ||
-    classifyPaymentScenario({
-      gatewayPayment,
-      merchantOrder,
-      paymentCase: caseDoc,
-      customerClaims,
-      lifecycleEvents,
-      context: { tenantId }
+  // B3: Consumers obtain finding through classifyCase or latest EvidenceRecord
+  // whose inputHash equals current builder hash; otherwise INSUFFICIENT_EVIDENCE.
+  let currentBuilderHash = null;
+  try {
+    const builderRes = await buildClassifierContext({
+      tenantId: tenantId.trim(),
+      caseId: caseId.trim()
     });
+    currentBuilderHash = builderRes.inputHash;
+  } catch (bErr) {
+    // builder error or missing case
+  }
+
+  if (!evidenceRecord || (currentBuilderHash && evidenceRecord.inputHash !== currentBuilderHash)) {
+    try {
+      const classRes = await classifyCase({
+        tenantId: tenantId.trim(),
+        caseId: caseId.trim(),
+        actor: { id: actorId, role: actorRole }
+      });
+      evidenceRecord = classRes.evidenceRecord;
+    } catch (err) {
+      // Classification could not run or failed closed
+    }
+  }
+
+  let deterministicClassification = null;
+  if (evidenceRecord && (!currentBuilderHash || evidenceRecord.inputHash === currentBuilderHash)) {
+    deterministicClassification = evidenceRecord;
+  } else {
+    deterministicClassification = {
+      recordId: `EVID-INSUFF-${caseId}`,
+      scenarioId: "INSUFFICIENT_EVIDENCE",
+      category: "UNKNOWN_OR_UNCLASSIFIED",
+      reasonCode: "INSUFFICIENT_EVIDENCE",
+      ruleId: "R_INSUFFICIENT_EVIDENCE_HOLD",
+      confidence: "LOW",
+      safeHold: true,
+      safeHoldCode: "INSUFFICIENT_EVIDENCE",
+      recommendation: "SAFE_HOLD",
+      suggestedNextStep: "ADVISORY_HOLD_FOR_REVIEW",
+      missingEvidence: ["Matching EvidenceRecord with current context inputHash"],
+      contradictions: [],
+      isExecutable: false
+    };
+  }
 
   // 4. Assemble controller-approved evidence cards
   const allCards = assembleEvidenceCards({

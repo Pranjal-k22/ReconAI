@@ -90,6 +90,7 @@ const gatewayPaymentSchema = new mongoose.Schema(
     refundAmountPaise: {
       type: Number,
       default: 0,
+      alias: "amountRefundedPaise",
       validate: {
         validator: isNonNegativeSafeInteger,
         message: "refundAmountPaise must be a non-negative safe integer"
@@ -103,9 +104,18 @@ const gatewayPaymentSchema = new mongoose.Schema(
         message: "reservedRefundPaise must be a non-negative safe integer"
       }
     },
+    amountAuthorizedPaise: {
+      type: Number,
+      default: null,
+      validate: {
+        validator: (v) => v === null || isNonNegativeSafeInteger(v),
+        message: "amountAuthorizedPaise must be a non-negative safe integer or null"
+      }
+    },
     capturedAmountPaise: {
       type: Number,
       default: null,
+      alias: "amountCapturedPaise",
       validate: {
         validator: (v) => v === null || isNonNegativeSafeInteger(v),
         message: "capturedAmountPaise must be a non-negative safe integer or null"
@@ -124,6 +134,10 @@ const gatewayPaymentSchema = new mongoose.Schema(
     rawData: {
       type: mongoose.Schema.Types.Mixed,
       default: {}
+    },
+    notes: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
     },
     isLateCapture: {
       type: Boolean,
