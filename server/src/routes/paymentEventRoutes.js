@@ -4,6 +4,7 @@ import {
   getEventsByCaseId,
   getEventsByPaymentId
 } from "../services/ledger/paymentLifecycleEventService.js";
+import { PaymentLifecycleEvent } from "../models/PaymentLifecycleEvent.js";
 import { authenticate, requireRoles, requireTenantScope } from "../middleware/authMiddleware.js";
 import { ROLES } from "../services/auth/tokenService.js";
 
@@ -13,6 +14,32 @@ const router = express.Router();
 
 router.use(authenticate);
 router.use(requireTenantScope);
+
+/**
+ * GET /api/payment-events - Lists lifecycle events with quarantine sentinel exclusion
+ */
+router.get("/", async (req, res, next) => {
+  try {
+    const scopedTenantId =
+      req.user.role === ROLES.ADMIN || req.user.role === ROLES.AUDITOR || req.user.role === ROLES.PAYMENT_CONTROLLER
+        ? req.tenantFilter || req.query.tenantId || null
+        : req.user.tenantId;
+
+    if (scopedTenantId && scopedTenantId.trim() === "unassigned_provider_quarantine") {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const query = scopedTenantId
+      ? { tenantId: scopedTenantId.trim() }
+      : { tenantId: { $ne: "unassigned_provider_quarantine" } };
+
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const events = await PaymentLifecycleEvent.find(query).limit(limit).sort({ ingestedAt: -1 }).lean();
+    res.status(200).json({ success: true, data: events });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /api/payment-events/case/:caseId - Retrieves normalized lifecycle events for a case

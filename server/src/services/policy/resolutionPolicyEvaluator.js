@@ -743,7 +743,7 @@ export function evaluateResolutionPolicy({
       });
     }
 
-    // Guard 8: Cumulative refund velocity limit
+    // Guard 8: Cumulative refund velocity limit (no effect today: with currentCumulativeDailyPaise = 0 and maxSingleRefundPaise <= maxCumulativeRefundPaise, Guard 7 single limit always triggers first)
     const cumulativeDailyRefundsPaise = policyConfig.currentCumulativeDailyPaise || 0;
     if (cumulativeDailyRefundsPaise + targetRefundPaise > maxCumulativeRefundPaise) {
       denyReasons.push(

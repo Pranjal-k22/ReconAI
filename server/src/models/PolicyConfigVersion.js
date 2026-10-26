@@ -80,9 +80,7 @@ const policyConfigVersionSchema = new mongoose.Schema(
           message: "maxSingleRefundPaise must be a positive safe integer"
         }
       },
-      // Plain meaning today: Evaluator checks (currentCumulativeDailyPaise + refundableBalancePaise) <= maxCumulativeRefundPaise.
-      // NOTE: "per-day velocity cap" and "cumulative-per-payment cap" across historical transactions are NOT IMPLEMENTED
-      // in production because currentCumulativeDailyPaise is never populated from DB history in production workflows.
+      // Plain meaning today: has no effect today. With currentCumulativeDailyPaise = 0 and maxSingleRefundPaise <= maxCumulativeRefundPaise, maxCumulativeRefundPaise never changes an outcome (Guard 7 single limit triggers first).
       maxCumulativeRefundPaise: {
         type: Number,
         required: [true, "maxCumulativeRefundPaise is required"],

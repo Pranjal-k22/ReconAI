@@ -260,7 +260,7 @@ Allowing arbitrary or default monetary refund limits in code or deployment confi
 10. **Limit Semantics Plain Meaning Today:**
     - `maxSingleRefundPaise`: Evaluated directly against the payment's refundable balance (`refundableBalancePaise <= maxSingleRefundPaise`). It caps individual refund executions.
     - `maxCumulativeRefundPaise`: In evaluator logic, checks `(currentCumulativeDailyPaise + refundableBalancePaise) <= maxCumulativeRefundPaise`.
-    - **NOT IMPLEMENTED IN PRODUCTION:** True "per-day velocity caps" and "cumulative-per-payment caps" across multiple historical transactions are NOT IMPLEMENTED in production today. In production, `currentCumulativeDailyPaise` is not calculated from historical transaction aggregates (defaults to 0), and provider dispatch currently only refunds full refundable balances.
+    - **NO EFFECT TODAY:** With `currentCumulativeDailyPaise = 0` and `maxSingleRefundPaise <= maxCumulativeRefundPaise` enforced, `maxCumulativeRefundPaise` has **no effect today** on evaluation outcomes because single refund limit Guard 7 always triggers first. True "per-day velocity caps" and "cumulative-per-payment caps" across multiple historical transactions are NOT IMPLEMENTED in production today (history aggregation is unpopulated). OWNER DECISION: implement real aggregation, or remove the field. Do not change evaluator behavior.
 11. **Second ADMIN Account Provisioning:**
     - Because two-person rule enforcement requires `approvedBy !== proposedBy`, every operating tenant must provision at least two administrator identities.
     - A second ADMIN account is provisioned using `accountService.provisionUserAccount({ tenantId, email, role: "ADMIN", ... })` by an existing bootstrap administrator.

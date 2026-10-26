@@ -11,7 +11,8 @@ import { AuditLog } from "../../src/models/AuditLog.js";
 import {
   ingestRazorpayWebhook,
   isValidReplayHash,
-  reprocessQuarantinedWebhookEvents
+  reprocessQuarantinedWebhookEvents,
+  setInFlightPauseHook
 } from "../../src/services/webhook/webhookService.js";
 import { migratePaymentLifecycleIndexes } from "../../scripts/migrateIndexes.js";
 
@@ -1768,5 +1769,124 @@ describe("ReconAI 2.0 - Provider Webhook Ingestion Real MongoDB Persistence Inte
     const eventDoc = await PaymentLifecycleEvent.findOne({ deduplicationKey }).lean();
     expect(eventDoc.processingStatus).toBe("PROCESSED");
     expect(eventDoc.processingAttemptId).not.toBe(crashedAttemptId);
+  });
+
+  it("A6: Deterministic race test holding first request in flight -> duplicate returns 503 -> release -> first returns ACCEPTED -> retry returns DUPLICATE_ACKNOWLEDGED", async () => {
+    const tenantId = `sh_det_race_${Date.now()}`;
+    const accountId = `acc_det_race_${Date.now()}`;
+    const testEventId = `evt_det_race_${Date.now()}`;
+    const paymentId = `pay_det_race_${Date.now()}`;
+    const orderId = `order_det_race_${Date.now()}`;
+
+    trackedPaymentIds.add(paymentId);
+    trackedOrderIds.add(orderId);
+
+    // Seed matching merchant order and gateway payment records
+    await MerchantOrder.create({
+      merchantOrderId: orderId,
+      tenantId,
+      amountPaise: 75000,
+      currency: "INR",
+      status: "CREATED"
+    });
+
+    await GatewayPayment.create({
+      gatewayPaymentId: paymentId,
+      tenantId,
+      merchantOrderId: orderId,
+      amountPaise: 75000,
+      currency: "INR",
+      status: "CREATED",
+      rawWebhookPayload: {}
+    });
+
+    const payload = {
+      entity: "event",
+      account_id: accountId,
+      event: "payment.captured",
+      contains: ["payment"],
+      payload: {
+        payment: {
+          entity: {
+            id: paymentId,
+            amount: 75000,
+            currency: "INR",
+            status: "captured",
+            order_id: orderId,
+            notes: { tenant_id: tenantId }
+          }
+        }
+      },
+      created_at: Math.floor(Date.now() / 1000)
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const signature = signBody(rawBody);
+
+    // Setup pause hook to hold Request 1 in flight
+    let releaseReq1;
+    const req1PausedPromise = new Promise((resolve) => {
+      setInFlightPauseHook(() => {
+        resolve(); // Signal that Request 1 has entered RECEIVED state and paused
+        return new Promise((release) => {
+          releaseReq1 = release;
+        });
+      });
+    });
+
+    // Send Request 1 (dispatches immediately; pauses in flight inside hook)
+    const req1Promise = new Promise((resolve, reject) => {
+      request(app)
+        .post("/api/webhooks/razorpay")
+        .set("Content-Type", "application/json")
+        .set("X-Razorpay-Signature", signature)
+        .set("X-Razorpay-Event-Id", testEventId)
+        .send(rawBody)
+        .end((err, res) => {
+          if (err) reject(err);
+          else resolve(res);
+        });
+    });
+
+    // Wait until Request 1 is reliably in flight and paused in RECEIVED state
+    await req1PausedPromise;
+
+    // Send Request 2 (duplicate in-flight)
+    const res2 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    // Record and assert res2 status AT THE TIME IT IS RECEIVED
+    const res2StatusAtReceipt = res2.status;
+    expect(res2StatusAtReceipt).toBe(503);
+
+    // Release Request 1 to complete its execution
+    releaseReq1();
+
+    // Await Request 1 completion and assert status AT TIME OF RECEIPT
+    const res1 = await req1Promise;
+    const res1StatusAtReceipt = res1.status;
+    expect(res1StatusAtReceipt).toBe(200);
+    expect(res1.body.data.status).toBe("ACCEPTED");
+
+    // Clean up hook
+    setInFlightPauseHook(null);
+
+    // Send Request 3 (retry after Request 1 completion)
+    const res3 = await request(app)
+      .post("/api/webhooks/razorpay")
+      .set("Content-Type", "application/json")
+      .set("X-Razorpay-Signature", signature)
+      .set("X-Razorpay-Event-Id", testEventId)
+      .send(rawBody);
+
+    // Record and assert res3 status AT TIME OF RECEIPT
+    const res3StatusAtReceipt = res3.status;
+    expect(res3StatusAtReceipt).toBe(200);
+    expect(res3.body.data.status).toBe("DUPLICATE_ACKNOWLEDGED");
+    expect(res3.body.data.isDuplicate).toBe(true);
   });
 });

@@ -45,6 +45,17 @@ export function resetInMemoryWebhookStore() {
   inMemoryCases.clear();
 }
 
+let inFlightPauseHook = null;
+/**
+ * Test-only hook to deterministically pause request processing while in RECEIVED state.
+ * Strictly disabled outside of test environment.
+ */
+export function setInFlightPauseHook(fn) {
+  if (process.env.NODE_ENV === "test") {
+    inFlightPauseHook = typeof fn === "function" ? fn : null;
+  }
+}
+
 export function seedInMemoryOrder(order) {
   inMemoryOrders.set(order.merchantOrderId, { ...order });
 }
@@ -907,6 +918,11 @@ export async function ingestRazorpayWebhook({ rawBody, headers, payload, customS
       }
       lifecycleEvent = eventDoc;
     }
+  }
+
+  // Test-only deterministic in-flight pause hook: holds request 1 in flight while in RECEIVED state
+  if (process.env.NODE_ENV === "test" && typeof inFlightPauseHook === "function") {
+    await inFlightPauseHook({ eventId: lifecycleEvent?.eventId, deduplicationKey });
   }
 
   // 9. Ingest Audit Trail (Fail closed: must succeed before mutating state; unhandled errors throw 503)

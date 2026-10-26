@@ -6,7 +6,8 @@ import * as auditService from "../services/audit/auditService.js";
  * Queries audit logs with filtering and pagination.
  */
 export const queryAuditLogs = asyncHandler(async (req, res) => {
-  const { runId, action, entityType, entityId, actorType, from, to, page, limit } = req.query;
+  const { runId, action, entityType, entityId, actorType, from, to, page, limit, tenantId } = req.query;
+  const scopedTenantId = req.tenantFilter || tenantId || null;
 
   const data = await auditService.queryAuditLogs({
     runId,
@@ -17,7 +18,8 @@ export const queryAuditLogs = asyncHandler(async (req, res) => {
     from,
     to,
     page,
-    limit
+    limit,
+    tenantId: scopedTenantId
   });
 
   res.status(200).json({
@@ -32,7 +34,8 @@ export const queryAuditLogs = asyncHandler(async (req, res) => {
  */
 export const getAuditEvent = asyncHandler(async (req, res) => {
   const { eventId } = req.params;
-  const log = await auditService.getAuditEventById(eventId);
+  const scopedTenantId = req.tenantFilter || req.query.tenantId || null;
+  const log = await auditService.getAuditEventById(eventId, scopedTenantId);
 
   res.status(200).json({
     success: true,

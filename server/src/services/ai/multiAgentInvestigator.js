@@ -329,7 +329,16 @@ export async function runMultiAgentInvestigation({
  * Retrieves past AI investigation runs for a case with strict tenant scoping.
  */
 export async function getInvestigationsByCaseId(caseId, tenantId, customerId = null) {
-  const query = { caseId, tenantId };
+  const cleanTenant = tenantId ? String(tenantId).trim() : null;
+  if (cleanTenant === "unassigned_provider_quarantine") {
+    return [];
+  }
+  const query = { caseId };
+  if (cleanTenant) {
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
   if (customerId) {
     query.customerId = customerId;
   }

@@ -163,9 +163,15 @@ export async function getPaymentCaseById(caseId, tenantId = null) {
     throw AppError.badRequest("caseId is required");
   }
 
-  const query = { caseId };
+  const query = { caseId: String(caseId).trim() };
   if (tenantId) {
-    query.tenantId = tenantId;
+    const cleanTenant = String(tenantId).trim();
+    if (cleanTenant === "unassigned_provider_quarantine") {
+      throw AppError.notFound(`PaymentCase not found for caseId '${caseId}'`);
+    }
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
   }
 
   const paymentCase = await PaymentCase.findOne(query);
@@ -228,7 +234,25 @@ export async function listPaymentCases({
   limit = 50
 } = {}) {
   const filter = {};
-  if (tenantId) filter.tenantId = tenantId;
+  const cleanTenant = tenantId ? String(tenantId).trim() : null;
+
+  if (cleanTenant) {
+    if (cleanTenant === "unassigned_provider_quarantine") {
+      return {
+        cases: [],
+        pagination: {
+          page,
+          limit,
+          total: 0,
+          pages: 0
+        }
+      };
+    }
+    filter.tenantId = cleanTenant;
+  } else {
+    filter.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
+
   const statusFilter = resolutionCaseStatus || resolutionCaseState;
   if (statusFilter) filter.resolutionCaseStatus = statusFilter;
   if (typeof isSafeHold === "boolean") filter.isSafeHold = isSafeHold;

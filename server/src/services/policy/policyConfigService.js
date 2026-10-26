@@ -704,11 +704,29 @@ export async function getActivePolicyConfig(tenantId) {
  */
 export async function listPolicyConfigs({ tenantId, status, page = 1, limit = 50 }) {
   const query = {};
-  if (tenantId) query.tenantId = tenantId.trim();
-  if (status) query.status = status.trim();
-
   const safePage = Math.max(1, parseInt(page, 10) || 1);
   const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+
+  const cleanTenant = tenantId ? tenantId.trim() : null;
+  if (cleanTenant) {
+    if (cleanTenant === "unassigned_provider_quarantine") {
+      return {
+        records: [],
+        pagination: {
+          page: safePage,
+          limit: safeLimit,
+          total: 0,
+          pages: 0
+        }
+      };
+    }
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
+
+  if (status) query.status = status.trim();
+
   const skip = (safePage - 1) * safeLimit;
 
   const [records, total] = await Promise.all([
@@ -732,7 +750,10 @@ export async function listPolicyConfigs({ tenantId, status, page = 1, limit = 50
  */
 export async function getPolicyConfigById(configId) {
   if (!configId) throw AppError.badRequest("configId is required");
-  const doc = await PolicyConfigVersion.findById(configId).lean();
+  const doc = await PolicyConfigVersion.findOne({
+    _id: configId,
+    tenantId: { $ne: "unassigned_provider_quarantine" }
+  }).lean();
   if (!doc) throw AppError.notFound(`PolicyConfigVersion '${configId}' not found`);
   return doc;
 }

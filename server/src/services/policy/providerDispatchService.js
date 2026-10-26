@@ -939,14 +939,23 @@ export async function recheckProviderOperationStatus({
  * Lists provider operations for a case within tenant.
  */
 export async function getProviderOperationsByCaseId(caseId, tenantId) {
-  if (!caseId || !tenantId) {
-    throw AppError.badRequest("caseId and tenantId are required");
+  if (!caseId) {
+    throw AppError.badRequest("caseId is required");
   }
 
-  const ops = await ProviderOperation.find({
-    caseId: caseId.trim(),
-    tenantId: tenantId.trim()
-  })
+  const cleanTenant = tenantId ? tenantId.trim() : null;
+  if (cleanTenant === "unassigned_provider_quarantine") {
+    return [];
+  }
+
+  const query = { caseId: caseId.trim() };
+  if (cleanTenant) {
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
+
+  const ops = await ProviderOperation.find(query)
     .sort({ createdAt: -1 })
     .lean();
 

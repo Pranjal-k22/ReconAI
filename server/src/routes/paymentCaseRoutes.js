@@ -217,6 +217,30 @@ router.get("/:caseId/investigations", async (req, res, next) => {
 });
 
 /**
+ * GET /api/payment-cases/:caseId/evidence - Retrieves past investigation and evidence records
+ */
+router.get("/:caseId/evidence", async (req, res, next) => {
+  try {
+    const { caseId } = req.params;
+    const isGlobal =
+      req.user.role === ROLES.ADMIN ||
+      req.user.role === ROLES.PAYMENT_CONTROLLER ||
+      (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+    const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.query?.tenantId : req.user.tenantId;
+
+    const results = await getInvestigationsByCaseId(
+      caseId,
+      scopedTenantId,
+      (req.user.role === ROLES.CUSTOMER || req.user.role === ROLES.CUSTOMER_AI) ? req.user.customerId : null
+    );
+
+    res.status(200).json({ success: true, data: results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/payment-cases/:caseId/policy/evaluate - Evaluates deterministic resolution policy and simulates eligible action
  */
 router.post(

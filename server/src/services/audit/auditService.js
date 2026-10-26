@@ -201,9 +201,31 @@ export async function queryAuditLogs({
   from,
   to,
   page = 1,
-  limit = 50
+  limit = 50,
+  tenantId = null
 } = {}) {
   const query = {};
+
+  const cleanTenant = tenantId ? String(tenantId).trim() : null;
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+
+  if (cleanTenant) {
+    if (cleanTenant === "unassigned_provider_quarantine") {
+      return {
+        logs: [],
+        pagination: {
+          page: p,
+          limit: l,
+          total: 0,
+          pages: 0
+        }
+      };
+    }
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
 
   if (runId) query.runId = runId;
   if (action) query.action = action;
@@ -217,8 +239,6 @@ export async function queryAuditLogs({
     if (to) query.timestamp.$lte = new Date(to);
   }
 
-  const p = Math.max(1, parseInt(page, 10) || 1);
-  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
   const skip = (p - 1) * l;
 
   const [logs, total] = await Promise.all([
@@ -240,8 +260,18 @@ export async function queryAuditLogs({
 /**
  * Retrieves a single audit log event by eventId.
  */
-export async function getAuditEventById(eventId) {
-  const log = await AuditLog.findOne({ eventId }).lean();
+export async function getAuditEventById(eventId, tenantId = null) {
+  const query = { eventId };
+  if (tenantId) {
+    if (tenantId.trim() === "unassigned_provider_quarantine") {
+      throw AppError.notFound(`Audit log event not found for eventId '${eventId}'`);
+    }
+    query.tenantId = tenantId.trim();
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
+
+  const log = await AuditLog.findOne(query).lean();
   if (!log) {
     throw AppError.notFound(`Audit log event not found for eventId '${eventId}'`);
   }

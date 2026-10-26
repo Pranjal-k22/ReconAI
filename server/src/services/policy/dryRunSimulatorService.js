@@ -420,13 +420,20 @@ export async function evaluateAndSimulateResolution({
  * Retrieves historical policy decisions for a case, scoped to tenant.
  */
 export async function getDecisionsByCaseId(caseId, tenantId) {
-  if (!caseId || !tenantId) {
-    throw AppError.badRequest("caseId and tenantId are required");
+  if (!caseId) {
+    throw AppError.badRequest("caseId is required");
   }
-  return await PolicyDecision.find({
-    caseId: caseId.trim(),
-    tenantId: tenantId.trim()
-  })
+  const cleanTenant = tenantId ? tenantId.trim() : null;
+  if (cleanTenant === "unassigned_provider_quarantine") {
+    return [];
+  }
+  const query = { caseId: caseId.trim() };
+  if (cleanTenant) {
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
+  return await PolicyDecision.find(query)
     .sort({ createdAt: -1 })
     .lean();
 }

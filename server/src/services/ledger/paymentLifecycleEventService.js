@@ -318,8 +318,17 @@ export async function getEventsByCaseId(caseId, tenantId = null) {
     throw AppError.badRequest("caseId is required");
   }
 
-  const query = { caseId };
-  if (tenantId) query.tenantId = tenantId;
+  const cleanTenant = tenantId ? String(tenantId).trim() : null;
+  if (cleanTenant === "unassigned_provider_quarantine") {
+    return [];
+  }
+
+  const query = { caseId: String(caseId).trim() };
+  if (cleanTenant) {
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
 
   return await PaymentLifecycleEvent.find(query).sort({ ingestedAt: 1 }).lean();
 }
@@ -332,8 +341,17 @@ export async function getEventsByPaymentId(gatewayPaymentId, tenantId = null) {
     throw AppError.badRequest("gatewayPaymentId is required");
   }
 
-  const query = { gatewayPaymentId };
-  if (tenantId) query.tenantId = tenantId;
+  const cleanTenant = tenantId ? String(tenantId).trim() : null;
+  if (cleanTenant === "unassigned_provider_quarantine") {
+    return [];
+  }
+
+  const query = { gatewayPaymentId: String(gatewayPaymentId).trim() };
+  if (cleanTenant) {
+    query.tenantId = cleanTenant;
+  } else {
+    query.tenantId = { $ne: "unassigned_provider_quarantine" };
+  }
 
   return await PaymentLifecycleEvent.find(query).sort({ ingestedAt: 1 }).lean();
 }

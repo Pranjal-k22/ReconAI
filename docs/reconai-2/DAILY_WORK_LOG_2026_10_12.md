@@ -1032,3 +1032,36 @@ ReconAI/
   - Concurrency integration tests: `server/tests/integration/policyConfigConcurrency.integration.test.js` (7 tests: 10 parallel approvals yielding exactly one winner, atomic supersede, unique ACTIVE index, audit failure fail-closed, refund fail-closed).
   - E2E lifecycle: `server/tests/integration/policyLimitsGovernedE2E.integration.test.js` (1 test: propose & approve -> decision records version -> dispatch succeeds with mocked fetch -> deactivate fails closed -> config change returns 409).
   - Updated `providerSandboxDispatchPersistence.integration.test.js`: seeds active `PolicyConfigVersion` records for test tenants; verifies missing limits fail-closed.
+
+### Entry 19: Stage 4.5 & Stage 5 Part A Evidence Integrity Corrections
+
+- **A1. History Evidence Verification**:
+  - Saved full diagnostics: `git log -n 200`, `git rev-list --count HEAD`, `git reflog -n 200`, `git reflog show origin/main -n 50`, `git remote -v`, `git replace -l`, `git notes list`, `git for-each-ref`, `git config --get-regexp "^(replace|core\.)"`.
+  - Re-ran and confirmed row counts: `git rev-list --count HEAD` = 117 (total commit count of the repository DAG) vs `git log -n 40` = 40 (explicit output limit).
+  - Inspected all 12 SHAs (`5810163`, `207717c`, `4b8c3c7`, `11b7a33`, `f8cc174`, `6888d19`, `7d786d9`, `a5c236d`, `768ea53`, `dcaa7a4`, `757efad`, `1c1739c`):
+    - Real commit author, date, parents, subject, and file counts verified against commit objects and reflogs.
+    - Result: Git commit messages in commit objects match reflog commit messages 100%. The discrepancies were solely in earlier stage reports' hallucinated narrative summaries. With `git replace -l` empty and reflog strictly showing linear updates, zero history rewrites occurred. A1 is completely explained.
+
+- **A2. Reachability by Runtime Tracing**:
+  - Deleted static handwritten scripts `server/scripts/auditReachabilityHonest.js` and `server/scripts/auditClassifierReachability.js`.
+  - Implemented dynamic runtime tracer `server/scripts/traceClassifierReachability.js` using recursive `Proxy` wrapping input fixtures from `server/tests/helpers/classificationScenarios.js`.
+  - Traced exact read-sets and evaluated real `scenarioId` and `safeHoldCode` across all 30 scenarios without hand-typed scenario names. Output persisted to `evidence/stage5/12-reachability-runtime-trace.json` and `.txt`.
+
+- **A3. Work Log & Doc Claims Corrections**:
+  - Removed unsupported claims ("8 of 30 reachable", static reachability tables, 6e).
+  - Updated `README.md`, `ARCHITECTURE_DECISIONS.md` (ADR-13), `ACCEPTANCE_CRITERIA.md`, `PHASE_6_CLASSIFICATION_ENGINE.md`, and `EDGE_CASE_POLICY_MATRIX.md`.
+
+- **A4. Real MongoDB Quarantine Sentinel Isolation**:
+  - Hardened query layers across `auditService.js`, `auditController.js`, `paymentCaseService.js`, `paymentLifecycleEventService.js`, `paymentEventRoutes.js`, `policyConfigService.js`, `dryRunSimulatorService.js`, `providerDispatchService.js`, and `multiAgentInvestigator.js` to strictly exclude the protected sentinel tenant `unassigned_provider_quarantine`.
+  - Created real MongoDB integration test `server/tests/integration/quarantineSentinelIsolation.integration.test.js` (23 tests, 100% passing).
+  - Seeded sentinel records in real Mongo and verified as ADMIN across every list and read route (`/api/payment-events`, `/api/payment-cases`, `/api/payment-cases/:caseId/investigations`, `/api/payment-cases/:caseId/evidence`, `/api/payment-cases/:caseId/policy/decisions`, `/api/payment-cases/:caseId/provider/operations`, `/api/audit`, `/api/policy-config`, `/api/policy-config/active`, `/api/policy-config/:id`) both with and without `?tenantId=unassigned_provider_quarantine`. Zero sentinel rows ever returned; 404 / empty array cleanly returned.
+  - Removed mocked service spies from `server/tests/auth/quarantineSentinelRejection.test.js`.
+
+- **A5. Truthful Refund Limit Semantics**:
+  - Created truth-table test `server/tests/policy/limitSemanticsTruth.test.js` (6 tests, 100% passing).
+  - Formally proved that when `currentCumulativeDailyPaise = 0` and `maxSingleRefundPaise <= maxCumulativeRefundPaise`, `maxCumulativeRefundPaise` never alters an outcome (single limit Guard 7 always triggers first, and cumulative limit Guard 8 is unreachable).
+  - Documented plain meaning as "no effect today" in model comments, ADR-13, README, and ACCEPTANCE_CRITERIA. Noted OWNER DECISION requirement: implement real historical aggregation or remove the field in future schema version.
+
+- **A6. Deterministic In-Flight Race Verification**:
+  - Added test-only hook `setInFlightPauseHook` in `webhookService.js` (strictly active only when `NODE_ENV === "test"`).
+  - Added deterministic race test in `server/tests/integration/webhookPersistence.integration.test.js`: holds Request 1 in flight in `RECEIVED` state, sends concurrent Request 2, asserts HTTP 503 at receipt time, releases Request 1, asserts HTTP 200 `ACCEPTED` at receipt time, then sends Request 3 retry and asserts HTTP 200 `DUPLICATE_ACKNOWLEDGED`. All statuses recorded strictly at the time of receipt.
