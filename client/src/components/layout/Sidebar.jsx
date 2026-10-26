@@ -14,6 +14,7 @@ import {
 
 export const navItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
+  { name: "Payment Cases", path: "/cases", icon: ShieldCheck },
   { name: "AI Finance Controller", path: "/finance-controller", icon: Bot },
   { name: "Reconciliation Runs", path: "/runs", icon: GitCompareArrows },
   { name: "Exceptions", path: "/exceptions", icon: TriangleAlert },

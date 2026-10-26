@@ -16,6 +16,8 @@ import AuditTrailPage from "./pages/AuditTrailPage";
 import ImportDataPage from "./pages/ImportDataPage";
 import RazorpaySyncPage from "./pages/RazorpaySyncPage";
 import EvaluationPage from "./pages/EvaluationPage";
+import CasesListPage from "./pages/CasesListPage";
+import CaseDetailPage from "./pages/CaseDetailPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 export default function App() {
@@ -31,6 +33,8 @@ export default function App() {
               {/* Internal Finance Controller & Operations App */}
               <Route path="/app" element={<AppLayout />}>
                 <Route index element={<DashboardPage />} />
+                <Route path="cases" element={<CasesListPage />} />
+                <Route path="cases/:caseId" element={<CaseDetailPage />} />
                 <Route path="finance-controller" element={<FinanceControllerPage />} />
                 <Route path="runs" element={<ReconciliationRunsPage />} />
                 <Route path="runs/:runId" element={<ReconciliationDetailPage />} />
@@ -44,6 +48,8 @@ export default function App() {
 
               {/* Direct convenience routes for existing bookmarks */}
               <Route element={<AppLayout />}>
+                <Route path="/cases" element={<CasesListPage />} />
+                <Route path="/cases/:caseId" element={<CaseDetailPage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/finance-controller" element={<FinanceControllerPage />} />
                 <Route path="/runs" element={<ReconciliationRunsPage />} />

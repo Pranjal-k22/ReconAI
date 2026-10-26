@@ -1117,3 +1117,25 @@ ReconAI/
   - Monitoring Smoke Test: 7/7 gates passed (`evidence/stage5_6/07-smoke.txt`).
   - Client Build: Clean build (`evidence/stage5_6/07-client-build.txt`).
   - Code Cleanliness: 0 whitespace / conflict errors (`evidence/stage5_6/07-diff-check.txt`).
+
+### Entry 22: Stage 6B Read-Only Operator Workspace and Token-Only Tenant Scoping
+
+- **API Read Contract & Verification**:
+  - Code-derived contract documented in `docs/reconai-2/API_READ_CONTRACT.md` covering all 8 workspace endpoints (`GET /api/payment-cases`, `GET /api/payment-cases/:caseId`, `GET /api/payment-cases/:caseId/classification`, `GET /api/payment-events/case/:caseId`, `GET /api/payment-cases/:caseId/investigations`, `GET /api/payment-cases/:caseId/evidence`, `GET /api/payment-cases/:caseId/policy/decisions`, `GET /api/payment-cases/:caseId/provider/operations`).
+  - Verified with real-Mongo supertest suite `server/tests/routes/workspaceApiContract.test.js` (7 contract invariant tests).
+- **Read-Only by Construction Client API Layer**:
+  - Implemented `client/src/api/casesApi.js` with zero mutation function exports (only GET functions exported).
+  - Enforced strict token-only tenant scoping: `x-tenant-id` header is unconditionally stripped; zero tenant parameters read from URL or storage.
+  - Bounded GET retries (up to 2 retries on 503 or network failure) with normalized error mapping (401, 403, 404, 503).
+- **Operator Workspace Components & Pages**:
+  - `client/src/components/common/RoleGuard.jsx`: Enforces access control allowing `ADMIN`, `SHOP`, `AUDITOR`; renders "not available for your role" for `CUSTOMER` and service principals without invoking data fetchers.
+  - `client/src/utils/formatMoney.js`: Implemented `formatPaiseToInr` with pure integer arithmetic (zero floating-point representation artifacts).
+  - `client/src/components/common/ExpandableText.jsx`: Inert plain-text renderer with truncation and expand controls (zero `dangerouslySetInnerHTML`).
+  - `client/src/pages/CasesListPage.jsx`: List view with Live API data badge, resolution status filter, safe-hold queue view (`?safeHold=true`), pagination, and age calculation.
+  - `client/src/pages/CaseDetailPage.jsx`: Detail view featuring 8-dimension state grid, amounts mismatch analysis, deterministic classification panel (facts vs claims separation with unverified claim badges), append-only lifecycle timeline, 4 agent advisory cards labeled "Advisory only" with live-vs-fallback markers, policy decisions with config version, read-only provider operations, and Case 22 safe-hold banner (*"late capture on a cancelled order: held, no automatic refund or reopen"*).
+- **Dev-Only Demo Seeder**:
+  - Implemented `server/scripts/seedWorkspaceDemo.js`: executes strictly when `NODE_ENV !== "production"`, Mongo host is `localhost`/`127.0.0.1`, database name contains `test` and not `prod`, and credentials are provided via `DEMO_SEED_PASSWORD`. Zero monetary limits seeded or defaulted.
+- **Client & Browser Verification**:
+  - Client Vitest Suite: 26 passed across 5 test files (`evidence/stage6/09-part-b-client.json`).
+  - Browser Verification via CDP (`server/scripts/captureScreenshotsCdp.js`): Captured 9 screenshots to `evidence/stage6/` covering ADMIN (all 6 cases), SHOP A (5 Tenant A cases), SHOP B (1 Tenant B case), AUDITOR A, CUSTOMER (blocked), SHOP A cross-tenant access to Tenant B case (404/Error), Case 22 detail, hostile-text detail (inert rendering), and safe-hold queue.
+  - Network Log Verification (`evidence/stage6/10-browser-network-log.json`): Confirmed zero non-GET requests issued by workspace views.

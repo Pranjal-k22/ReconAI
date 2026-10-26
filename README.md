@@ -249,6 +249,19 @@ npm run build
 
 ---
 
+## Operator Workspace (Read-Only) (Stage 6B)
+
+The operator workspace (`client`) provides a read-only investigation environment for human controllers and auditors across payment lifecycle cases:
+
+- **Strict Read-Only Enforcement**: The client workspace exports zero mutation functions (no POST, PUT, PATCH, DELETE). It contains no buttons that classify, investigate, dispatch, release, or edit cases.
+- **Token-Only Tenant Scoping**: The workspace strictly forbids `x-tenant-id` headers and reads zero tenant parameters from `localStorage` or URL query strings. All tenant scoping originates exclusively from the authenticated JWT token verified on the server.
+- **Zero Tenant Selector**: Platform `ADMIN` users operate system-wide; no tenant selector UI exists in this stage to guarantee zero accidental cross-tenant mutation.
+- **Fail-Closed Safe-Hold Visibility**: Held cases prominently display active hold reason codes and policies. For Case 22 (`LATE_CAPTURE_CANCELLED_ORDER`), the workspace explicitly displays: *"late capture on a cancelled order: held, no automatic refund or reopen"*.
+- **Inert Adversarial Text Rendering**: All customer claims, agent perspectives, and untrusted inputs are rendered strictly as text with truncation and expansion controls (zero `dangerouslySetInnerHTML`, zero markdown/HTML script execution).
+- **Local Dev-Only Demo Seeder**: `server/scripts/seedWorkspaceDemo.js` executes exclusively in non-production environments (`NODE_ENV !== "production"`), strictly refusing connection to any database host other than `localhost`/`127.0.0.1` or any database name without `test` or containing `prod`. Passwords must be explicitly provided via the `DEMO_SEED_PASSWORD` environment variable. Zero monetary limits are seeded or defaulted.
+
+---
+
 ## Documentation Links
 
 - [Demo Script Guide (`docs/DEMO_SCRIPT.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/DEMO_SCRIPT.md)
