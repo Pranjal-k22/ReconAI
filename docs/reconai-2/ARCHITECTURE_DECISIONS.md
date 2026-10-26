@@ -295,10 +295,18 @@ In prior stages, the edge-case classification engine accepted an arbitrary in-me
 6. **Code-Derived Precedence (Safe-Hold Priority):**
    - 41 deterministic rules are structured into 6 evaluation tiers.
    - Any rule triggering a safe hold strictly outranks non-safe-hold rules within and across tiers. Specifically, Case 21 (`MISSING_SETTLEMENT`, safe-hold) takes priority over Case 6 (`STATUS_MISMATCH`, non-safe-hold) when settlement records are absent after the aging threshold.
-7. **Proven Reachability Table (Computed from Test JSON):**
+7. **Strict Production Reachability Table (Code-Computed):**
    - Of the 30 edge-case scenarios:
-     - **PROVEN_FROM_DB (14):** Cases 5, 6, 7, 8, 10, 11, 12, 17, 19, 20, 21, 22, 26, 30.
-     - **INGESTION_TIME (3):** Cases 14, 15, 28 (handled at network/webhook/auth boundaries).
+     - **PROVEN_END_TO_END (8):** Cases 5, 6, 7, 17, 19, 20, 21, 22. (DB-seeded tests produce the scenario AND every decisive field has a production writer in `server/src` excluding legacy CSV import and sandbox-only dispatch writers).
+     - **SEEDABLE_ONLY (6):**
+       - Case 8 (`PARTIAL_CAPTURE`): `amountAuthorizedPaise` and `amountCapturedPaise` were added to the schema in Part B to make partial capture representable and test-seedable, but standard Razorpay webhook ingestion has zero production writers.
+       - Case 10 (`PARTIAL_REFUND`): No production webhook populates partial refund amount on GatewayPayment (written only via legacy CSV import or sandbox-only dispatch).
+       - Case 11 (`FULL_REFUND_INITIATED_NOT_COMPLETED`): Decisive in-flight pending refund state is written only by sandbox dispatch (`providerDispatchService.js:667`); no production webhook sets this state.
+       - Case 12 (`FAILED_REFUND`): Webhook processor does not update GatewayPayment refundStatus to uppercase 'FAILED' matching classifier check; written only via sandbox dispatch error handler (`providerDispatchService.js:770`).
+       - Case 26 (`WORKER_CRASH_ACTION_PENDING`): Decisive field `actionLeaseExpiresAt` is defined on `PaymentCase` schema but has no production background worker writer in `server/src`.
+       - Case 30 (`CHARGEBACK_OR_FORMAL_DISPUTE`): Decisive dispute fields (`gatewayPayment.dispute`) have no production gateway dispute webhook ingestion pipeline; populated only via manual case creation or test seed.
+     - **INGESTION_TIME (5):** Cases 13, 14, 15, 16, 28 (enforced at API/webhook/auth boundaries; terminal state idempotency, duplicate events, out-of-order sequencing, HMAC forgery, and tenant mismatch).
      - **NEEDS_CLAIM_INTAKE (3):** Cases 2, 3, 29 (require authenticated claim intake endpoints).
-     - **RESERVED (8):** Cases 1, 4, 9, 13, 16, 18, 23, 27.
-     - **NO_SOURCE (2):** Cases 24, 25 (external infrastructure faults not stored in DB records).
+     - **RESERVED (6):** Cases 1, 4, 9, 18, 23, 27.
+     - **NO_SOURCE (2):** Cases 24, 25 (transient infrastructure faults not stored in DB records).
+   - "Reachable" claims in production count strictly only **PROVEN_END_TO_END (8)**.

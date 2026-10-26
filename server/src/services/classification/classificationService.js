@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { EvidenceRecord } from "../../models/EvidenceRecord.js";
 import { PaymentCase } from "../../models/PaymentCase.js";
-import { buildClassifierContext } from "./classifierContextBuilder.js";
+import { buildClassifierContext, isClassificationStale } from "./classifierContextBuilder.js";
 import { classifyPaymentScenario } from "./evidenceClassifier.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { sanitizeMetadata } from "../../models/helpers/validators.js";
@@ -58,7 +58,7 @@ export async function classifyCase({ tenantId, caseId, actor }) {
   const cleanCaseId = caseId.trim();
 
   // 1. Build authoritative context package from datastores only
-  const { context, provenance, inputHash } = await buildClassifierContext({
+  const { context, provenance, inputHash, recordHash, outcome } = await buildClassifierContext({
     tenantId: cleanTenantId,
     caseId: cleanCaseId
   });
@@ -77,21 +77,37 @@ export async function classifyCase({ tenantId, caseId, actor }) {
   // 3. Persist EvidenceRecord idempotently with evaluationKey including inputHash
   const evaluationKey = `${cleanCaseId}:${inputHash}`;
 
-  let existingRecord = await EvidenceRecord.findOne({
+  const existingRecord = await EvidenceRecord.findOne({
     tenantId: cleanTenantId,
-    evaluationKey
-  }).lean();
+    caseId: cleanCaseId
+  }).sort({ evaluatedAt: -1, createdAt: -1 }).lean();
 
-  let evidenceRecord = existingRecord;
+  let evidenceRecord = null;
   let isReplay = false;
 
   if (existingRecord) {
-    isReplay = true;
-    logger.info(
-      { tenantId: cleanTenantId, caseId: cleanCaseId, evaluationKey, recordId: existingRecord.recordId },
-      "Idempotent replay: EvidenceRecord already exists for current inputHash"
-    );
-  } else {
+    const isStale = isClassificationStale({
+      storedRecordHash: existingRecord.recordHash || (existingRecord.evaluationKey ? existingRecord.evaluationKey.split(":")[1] : null),
+      storedOutcome: {
+        scenarioId: existingRecord.scenarioId,
+        safeHoldCode: existingRecord.safeHoldCode,
+        reasonCode: existingRecord.reasonCode
+      },
+      currentRecordHash: recordHash,
+      currentOutcome: outcome
+    });
+
+    if (!isStale) {
+      isReplay = true;
+      evidenceRecord = existingRecord;
+      logger.info(
+        { tenantId: cleanTenantId, caseId: cleanCaseId, evaluationKey, recordId: existingRecord.recordId },
+        "Idempotent replay: EvidenceRecord already exists for current inputHash"
+      );
+    }
+  }
+
+  if (!isReplay) {
     const recordId = `EVID-${Date.now()}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
     const newRecord = new EvidenceRecord({
       recordId,
@@ -115,6 +131,7 @@ export async function classifyCase({ tenantId, caseId, actor }) {
       suggestedNextStep: finding.suggestedNextStep || "ADVISORY_HOLD_FOR_REVIEW",
       evaluationKey,
       inputHash,
+      recordHash,
       provenance,
       supportingEvidence: finding.supportingEvidence,
       explanation: finding.explanation,

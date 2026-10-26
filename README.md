@@ -122,7 +122,7 @@ ReconAI's core strength is **responsible uncertainty handling**:
 | Can live Razorpay keys (`rzp_live_`) be used in Test Mode or Sandbox Writes? | **NO** | Safety invariant throws exception on `rzp_live_` keys across all adapters (`razorpayClient.js`, `razorpaySandboxAdapter.js`). |
 | Can GroundTruth answer keys influence matching decisions? | **NO** | GroundTruth imports forbidden in `server/src/services/reconciliation/` (`groundTruthIsolationGuard.test.js`). |
 | Can audit trail records be modified or deleted via API? | **NO** | Audit API provides `GET /api/audit` and `GET /api/audit/:id` only. |
-| Are Case 1 and Case 8 detectable from standard production payloads? | **NO** | Both cases are marked RESERVED: Case 1 lacks an authenticated client telemetry beacon endpoint, and Case 8 lacks an authorized-amount field in standard Razorpay Payment entities. |
+| Are Case 1 and Case 8 detectable from standard production payloads? | **NO** | Case 1 is RESERVED (lacks authenticated client telemetry beacon endpoint); Case 8 is SEEDABLE_ONLY (schema supports split capture, but standard Razorpay webhook ingestion has zero production writers for amountAuthorizedPaise/amountCapturedPaise). |
 
 ---
 

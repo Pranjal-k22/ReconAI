@@ -175,16 +175,20 @@ export async function getActionByIdempotencyKey(tenantId, idempotencyKey) {
   });
 }
 
-/**
- * Retrieves all PaymentActions associated with a case ID.
- */
 export async function getActionsByCaseId(caseId, tenantId = null) {
   if (!caseId) {
     throw AppError.badRequest("caseId is required");
   }
 
-  const query = { caseId };
-  if (tenantId) query.tenantId = tenantId;
+  const cleanTenant = typeof tenantId === "string" ? tenantId.trim() : null;
+  if (cleanTenant === "unassigned_provider_quarantine") {
+    return [];
+  }
+
+  const query = {
+    caseId,
+    tenantId: cleanTenant ? cleanTenant : { $ne: "unassigned_provider_quarantine" }
+  };
 
   return await PaymentAction.find(query).sort({ proposedAt: 1 }).lean();
 }

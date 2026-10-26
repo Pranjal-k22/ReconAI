@@ -61,18 +61,19 @@ Phase 6 implements a deterministic, explainable classification and evidence-coll
 
 ---
 
-## 2.1. Stage 5B Proven Reachability & Category Breakdown (Code-Computed)
+## 2.1. Stage 5.6 Strict Production Reachability Audit (Code-Computed)
 
-A scenario is classified as `PROVEN_FROM_DB` only if an integration test seeding purely database records produces that scenario ID without manual context injection. The definitive breakdown computed by `server/scripts/computeProvenReachability.js` across the 30 edge cases is:
+A scenario is classified as `PROVEN_END_TO_END` strictly iff an integration test produces that scenario ID AND every decisive field has a production writer in non-test `server/src` code (excluding legacy CSV import and sandbox-only dispatch writers). If a test produces it from DB seeding but decisive fields lack production writers, it is classified as `SEEDABLE_ONLY`. The definitive breakdown computed by `server/scripts/computeStrictReachability.js` across the 30 edge cases is:
 
-| Category | Count | Scenarios / Citations |
+| Category | Count | Scenarios / Production Writers / Justifications |
 |:---|:---:|:---|
-| **PROVEN_FROM_DB** | 14 | Cases 5, 6, 7, 8, 10, 11, 12, 17, 19, 20, 21, 22, 26, 30 |
-| **INGESTION_TIME** | 3 | Case 14 (`server/src/services/webhook/webhookService.js:210`), Case 15 (`server/src/services/webhook/webhookService.js:193`), Case 28 (`server/src/middleware/authMiddleware.js:230`) |
-| **NEEDS_CLAIM_INTAKE** | 3 | Case 2, Case 3, Case 29 (require claim-intake routes not yet implemented) |
-| **RESERVED** | 8 | Case 1, Case 4, Case 9, Case 13, Case 16, Case 18, Case 23, Case 27 |
-| **NO_SOURCE** | 2 | Case 24, Case 25 (runtime infrastructure faults not stored in persistence records) |
-| **Total** | 30 | |
+| **PROVEN_END_TO_END** | 8 | Cases 5, 6, 7, 17, 19, 20, 21, 22. All decisive fields have verified production writers in `server/src`. |
+| **SEEDABLE_ONLY** | 6 | Case 8 (`PARTIAL_CAPTURE` — schema fields `amountAuthorizedPaise`/`amountCapturedPaise` have no production ingestion writers), Case 10 (`PARTIAL_REFUND` — no webhook writes partial refund amount), Case 11 (`FULL_REFUND_INITIATED_NOT_COMPLETED` — refund initiation written only via sandbox dispatch `providerDispatchService.js:667`), Case 12 (`FAILED_REFUND` — refund failure written only via sandbox dispatch `providerDispatchService.js:770`), Case 26 (`WORKER_CRASH_ACTION_PENDING` — decisive field `actionLeaseExpiresAt` has no background worker writer), Case 30 (`CHARGEBACK_OR_FORMAL_DISPUTE` — `gatewayPayment.dispute` has no gateway dispute webhook pipeline). |
+| **INGESTION_TIME** | 5 | Case 13 (`server/src/services/webhook/webhookService.js:235`), Case 14 (`server/src/services/webhook/webhookService.js:210`), Case 15 (`server/src/services/webhook/webhookService.js:193`), Case 16 (`server/src/services/webhook/webhookService.js:1022`), Case 28 (`server/src/middleware/authMiddleware.js:230`). Enforced at network/webhook/auth boundaries. |
+| **NEEDS_CLAIM_INTAKE** | 3 | Case 2, Case 3, Case 29 (require authenticated claim intake endpoints not yet implemented). |
+| **RESERVED** | 6 | Case 1, Case 4, Case 9, Case 18, Case 23, Case 27 (reserved in classifier/policy domain models). |
+| **NO_SOURCE** | 2 | Case 24, Case 25 (runtime infrastructure faults not stored in persistence records). |
+| **Total** | 30 | Strict production reachable count is strictly **8** (`PROVEN_END_TO_END`). |
 
 ---
 

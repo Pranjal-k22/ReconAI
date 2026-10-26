@@ -15,16 +15,17 @@ Every autonomous action evaluated by ReconAI 2.0 must satisfy four foundational 
 
 ---
 
-## 1.1. Proven Reachability Summary (Stage 5B Code-Computed)
+## 1.1. Proven Reachability Summary (Stage 5.6 Code-Computed)
 
-Reachability is determined strictly by runtime proxy tracing and DB-driven classification (Stage 5 Part B). A scenario is `PROVEN_FROM_DB` only if an integration test seeding DB records alone produces that scenario ID without manual context injection.
+Reachability is determined strictly by runtime proxy tracing and DB-driven classification (Stage 5.6). Cases are categorized strictly based on whether decisive fields have production writers (excluding legacy CSV import and sandbox-only dispatch):
 
 | Category | Count | Cases | Notes / Enforcement Point |
 |:---|:---:|:---|:---|
-| **PROVEN_FROM_DB** | 14 | 5, 6, 7, 8, 10, 11, 12, 17, 19, 20, 21, 22, 26, 30 | Seeded purely from database records into `buildClassifierContext` |
-| **INGESTION_TIME** | 3 | 14, 15, 28 | Handled at boundary: `webhookService.js:210`, `webhookService.js:193`, `authMiddleware.js:230` |
+| **PROVEN_END_TO_END** | 8 | 5, 6, 7, 17, 19, 20, 21, 22 | Webhook / API poller writes all decisive fields in production |
+| **SEEDABLE_ONLY** | 6 | 8, 10, 11, 12, 26, 30 | Schema supports fields; test-seedable; zero production webhook writers |
+| **INGESTION_TIME** | 5 | 13, 14, 15, 16, 28 | Handled at ingestion/network boundary (`webhookService.js`, `authMiddleware.js`) |
 | **NEEDS_CLAIM_INTAKE** | 3 | 2, 3, 29 | Requires customer claim-intake endpoints not yet implemented |
-| **RESERVED** | 8 | 1, 4, 9, 13, 16, 18, 23, 27 | Reserved pending authoritative data sources or runtime concurrency locks |
+| **RESERVED** | 6 | 1, 4, 9, 18, 23, 27 | Reserved pending authoritative data sources or runtime concurrency locks |
 | **NO_SOURCE** | 2 | 24, 25 | Infrastructure runtime faults not persisted in transactional records |
 | **Total** | 30 | | Evaluated across all 30 scenario rules |
 
@@ -142,7 +143,7 @@ Reachability is determined strictly by runtime proxy tracing and DB-driven class
 
 ---
 
-### Case 8: Partial Capture [RESERVED: not detectable from documented fields]
+### Case 8: Partial Capture [SEEDABLE_ONLY in Stage 5: Schema Added in Part B; Zero Production Ingestion Writers]
 - **Detection Signal**: Gateway `amount_captured < amount_authorized` (Not present in documented standard entity).
 - **Authoritative Evidence**: Provider payment record with split capture fields.
 - **Missing / Uncertain Evidence**: Merchant partial fulfillment terms.

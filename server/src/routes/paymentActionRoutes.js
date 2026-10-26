@@ -23,6 +23,10 @@ router.get("/case/:caseId", async (req, res, next) => {
         ? req.tenantFilter || null
         : req.user.tenantId;
 
+    if (scopedTenantId && scopedTenantId.trim() === "unassigned_provider_quarantine") {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
     const actions = await getActionsByCaseId(caseId, scopedTenantId);
     res.status(200).json({ success: true, data: actions });
   } catch (err) {

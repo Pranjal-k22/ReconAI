@@ -9,6 +9,7 @@ import { PolicyDecision } from "../../src/models/PolicyDecision.js";
 import { ProviderOperation } from "../../src/models/ProviderOperation.js";
 import { PolicyConfigVersion, computePolicyConfigHash } from "../../src/models/PolicyConfigVersion.js";
 import { AiInvestigationRun } from "../../src/models/AiInvestigationRun.js";
+import { PaymentAction } from "../../src/models/PaymentAction.js";
 import { signUserToken, ROLES } from "../../src/services/auth/tokenService.js";
 import { validateTestDatabaseUri } from "../helpers/testDbGuard.js";
 
@@ -51,7 +52,8 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
         PolicyDecision.deleteMany({}),
         ProviderOperation.deleteMany({}),
         PolicyConfigVersion.deleteMany({}),
-        AiInvestigationRun.deleteMany({})
+        AiInvestigationRun.deleteMany({}),
+        PaymentAction.deleteMany({})
       ]);
 
       // Seed Quarantined (Sentinel) records
@@ -143,6 +145,19 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
         durationMs: 50
       });
 
+      await PaymentAction.create({
+        actionId: "act_sentinel_001",
+        tenantId: SENTINEL_TENANT,
+        caseId: "case_sentinel_001",
+        actionType: "SAFE_HOLD",
+        actionStatus: "HELD_IN_SAFE_HOLD",
+        initiatedByActorType: "SYSTEM_MONITOR",
+        initiatedByActorId: "system",
+        idempotencyKey: "idem_sentinel_001",
+        reasonCode: "SENTINEL_ISOLATION",
+        proposedAt: new Date()
+      });
+
       // Seed Valid Tenant records to verify real data is returned
       await PaymentLifecycleEvent.create({
         eventId: "ple_valid_001",
@@ -228,6 +243,19 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
         status: "COMPLETED",
         modelUsed: "FALLBACK_DETERMINISTIC",
         durationMs: 40
+      });
+
+      await PaymentAction.create({
+        actionId: "act_valid_001",
+        tenantId: VALID_TENANT,
+        caseId: "case_valid_001",
+        actionType: "REQUEST_REFUND",
+        actionStatus: "HELD_IN_SAFE_HOLD",
+        initiatedByActorType: "HUMAN_ADMIN",
+        initiatedByActorId: "admin",
+        idempotencyKey: "idem_valid_001",
+        reasonCode: "SAFE_HOLD_PENDING",
+        proposedAt: new Date()
       });
     }
   });
@@ -488,6 +516,28 @@ describe("Quarantine Sentinel Tenant Isolation — Real MongoDB Integration", { 
 
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);
+    });
+  });
+
+  describe("8. payment-actions endpoints", () => {
+    it("GET /api/payment-actions/case/:caseId with sentinel case returns empty list", async () => {
+      const res = await request(app)
+        .get("/api/payment-actions/case/case_sentinel_001")
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual([]);
+    });
+
+    it("GET /api/payment-actions/case/:caseId?tenantId=<sentinel> returns empty list", async () => {
+      const res = await request(app)
+        .get(`/api/payment-actions/case/case_valid_001?tenantId=${SENTINEL_TENANT}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual([]);
     });
   });
 });

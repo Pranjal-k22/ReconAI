@@ -7,8 +7,25 @@ import { SettlementRecord } from "../../models/SettlementRecord.js";
 import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
 import { PaymentMonitoringTask } from "../../models/PaymentMonitoringTask.js";
 import { OrchestrationTask } from "../../models/OrchestrationTask.js";
-import { sanitizeClaimText } from "./evidenceClassifier.js";
+import { sanitizeClaimText, classifyPaymentScenario } from "./evidenceClassifier.js";
 import { AppError } from "../../utils/AppError.js";
+
+let injectedClock = null;
+
+export function setClassifierClock(fn) {
+  injectedClock = fn;
+}
+
+export function resetClassifierClock() {
+  injectedClock = null;
+}
+
+export function getClassifierNow() {
+  if (process.env.NODE_ENV === "test" && typeof injectedClock === "function") {
+    return injectedClock();
+  }
+  return Date.now();
+}
 
 /**
  * Recursively sort object keys to produce a deterministic canonical JSON structure.
@@ -37,11 +54,128 @@ export function canonicalizeContext(val) {
 }
 
 /**
- * Computes deterministic SHA-256 hash over canonical context.
+ * Computes deterministic recordHash over stable database record identifiers,
+ * versions / updatedAt timestamps, statuses, and amounts.
+ * NEVER incorporates clock-derived or mutable counter values.
  */
-export function computeClassifierInputHash(context) {
-  const canonical = canonicalizeContext(context);
+export function computeClassifierRecordHash({
+  paymentCase,
+  gatewayPayment,
+  merchantOrder,
+  duplicatePayments = [],
+  refundRecords = [],
+  settlementRecords = [],
+  lifecycleEvents = [],
+  customerClaims = [],
+  inertClaims = []
+}) {
+  const stableData = {
+    paymentCase: paymentCase ? {
+      caseId: paymentCase.caseId,
+      tenantId: paymentCase.tenantId,
+      gatewayPaymentId: paymentCase.gatewayPaymentId || null,
+      merchantOrderId: paymentCase.merchantOrderId || null,
+      resolutionCaseStatus: paymentCase.resolutionCaseStatus,
+      disputeStatus: paymentCase.disputeStatus || null,
+      customerDebitStatus: paymentCase.customerDebitStatus || null,
+      safeHoldReason: paymentCase.safeHoldReason || null,
+      updatedAt: paymentCase.updatedAt ? new Date(paymentCase.updatedAt).toISOString() : null
+    } : null,
+    gatewayPayment: gatewayPayment ? {
+      gatewayPaymentId: gatewayPayment.gatewayPaymentId,
+      merchantOrderId: gatewayPayment.merchantOrderId || null,
+      status: gatewayPayment.status,
+      amountPaise: gatewayPayment.amountPaise,
+      amountAuthorizedPaise: gatewayPayment.amountAuthorizedPaise ?? null,
+      amountCapturedPaise: gatewayPayment.amountCapturedPaise ?? null,
+      amountRefundedPaise: gatewayPayment.amountRefundedPaise || gatewayPayment.refundAmountPaise || 0,
+      refundStatus: gatewayPayment.refundStatus || null,
+      dispute: Boolean(gatewayPayment.dispute),
+      updatedAt: gatewayPayment.updatedAt ? new Date(gatewayPayment.updatedAt).toISOString() : null
+    } : null,
+    merchantOrder: merchantOrder ? {
+      merchantOrderId: merchantOrder.merchantOrderId,
+      orderStatus: merchantOrder.orderStatus || merchantOrder.status,
+      amountPaise: merchantOrder.amountPaise,
+      updatedAt: merchantOrder.updatedAt ? new Date(merchantOrder.updatedAt).toISOString() : null
+    } : null,
+    duplicatePayments: (duplicatePayments || []).map((p) => ({
+      gatewayPaymentId: p.gatewayPaymentId,
+      status: p.status,
+      amountPaise: p.amountPaise,
+      updatedAt: p.updatedAt ? new Date(p.updatedAt).toISOString() : null
+    })).sort((a, b) => String(a.gatewayPaymentId).localeCompare(String(b.gatewayPaymentId))),
+    refundRecords: (refundRecords || []).map((r) => ({
+      operationId: r.operationId,
+      status: r.operationStatus || r.status,
+      amountPaise: r.amountPaise,
+      updatedAt: r.updatedAt ? new Date(r.updatedAt).toISOString() : null
+    })).sort((a, b) => String(a.operationId).localeCompare(String(b.operationId))),
+    settlementRecords: (settlementRecords || []).map((s) => ({
+      settlementId: s.settlementId,
+      status: s.status,
+      amountPaise: s.amountPaise,
+      updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null
+    })).sort((a, b) => String(a.settlementId).localeCompare(String(b.settlementId))),
+    lifecycleEvents: (lifecycleEvents || []).map((e) => ({
+      eventId: e.eventId,
+      normalizedEventType: e.normalizedEventType,
+      sourceSystem: e.sourceSystem
+    })).sort((a, b) => String(a.eventId).localeCompare(String(b.eventId))),
+    customerClaims: (customerClaims || []).map((c) => ({
+      claimType: c.claimType,
+      statement: c.statement
+    })).sort((a, b) => String(a.claimType).localeCompare(String(b.claimType))),
+    inertClaims: (inertClaims || []).map((c) => ({
+      claimType: c.claimType,
+      statement: c.statement
+    })).sort((a, b) => String(a.claimType).localeCompare(String(b.claimType)))
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(canonicalizeContext(stableData))).digest("hex");
+}
+
+/**
+ * Computes deterministic SHA-256 hash over canonical context or { recordHash, outcome }.
+ * Bound to recordHash and outcome; clock movement without outcome change produces identical hash.
+ */
+export function computeClassifierInputHash(arg) {
+  if (arg && arg.recordHash !== undefined) {
+    const canonical = canonicalizeContext({
+      recordHash: arg.recordHash,
+      outcome: arg.outcome ? {
+        scenarioId: arg.outcome.scenarioId,
+        safeHoldCode: arg.outcome.safeHoldCode || "NONE",
+        reasonCode: arg.outcome.reasonCode
+      } : null
+    });
+    return crypto.createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+  }
+  const canonical = canonicalizeContext(arg);
   return crypto.createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/**
+ * Checks whether a classification is stale.
+ * A classification is STALE iff:
+ * 1. recordHash changed (underlying DB records mutated), OR
+ * 2. recomputed outcome differs from stored outcome (scenarioId, safeHoldCode, or reasonCode changed).
+ * Time passing alone does NOT make it stale unless it changes the outcome.
+ */
+export function isClassificationStale({ storedRecordHash, storedOutcome, currentRecordHash, currentOutcome }) {
+  if (!storedRecordHash || storedRecordHash !== currentRecordHash) {
+    return true;
+  }
+  if (!storedOutcome || !currentOutcome) {
+    return true;
+  }
+  if (
+    storedOutcome.scenarioId !== currentOutcome.scenarioId ||
+    (storedOutcome.safeHoldCode || "NONE") !== (currentOutcome.safeHoldCode || "NONE") ||
+    storedOutcome.reasonCode !== currentOutcome.reasonCode
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -201,11 +335,22 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     (p) => typeof p.amountPaise === "number" && p.amountPaise !== duplicatePayments[0].amountPaise
   );
 
+  const nowMs = getClassifierNow();
+
   let elapsedHoursSincePayment = 0;
   if (gatewayPayment?.createdAt) {
     elapsedHoursSincePayment = Math.max(
       0,
-      Math.floor((Date.now() - new Date(gatewayPayment.createdAt).getTime()) / (1000 * 60 * 60))
+      Math.floor((nowMs - new Date(gatewayPayment.createdAt).getTime()) / (1000 * 60 * 60))
+    );
+  }
+
+  const paymentTime = gatewayPayment?.createdAt || caseDoc?.createdAt;
+  let pendingMinutes = 0;
+  if (paymentTime) {
+    pendingMinutes = Math.max(
+      0,
+      Math.floor((nowMs - new Date(paymentTime).getTime()) / (1000 * 60))
     );
   }
 
@@ -250,7 +395,7 @@ export async function buildClassifierContext({ tenantId, caseId }) {
   const isLeaseExpired =
     caseDoc.resolutionCaseStatus === "CASE_ACTION_IN_PROGRESS" &&
     caseDoc.actionLeaseExpiresAt &&
-    new Date(caseDoc.actionLeaseExpiresAt) < new Date();
+    new Date(caseDoc.actionLeaseExpiresAt).getTime() < nowMs;
 
   const leaseRenewalCount = caseDoc.metadata?.leaseRenewalCount || 0;
 
@@ -266,6 +411,7 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     capturedPayments,
     amountsDiffer,
     elapsedHoursSincePayment,
+    pendingMinutes,
     missingSettlementOverdue,
     delayedSettlement,
     duplicateSettlement,
@@ -307,12 +453,44 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     context: runtimeContext
   };
 
-  // 7. Compute Canonical Input Hash
-  const inputHash = computeClassifierInputHash(contextPackage);
+  // 7. Derive Authoritative Recomputed Outcome
+  const outcomeFinding = classifyPaymentScenario({
+    gatewayPayment,
+    merchantOrder,
+    paymentCase: caseDoc,
+    lifecycleEvents: lifecycleEvents || [],
+    settlementRecords: settlementRecords || [],
+    customerClaims,
+    context: runtimeContext
+  });
+
+  const outcome = {
+    scenarioId: outcomeFinding.scenarioId,
+    safeHoldCode: outcomeFinding.safeHoldCode || "NONE",
+    reasonCode: outcomeFinding.reasonCode
+  };
+
+  // 8. Compute Clock-Independent Record Hash
+  const recordHash = computeClassifierRecordHash({
+    paymentCase: caseDoc,
+    gatewayPayment,
+    merchantOrder,
+    duplicatePayments,
+    refundRecords,
+    settlementRecords,
+    lifecycleEvents,
+    customerClaims,
+    inertClaims
+  });
+
+  // 9. Compute Canonical Input Hash (bound to recordHash and outcome)
+  const inputHash = computeClassifierInputHash({ recordHash, outcome });
 
   return {
     context: contextPackage,
     provenance,
+    recordHash,
+    outcome,
     inputHash
   };
 }

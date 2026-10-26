@@ -192,6 +192,12 @@ const evidenceRecordSchema = new mongoose.Schema(
       default: null,
       index: true
     },
+    recordHash: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true
+    },
     provenance: {
       type: mongoose.Schema.Types.Mixed,
       default: {}
