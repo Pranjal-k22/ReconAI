@@ -384,3 +384,60 @@ Stage 3 hardens the provider dispatch path against unauthorized mutations, doubl
    - Prior to any re-send for an `OUTCOME_UNKNOWN` operation, provider refunds list is fetched and matched by idempotency key/reference/receipt and amount.
    - Match found: adopts provider refund ID and verifies outcome.
    - No match found: keeps the same stable idempotency key on retry.
+
+---
+
+## 12. ReconAI 2.0 Stages 5 & 6 — Classification Engine & Read-Only Operator Workspace
+
+ReconAI 2.0 evolves into a full-lifecycle payment monitoring network with deterministic classification and a read-only operator workspace:
+
+```mermaid
+graph TD
+    subgraph Ingestion["Ingestion & Monitoring"]
+        Webhook["Razorpay Webhook (HMAC SHA-256)"] --> ConcurrencyLock["In-Flight Concurrency Guard (503)"]
+        ConcurrencyLock --> LifecycleLedger["Append-Only PaymentLifecycleEvent"]
+        MonitoringPoller["Background Worker (Monotonic Leases)"] --> ProviderRead["Safe Provider GET Read"]
+        ProviderRead --> StateMachine["8-Dimension Payment State Machine"]
+    end
+
+    subgraph Classification["Deterministic Classification Engine"]
+        StateMachine --> ContextBuilder["Classifier Context Builder"]
+        ContextBuilder --> MaterialHash["Material-State RecordHash (Staleness Guard)"]
+        ContextBuilder --> PrecedenceEngine["30-Scenario Precedence Engine (40 Rules)"]
+        PrecedenceEngine --> EvidenceRecordStore["Immutable EvidenceRecord Store"]
+    end
+
+    subgraph OperatorWorkspace["Read-Only Operator Workspace (Stage 6B)"]
+        EvidenceRecordStore --> CasesApi["casesApi.js (Strictly GET)"]
+        CasesApi --> RoleGuard["RoleGuard (ADMIN, SHOP, AUDITOR)"]
+        RoleGuard --> CaseList["CasesListPage (Safe-Hold Queue)"]
+        RoleGuard --> CaseDetail["CaseDetailPage (8-Dimension Grid & Timeline)"]
+        CaseDetail --> SafeHoldBanner["Case 22 Late Capture Safe-Hold Banner"]
+        CaseDetail --> TextRenderer["ExpandableText (Text-Only / XSS Protected)"]
+    end
+```
+
+### Architectural Principles & Guarantees:
+
+1. **8-Dimension Monotonic Payment State Machine**:
+   - Manages state across 8 independent business dimensions: `orderStatus`, `captureStatus`, `authorizationStatus`, `refundStatus`, `disputeStatus`, `customerDebitStatus`, `resolutionCaseStatus`, `discrepancyCategory`.
+   - Transitions are monotonic; delayed or out-of-order webhooks cannot cause state regression.
+
+2. **30-Scenario Precedence Engine & Precedence Robustness**:
+   - Evaluates canonical payment cases against 30 deterministic scenarios (repairs, delayed settlements, duplicate payments, partial refunds, customer debit claims, and safe-hold categories).
+   - regex over comments and `Function#toString` branch counting asserts 40 rule branches. Precedence tests verify contradiction stability across all 36 unmergeable contradictory pairs.
+   - **52 Changed Merged Outcomes (Owner Decision ADR-14)**: Reordering merged inputs changed 52 outcomes, 49 not-held to held, 3 held to held, 0 held to not-held. Standalone fixture results retain zero differences.
+
+3. **Material-State Record Hash (`recordHash`)**:
+   - Hashes strictly material business state (document IDs, statuses, amounts in paise, currencies, capture/refund/dispute/settlement states, linked IDs, customer claims).
+   - Excludes mutable timestamps (`updatedAt`), revision markers (`__v`), task counters (`pollCount`, `leaseExpiresAt`), audit streams, and telemetry metadata.
+   - Idempotent provider rechecks leave hash unchanged; status changes trigger staleness invalidation.
+   - Renewal procedure documented in ADR-14: `POST /api/payment-cases/:caseId/classify` (callable by `ADMIN` or `SERVICE`).
+
+4. **Read-Only Operator Workspace (Client Stage 6B)**:
+   - **Strictly Read-Only by Construction**: Client API exports only GET operations. Zero buttons that classify, investigate, dispatch, release, or edit.
+   - **Token-Only Multi-Tenant Scoping**: All tenant context comes from verified server-side JWT claims. The client API strips any `x-tenant-id` header or URL tenant parameter.
+   - **Role-Aware Access**: `ADMIN`, `SHOP`, and `AUDITOR` access the workspace. `CUSTOMER` and machine services receive inline role notices without background data fetchers.
+   - **XSS-Safe Text Rendering**: All customer claims and agent text are rendered as text literals via `ExpandableText.jsx` (zero `dangerouslySetInnerHTML`).
+   - **Integer Paise Formatter**: Monetary values are formatted using integer arithmetic, preventing floating-point rounding errors.
+   - **Prominent Case 22 Safe-Hold Banner**: Explicitly displays *"late capture on a cancelled order: held, no automatic refund or reopen"*.

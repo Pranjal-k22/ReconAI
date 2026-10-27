@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Architecture Decision Records (ADRs)
 
-> **DOCUMENT STATUS: PROPOSED — AWAITING OWNER REVIEW**  
-> *This document details the core architectural decisions, design tradeoffs, and technical patterns for ReconAI 2.0. No application code has been modified.*
+> **DOCUMENT STATUS: IMPLEMENTED & VERIFIED (ADR-01 through ADR-15)**<br/>
+> *This document details the authoritative architectural decisions, design tradeoffs, and technical patterns for ReconAI 2.0 across Stages 1–6.*
 
 ---
 
@@ -20,6 +20,8 @@
 - [ADR-11: Phase 3 Authentication, RBAC, and Row-Level Tenant Isolation Enforcement](#adr-11-phase-3-authentication-rbac-and-row-level-tenant-isolation-enforcement)
 - [ADR-12: Phase 3 Security Correction — Auditor Scope, Identity Provenance, Service Binding, and Persistent Revocation](#adr-12-phase-3-security-correction--auditor-scope-identity-provenance-service-binding-and-persistent-revocation)
 - [ADR-13: Governed Versioned Policy-Limits Configuration and Two-Person Approval Boundary](#adr-13-governed-versioned-policy-limits-configuration-and-two-person-approval-boundary)
+- [ADR-14: Database-Driven Classifier Context, Input Hash Provenance, and Consumer Freshness Invariants](#adr-14-database-driven-classifier-context-input-hash-provenance-and-consumer-freshness-invariants)
+- [ADR-15: Read-Only Operator Workspace and Tenant Isolation Boundary](#adr-15-read-only-operator-workspace-and-tenant-isolation-boundary)
 
 ---
 
@@ -173,10 +175,10 @@ In distributed payment architectures, network retries or concurrent agent trigge
 
 ### Decision
 Every financial mutation is guarded by:
-1. **Deterministic Idempotency Key**: Generated as `IDEM-{actionType}-{paymentId}-{caseId}`.
+1. **Deterministic Idempotency Key**: In production dispatch (`providerDispatchService.js:291`), the canonical server-derived key is `${policyDecisionId}_${effectiveActionType}_${gatewayPayment.gatewayPaymentId}`. It is deterministic, stable, and time-independent (no transient timestamps or dates). Test fixtures may use explicit mock keys (e.g., `IDEM-READY-01`).
 2. **MongoDB Compound Unique Constraint**: An `ActionExecutionRecord` collection enforces uniqueness on `{ idempotencyKey: 1 }`.
-3. **Case-Level Optimistic Locking / Action Lease**: Before an action is dispatched, the `PaymentCase` status transitions to `ACTION_IN_PROGRESS` with an `actionLeaseExpiresAt = Date.now() + 30000` (30-second lease). If another process attempts to act on the same case, it receives a concurrency conflict error.
-4. **Provider Idempotency Header**: The key is transmitted in the provider HTTP header `X-Razorpay-Idempotency-Key`.
+3. **Case-Level Optimistic Locking / Action Lease**: Before an action is dispatched, the `PaymentCase` status transitions to `CASE_ACTION_IN_PROGRESS` with an `actionLeaseExpiresAt = Date.now() + 30000` (30-second lease). If another process attempts to act on the same case, it receives a concurrency conflict error.
+4. **Provider Idempotency Header**: The key is transmitted in the provider HTTP header `X-Refund-Idempotency` (for refunds per Razorpay documentation).
 
 ---
 
@@ -187,9 +189,10 @@ Payments often fail transiently or experience late authorization up to 30 minute
 
 ### Decision
 We introduce an autonomous background worker pipeline:
-1. **Payment Monitoring Worker**: Runs on a configurable interval (e.g., every 30 seconds). Queries pending cases where `status === 'DETECTED'` or `status === 'INVESTIGATING'` with action `WAIT_AND_MONITOR`.
+1. **Payment Monitoring Worker**: Runs on a configurable interval (default 30 seconds, `leaseDurationMs = 30000`). Queries pending tasks where status is `CASE_DETECTED` or `CASE_INVESTIGATING`.
 2. **Authoritative Polling**: For stuck payments exceeding provider SLAs without a webhook, the worker queries the provider GET endpoint to reconstruct true state.
-3. **Dead-Letter Recovery**: If a worker crashes while a case has an active lease, the subsequent worker sweep identifies expired leases (`actionLeaseExpiresAt < Date.now()`), queries the provider to determine whether the action executed, and safely updates the case.
+3. **Bounded Retry Schedule**: The worker adheres to a backoff schedule of `[60, 300, 900, 1800]` seconds (T+1m, T+5m, T+15m, T+30m). When retries are exhausted without authoritative confirmation, the task transitions strictly to `CASE_SAFE_HOLD` (`safeHoldCode: "MONITORING_WINDOW_EXHAUSTED"`), never prematurely marking resolved or executing unverified refunds.
+4. **Dead-Letter Recovery**: If a worker crashes while a case has an active lease, the subsequent worker sweep identifies expired leases (`actionLeaseExpiresAt < Date.now()`), queries the provider to determine whether the action executed, and safely updates the case.
 
 ---
 
@@ -292,10 +295,13 @@ In prior stages, the edge-case classification engine accepted an arbitrary in-me
    - Downstream consumers (`multiAgentInvestigator`, `dryRunSimulatorService`) obtain classification via `classifyCase` or verify `inputHash === currentBuilderHash`. If hashes diverge, evaluation yields `INSUFFICIENT_EVIDENCE`.
    - `PolicyDecision` stores `classificationRecordId` and `classificationInputHash`.
    - `providerDispatchService` recomputes the current builder hash and refuses dispatch with HTTP 409 `CLASSIFICATION_STALE` if the hash has changed since the policy decision was made.
-   - **Renewal of Stale Policy Decisions:** When a classification goes stale (underlying material records mutated or an aging threshold crossed):
-     1. An authenticated operator with role `ADMIN` calls `POST /api/payment-cases/:caseId/classify` (with an empty body `{}`). This reads the authoritative datastores, computes the new `recordHash` and `outcome`, generates a fresh `EvidenceRecord`, and commits an audit log.
-     2. An `ADMIN` re-evaluates the policy decision against the new `EvidenceRecord`, updating `PolicyDecision.classificationRecordId` and `PolicyDecision.classificationInputHash`.
-     3. Subsequent dispatch via `providerDispatchService.dispatchSandboxAction` checks `policyDecision.classificationInputHash === currentBuilderHash`. With both hashes aligned to current material database state, the staleness gate passes.
+       - **Renewal of Stale Policy Decisions:** When a classification goes stale (underlying material records mutated or an aging threshold crossed):
+      1. The classify endpoint is defined in `server/src/routes/paymentCaseRoutes.js:549-595`:
+         `router.post("/:caseId/classify", requireRoles(ROLES.ADMIN), async (req, res, next) => { ... })`
+         Role check: `requireRoles(ROLES.ADMIN)`. Callable strictly by `ADMIN`.
+      2. An authenticated operator with role `ADMIN` calls `POST /api/payment-cases/:caseId/classify` with a strict empty request body `{}`. This reads the authoritative datastores, computes the new `recordHash` and `outcome`, generates a fresh `EvidenceRecord`, and commits an audit log.
+      3. An `ADMIN` re-evaluates the policy decision against the new `EvidenceRecord`, updating `PolicyDecision.classificationRecordId` and `PolicyDecision.classificationInputHash`.
+      4. Subsequent dispatch via `providerDispatchService.dispatchSandboxAction` checks `policyDecision.classificationInputHash === currentBuilderHash`. With both hashes aligned to current material database state, the staleness gate passes.
 6. **Code-Derived Precedence (Safe-Hold Priority):**
    - 41 deterministic rules are structured into 6 evaluation tiers.
    - Any rule triggering a safe hold strictly outranks non-safe-hold rules within and across tiers. Specifically, Case 21 (`MISSING_SETTLEMENT`, safe-hold) takes priority over Case 6 (`STATUS_MISMATCH`, non-safe-hold) when settlement records are absent after the aging threshold.
@@ -316,5 +322,27 @@ In prior stages, the edge-case classification engine accepted an arbitrary in-me
    - "Reachable" claims in production count strictly only **PROVEN_END_TO_END (8)**.
 
 8. **Owner Decision on Precedence Reordering Impact (52 Merged Input Pairs):**
-   - **OWNER DECISION:** Stage 5B reorder changed 52 outcomes on merged inputs, all from not-held to held; classifications persisted before ac18699 for such inputs may differ.
+   - **OWNER DECISION:** Stage 5 reorder changed 52 outcomes on merged inputs: out of 155 evaluated merged pairs, 52 differences were observed (49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held); classifications persisted before ac18699 for such inputs may differ.
    - The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.
+
+---
+
+## ADR-15: Read-Only Operator Workspace and Tenant Isolation Boundary
+
+### Context
+Human operators and auditors need immediate, auditable visibility into payment discrepancy cases, AI investigation reasoning, deterministic policy decisions, and provider operation timelines without introducing web-based attack surfaces or unvetted financial mutations. Allowing browser-initiated mutations (POST/PUT/PATCH/DELETE) creates severe risks of unauthorized refunds or bypass of two-person approval boundaries.
+
+### Decision
+1. **Strictly Read-Only Workspace**:
+   - The Operator Workspace frontend (`/cases` and `/cases/:caseId`) connects exclusively to read-only endpoints: `GET /api/payment-cases` and `GET /api/payment-cases/:caseId`.
+   - Zero mutation routes are exposed or invoked by the browser client.
+2. **Token-Derived Tenant Scoping**:
+   - Operator identity and tenant scope are derived exclusively from verified JWT claims (`req.user.tenantId`).
+   - Cross-tenant querying is strictly prohibited; requests attempting to view out-of-scope cases receive HTTP 404 Not Found to prevent tenant data leakage.
+   - Auditors are tenant-scoped unless holding the explicit, audited `GLOBAL_AUDIT` scope.
+3. **Sentinel Record Quarantine**:
+   - Test sentinels and unassigned records (`unassigned_provider_quarantine`) are strictly filtered from operator queries and case listings to prevent synthetic test data from leaking into production operator views.
+4. **Component Architecture & Visual Clarity**:
+   - Implements Safe Hold filtering, Case Status badges, and 7 orthogonal state dimensions (`ORDER`, `CUSTOMER_DEBIT`, `AUTHORIZATION`, `CAPTURE`, `SETTLEMENT`, `REFUND`, `DISPUTE`).
+   - Presents 4 AI role investigation cards (`CUSTOMER_AI`, `SHOP_AI`, `INVESTIGATOR_AI`, `RESOLUTION_PLANNER_AI`) detailing advisory findings and confidence scores.
+   - Displays deterministic policy evaluation results and provider operation execution timelines with immutable audit provenance.

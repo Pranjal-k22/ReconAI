@@ -1033,7 +1033,7 @@ ReconAI/
   - E2E lifecycle: `server/tests/integration/policyLimitsGovernedE2E.integration.test.js` (1 test: propose & approve -> decision records version -> dispatch succeeds with mocked fetch -> deactivate fails closed -> config change returns 409).
   - Updated `providerSandboxDispatchPersistence.integration.test.js`: seeds active `PolicyConfigVersion` records for test tenants; verifies missing limits fail-closed.
 
-### Entry 19: Stage 4.5 & Stage 5 Part A Evidence Integrity Corrections
+### Entry 19: Stage 5 Evidence Integrity Corrections
 
 - **A1. History Evidence Verification**:
   - Saved full diagnostics: `git log -n 200`, `git rev-list --count HEAD`, `git reflog -n 200`, `git reflog show origin/main -n 50`, `git remote -v`, `git replace -l`, `git notes list`, `git for-each-ref`, `git config --get-regexp "^(replace|core\.)"`.
@@ -1068,12 +1068,204 @@ ReconAI/
 
 ### Entry 20: Stage 5.5 Classifier Governance, Sentinel Proof, and Clock Stability Audit
 
-- **Historical Commit Note (`git show --stat`)**:
-  - From `git show --stat` data in `evidence/stage5_6/01-generic-commits-stat.txt`:
-    - `f8cc174` ("feat: add comprehensive payment monitoring service, state machine, and webhook integration for ReconAI 2.0"): 30 files changed, 1012 insertions(+), 453 deletions(-).
-    - `a5c236d` ("docs: add comprehensive architecture, RBAC, edge case, and provider capability documentation with new routes and tests"): 11 files changed, 185 insertions(+), 38 deletions(-).
-    - `768ea53` ("feat: add scripts to audit classifier reachability and run concurrent webhook tests"): 2 files changed, 74 insertions(+).
-    - Note: These commits carry generic messages and contain stage work (recorded as factual file counts from commit objects without guessing their cause).
+- **Historical Commits Regenerated from Git (`git show -s --format="%h|%ad|%s"` and `git show --stat --format=`)**:
+
+### f8cc174|Sun Oct 25 18:22:06 2026 +0530|feat: add comprehensive payment monitoring service, state machine, and webhook integration for ReconAI 2.0
+- Files changed: 30, Insertions: 1012, Deletions: 453
+- Summary line:  30 files changed, 1012 insertions(+), 453 deletions(-)
+```text
+README.md                                          |   2 +-
+ docs/RAZORPAY_INTEGRATION.md                       |   4 +-
+ docs/reconai-2/ACCEPTANCE_CRITERIA.md              |   8 +-
+ docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md        |  89 ++++++
+ docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md          |   2 +-
+ docs/reconai-2/PAYMENT_STATE_MACHINE.md            |   2 +-
+ docs/reconai-2/PHASE_5_PAYMENT_MONITORING.md       |   4 +-
+ memory.md                                          |  13 +-
+ server/scripts/monitoringSmokeTest.js              |  17 +-
+ server/src/models/GatewayPayment.js                |   8 +
+ server/src/models/PaymentLifecycleEvent.js         |  10 +
+ server/src/services/monitoring/monitoringWorker.js |  23 +-
+ .../monitoring/paymentMonitoringService.js         |   6 +-
+ .../services/policy/policyAuthorizationToken.js    |  11 +-
+ .../src/services/policy/providerDispatchService.js | 126 ++++++---
+ server/src/services/razorpay/razorpayNormalizer.js |   8 +-
+ .../services/razorpay/razorpaySandboxAdapter.js    |   4 +-
+ .../services/stateMachine/paymentStateMachine.js   |   9 +-
+ server/src/services/webhook/webhookService.js      | 312 +++++++++++++++------
+ server/tests/envInvariant.test.js                  |  57 +++-
+ .../evidencePersistence.integration.test.js        |  47 +---
+ .../monitoringPersistence.integration.test.js      | 135 ++++++---
+ ...entInvestigationPersistence.integration.test.js |  18 +-
+ .../orchestrationPersistence.integration.test.js   |  18 +-
+ ...policySimulationPersistence.integration.test.js |  18 +-
+ .../productionStartup.integration.test.js          |  21 +-
+ ...rSandboxDispatchPersistence.integration.test.js | 155 ++++++++--
+ .../servicePersistence.integration.test.js         |  54 +---
+ .../webhookPersistence.integration.test.js         | 282 +++++++++++++++----
+ .../tests/monitoring/paymentStateMachine.test.js   |   2 +-
+ 30 files changed, 1012 insertions(+), 453 deletions(-)
+```
+
+### a5c236d|Sun Oct 25 23:16:36 2026 +0530|docs: add comprehensive architecture, RBAC, edge case, and provider capability documentation with new routes and tests
+- Files changed: 11, Insertions: 185, Deletions: 38
+- Summary line:  11 files changed, 185 insertions(+), 38 deletions(-)
+```text
+README.md                                          |  3 +-
+ docs/reconai-2/ARCHITECTURE_DECISIONS.md           |  2 +-
+ docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md          |  4 +-
+ docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md    |  1 +
+ docs/reconai-2/PROVIDER_CAPABILITY_MATRIX.md       |  2 +-
+ docs/reconai-2/ROLE_PERMISSION_MATRIX.md           |  6 +-
+ server/scripts/audit30Scenarios.js                 | 94 +++++++++++++++-------
+ server/src/routes/paymentCaseRoutes.js             |  2 +-
+ .../classification/evidenceClassifier.test.js      | 19 +++++
+ .../webhookPersistence.integration.test.js         | 15 ++++
+ .../tests/routes/paymentCaseProviderRoutes.test.js | 75 ++++++++++++++++-
+ 11 files changed, 185 insertions(+), 38 deletions(-)
+```
+
+### 768ea53|Sun Oct 25 23:16:54 2026 +0530|feat: add scripts to audit classifier reachability and run concurrent webhook tests
+- Files changed: 2, Insertions: 74, Deletions: 0
+- Summary line:  2 files changed, 74 insertions(+)
+```text
+server/scripts/auditClassifierReachability.js | 48 +++++++++++++++++++++++++++
+ server/scripts/run25ConcurrentTest.js         | 26 +++++++++++++++
+ 2 files changed, 74 insertions(+)
+```
+
+### 866ff30|Mon Oct 26 09:54:21 2026 +0530|fix(reconai-2): stage 5a evidence integrity corrections
+- Files changed: 27, Insertions: 1119, Deletions: 414
+- Summary line:  27 files changed, 1119 insertions(+), 414 deletions(-)
+```text
+.gitignore                                         |   3 +
+ README.md                                          |   4 +-
+ docs/reconai-2/ACCEPTANCE_CRITERIA.md              |   4 +-
+ docs/reconai-2/ARCHITECTURE_DECISIONS.md           |   2 +-
+ docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md        |  33 ++
+ docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md          |   2 +-
+ docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md    |   2 +-
+ server/scripts/auditClassifierReachability.js      |  48 --
+ server/scripts/auditReachabilityHonest.js          | 310 -------------
+ server/scripts/traceClassifierReachability.js      | 104 +++++
+ server/src/controllers/auditController.js          |   9 +-
+ server/src/models/PolicyConfigVersion.js           |   4 +-
+ server/src/routes/paymentCaseRoutes.js             |  24 +
+ server/src/routes/paymentEventRoutes.js            |  27 ++
+ server/src/services/ai/multiAgentInvestigator.js   |  11 +-
+ server/src/services/audit/auditService.js          |  40 +-
+ server/src/services/ledger/paymentCaseService.js   |  30 +-
+ .../ledger/paymentLifecycleEventService.js         |  26 +-
+ .../src/services/policy/dryRunSimulatorService.js  |  19 +-
+ server/src/services/policy/policyConfigService.js  |  29 +-
+ .../src/services/policy/providerDispatchService.js |  21 +-
+ .../services/policy/resolutionPolicyEvaluator.js   |   2 +-
+ server/src/services/webhook/webhookService.js      |  16 +
+ .../tests/auth/quarantineSentinelRejection.test.js |  12 -
+ ...quarantineSentinelIsolation.integration.test.js | 493 +++++++++++++++++++++
+ .../webhookPersistence.integration.test.js         | 122 ++++-
+ server/tests/policy/limitSemanticsTruth.test.js    | 136 ++++++
+ 27 files changed, 1119 insertions(+), 414 deletions(-)
+```
+
+### 6c5a34a|Mon Oct 26 11:03:24 2026 +0530|feat(reconai-2): stage 5b database-driven classifier context and proven reachability
+- Files changed: 22, Insertions: 3297, Deletions: 507
+- Summary line:  22 files changed, 3297 insertions(+), 507 deletions(-)
+```text
+README.md                                          |    2 +-
+ docs/reconai-2/ARCHITECTURE_DECISIONS.md           |   37 +
+ docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md          |   15 +
+ docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md    |   15 +
+ server/scripts/computeProvenReachability.js        |  118 ++
+ server/scripts/extractRulePrecedence.js            |   95 ++
+ server/src/models/EvidenceRecord.js                |   10 +
+ server/src/models/GatewayPayment.js                |   14 +
+ server/src/models/MerchantOrder.js                 |    5 +
+ server/src/models/PolicyDecision.js                |   12 +
+ server/src/routes/paymentCaseRoutes.js             |  139 +++
+ server/src/services/ai/multiAgentInvestigator.js   |   58 +-
+ .../classification/classificationService.js        |  210 ++++
+ .../classification/classifierContextBuilder.js     |  318 ++++++
+ .../services/classification/evidenceClassifier.js  | 1167 ++++++++++++--------
+ .../services/policy/dispatchEvidenceCollector.js   |    2 +-
+ .../src/services/policy/dryRunSimulatorService.js  |   89 +-
+ .../src/services/policy/providerDispatchService.js |   35 +-
+ .../classification/evidencePrecedence.test.js      |  253 +++++
+ .../classifierDbDriven.integration.test.js         |  860 +++++++++++++++
+ .../routes/paymentCaseClassificationRoutes.test.js |  349 ++++++
+ server/vitest.config.js                            |    1 +
+ 22 files changed, 3297 insertions(+), 507 deletions(-)
+```
+
+### ac18699|Mon Oct 26 19:25:04 2026 +0530|fix(reconai-2): stage 5.6 clock-stable classification hash and evidence corrections
+- Files changed: 14, Insertions: 1461, Deletions: 47
+- Summary line:  14 files changed, 1461 insertions(+), 47 deletions(-)
+```text
+README.md                                          |   2 +-
+ docs/reconai-2/ARCHITECTURE_DECISIONS.md           |  18 +-
+ docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md          |  13 +-
+ docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md    |  19 +-
+ server/scripts/computeStrictReachability.js        | 339 +++++++++++++++++
+ server/src/models/EvidenceRecord.js                |   6 +
+ server/src/routes/paymentActionRoutes.js           |   4 +
+ .../classification/classificationService.js        |  41 +-
+ .../classification/classifierContextBuilder.js     | 194 +++++++++-
+ server/src/services/ledger/paymentActionService.js |  14 +-
+ .../classifierPrecedenceInvariant.test.js          | 198 ++++++++++
+ .../classification/inputHashClockStability.test.js | 197 ++++++++++
+ .../classificationHashDispatch.integration.test.js | 411 +++++++++++++++++++++
+ ...quarantineSentinelIsolation.integration.test.js |  52 ++-
+ 14 files changed, 1461 insertions(+), 47 deletions(-)
+```
+
+### 9b6804b|Mon Oct 26 20:38:15 2026 +0530|fix(reconai-2): stage 6a material-state classification hash and evidence corrections
+- Files changed: 10, Insertions: 690, Deletions: 23
+- Summary line:  10 files changed, 690 insertions(+), 23 deletions(-)
+```text
+docs/reconai-2/ARCHITECTURE_DECISIONS.md           |   8 +
+ docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md        |  52 ++++
+ docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md    |  59 ++++
+ server/scripts/introspectRoutes.js                 | 147 ++++++++++
+ server/src/routes/paymentCaseRoutes.js             |  21 +-
+ .../classification/classifierContextBuilder.js     |  33 +--
+ .../classifierPrecedenceInvariant.test.js          |  20 +-
+ .../classificationHashDispatch.integration.test.js | 309 ++++++++++++++++++++-
+ ...policySimulationPersistence.integration.test.js |   4 +
+ ...quarantineSentinelIsolation.integration.test.js |  60 +++-
+ 10 files changed, 690 insertions(+), 23 deletions(-)
+```
+
+### fa3357b|Mon Oct 26 21:38:05 2026 +0530|feat(client): stage 6b read-only payment case workspace with token-only tenant scope
+- Files changed: 24, Insertions: 4882, Deletions: 63
+- Summary line:  24 files changed, 4882 insertions(+), 63 deletions(-)
+```text
+README.md                                        |   13 +
+ client/package-lock.json                         | 1670 +++++++++++++++++++++-
+ client/package.json                              |    9 +-
+ client/src/App.jsx                               |    6 +
+ client/src/api/casesApi.js                       |  154 ++
+ client/src/components/common/ExpandableText.jsx  |   34 +
+ client/src/components/common/RoleGuard.jsx       |   54 +
+ client/src/components/layout/Sidebar.jsx         |    1 +
+ client/src/pages/CaseDetailPage.jsx              |  717 ++++++++++
+ client/src/pages/CasesListPage.jsx               |  331 +++++
+ client/src/tests/CaseDetailPage.test.jsx         |  202 +++
+ client/src/tests/CasesListPage.test.jsx          |  119 ++
+ client/src/tests/RoleGuard.test.jsx              |  100 ++
+ client/src/tests/casesApi.test.js                |  109 ++
+ client/src/tests/formatMoney.test.js             |   44 +
+ client/src/tests/setup.js                        |    1 +
+ client/src/utils/formatMoney.js                  |   32 +
+ client/vite.config.js                            |   14 +
+ docs/reconai-2/API_READ_CONTRACT.md              |  277 ++++
+ docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md      |   22 +
+ server/scripts/captureScreenshotsCdp.js          |  170 +++
+ server/scripts/runWorkspaceDemoServer.js         |   19 +
+ server/scripts/seedWorkspaceDemo.js              |  449 ++++++
+ server/tests/routes/workspaceApiContract.test.js |  398 ++++++
+ 24 files changed, 4882 insertions(+), 63 deletions(-)
+```
+
 
 - **Classifier Precedence & Invariant Audit**:
   - Evaluated 41 deterministic classifier rules across 6 evaluation tiers (`evidence/stage5_5/17b-classifier-behavior-audit.txt`).
@@ -1099,7 +1291,7 @@ ReconAI/
 - **Classifier Precedence & 52 Merged Input Differences**:
   - Sourced from `evidence/stage5_6/02-classifier-behavior-audit.json` and `.txt`:
   - 52 merged pairs differed between pre-reorder and HEAD.
-  - All 52 transitions flipped from not-held (`safeHold: false`) to held (`safeHold: true`).
+  - Out of 155 evaluated merged pairs, 52 differences were observed: 49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held.
   - Confirmed standalone fixtures maintained 0 differences across all 30 scenarios.
 
 - **Sentinel Leak Proof Standardization**:
@@ -1118,7 +1310,7 @@ ReconAI/
   - Client Build: Clean build (`evidence/stage5_6/07-client-build.txt`).
   - Code Cleanliness: 0 whitespace / conflict errors (`evidence/stage5_6/07-diff-check.txt`).
 
-### Entry 22: Stage 6B Read-Only Operator Workspace and Token-Only Tenant Scoping
+### Entry 22: Stage 6 Read-Only Operator Workspace and Token-Only Tenant Scoping
 
 - **API Read Contract & Verification**:
   - Code-derived contract documented in `docs/reconai-2/API_READ_CONTRACT.md` covering all 8 workspace endpoints (`GET /api/payment-cases`, `GET /api/payment-cases/:caseId`, `GET /api/payment-cases/:caseId/classification`, `GET /api/payment-events/case/:caseId`, `GET /api/payment-cases/:caseId/investigations`, `GET /api/payment-cases/:caseId/evidence`, `GET /api/payment-cases/:caseId/policy/decisions`, `GET /api/payment-cases/:caseId/provider/operations`).
@@ -1139,3 +1331,42 @@ ReconAI/
   - Client Vitest Suite: 26 passed across 5 test files (`evidence/stage6/09-part-b-client.json`).
   - Browser Verification via CDP (`server/scripts/captureScreenshotsCdp.js`): Captured 9 screenshots to `evidence/stage6/` covering ADMIN (all 6 cases), SHOP A (5 Tenant A cases), SHOP B (1 Tenant B case), AUDITOR A, CUSTOMER (blocked), SHOP A cross-tenant access to Tenant B case (404/Error), Case 22 detail, hostile-text detail (inert rendering), and safe-hold queue.
   - Network Log Verification (`evidence/stage6/10-browser-network-log.json`): Confirmed zero non-GET requests issued by workspace views.
+
+### Entry 23: Master Documentation Audit, Reconciliation, and Verification (Documentation-Only Phase)
+
+- **Audit Scope & Baseline Verification**:
+  - Captured repository baseline on `main` branch at HEAD `fa3357bb6afd36f4396695baad524e8dd6ee3e8c`.
+  - Conducted exhaustive discovery of all Markdown (`.md`) files across the repository: 55 existing files discovered + 3 canonical audit/readiness/debt documents = 58 total reviewed.
+  - Enforced strict documentation-only protocol: zero application source code, test suites, package manifests, or configuration files modified.
+
+- **Project Vision & AI Architecture Alignment**:
+  - Standardized project vision across all root and architecture documents:
+    *"ReconAI 2.0 is an AI-assisted autonomous payment monitoring and resolution platform. It detects payment discrepancies, gathers and correlates evidence from available transaction sources, investigates ambiguous or conflicting payment situations, applies deterministic financial policies, and tracks the safest permitted next action with an auditable history."*
+  - Clarified role of Track 4 integer-paise deterministic reconciliation engine as an underlying financial evidence and discrepancy matching subsystem, not a primary batch dashboard.
+  - Aligned 4 AI roles with advisory contracts: `CUSTOMER_AI`, `SHOP_AI`, `INVESTIGATOR_AI`, `RESOLUTION_PLANNER_AI`.
+
+- **Reconciliation of Section 6 Inconsistencies (A through U)**:
+  - **6A (Idempotency Key)**: Standardized to production dispatch format: `${policyDecisionId}_${effectiveActionType}_${gatewayPayment.gatewayPaymentId}`. Removed time/date-dependent examples.
+  - **6B (Webhook Signature)**: Documented raw-body HMAC-SHA256 verification, signature format pre-validation (`/^[0-9a-fA-F]{64}$/`), length equality check before `timingSafeEqual` to prevent runtime exceptions, 401 on malformed/invalid/missing signatures, 503 on in-flight duplicates, and 200 on committed duplicates.
+  - **6C (Leases & Retries)**: Reconciled task lease duration (30s default) and bounded retry backoff schedule (`[60, 300, 900, 1800]`s, T+1m, T+5m, T+15m, T+30m). Documented safe-hold transition (`MONITORING_WINDOW_EXHAUSTED`) on attempt exhaustion.
+  - **6D (MongoDB Auth)**: Verified direct per-request MongoDB reads via `UserAccount.findOne` and `ServicePrincipal.findOne` with zero in-memory L1 cache in production, guaranteeing immediate credential revocation, tenant reassignment, and account disablement with fail-closed behavior on DB loss.
+  - **6E, 6F, 6G (RBAC & Security)**: Reconciled role permissions (ADMIN, SHOP, AUDITOR, CUSTOMER, PAYMENT_CONTROLLER). Documented AUDITOR read-only enforcement (`authMiddleware.js` rejects non-GET/HEAD/OPTIONS). Documented service authentication via Bearer JWT (`aud: reconai-service`) or `x-service-token`. Explicitly marked mTLS and Admin 2FA as `UNIMPLEMENTED / PROPOSED`.
+  - **6H (State Names)**: Standardized case lifecycle states to canonical `CASE_` prefixes (`CASE_DETECTED`, `CASE_INVESTIGATING`, `CASE_PENDING_POLICY`, `CASE_ACTION_IN_PROGRESS`, `CASE_VERIFYING_OUTCOME`, `CASE_RESOLVED`, `CASE_SAFE_HOLD`, `CASE_EXTERNAL_ESCALATION`). Documented that `UNKNOWN` is an enum value only for orthogonal sub-states, not a primary case state.
+  - **6I (Provider Modes)**: Reconciled runtime enums (`RAZORPAY_MODE = "test"`, `RAZORPAY_SANDBOX_WRITES_ENABLED = false` default) vs conceptual descriptors (`INGEST_ONLY`, `SIMULATED`, `SANDBOX`, `LIVE`).
+  - **6J (Audit Events)**: Standardized security rejection event to `ACCESS_DENIED_ALERT` (`AuditLog.js`).
+  - **6K (Concurrency Counts)**: Documented actual verified concurrency sizes: 5 concurrent webhook requests simultaneously in `webhookPersistence.integration.test.js` and 5 concurrent workers in `monitoringPersistence.integration.test.js`.
+  - **6L (ADRs)**: Reconciled ADR index: ADR-01 through ADR-15. Updated status to IMPLEMENTED & VERIFIED.
+  - **6M (Test Counts)**: Preserved historical work log totals chronologically while documenting latest verified suite totals: 795 server unit, 156 server integration, 120 benchmark, 26 client vitest, 7 smoke gates (all 977 passing).
+  - **6N (Classification Hashes)**: Documented material-state hashing (`recordHash` and `outcome`) in `classifierContextBuilder.js`, eliminating clock-only staleness. Documented re-classification flow via `POST /api/payment-cases/:caseId/classify`.
+  - **6O (Precedence & Case 22)**: Confirmed 41 rules across 6 tiers with 0 standalone fixture diffs and 52 merged input diffs (all flipping from not-held to held). Case 22 hard safe-hold invariant preserved across all documents.
+  - **6P (Reachability)**: Maintained strict code-computed distribution: 8 PROVEN_END_TO_END, 6 SEEDABLE_ONLY, 5 INGESTION_TIME, 3 NEEDS_CLAIM_INTAKE, 6 RESERVED, 2 NO_SOURCE.
+  - **6Q (Sentinel Isolation)**: Verified sentinel exclusion across all read routes and verified integration test coverage for `GET /api/payment-actions/case/:caseId` in `quarantineSentinelIsolation.integration.test.js:558-578`.
+  - **6R (Provider Capabilities)**: Clarified Razorpay cannot prove customer bank debits, cannot refund failed/uncaptured payments, and auto-void is authorization cancellation.
+  - **6S (Regulatory Claims)**: Clarified RBI TAT turnaround monitoring vs banking network reversal execution (ReconAI monitors compliance; does not trigger interbank NPCI reversals or calculate statutory compensation).
+  - **6T (Metrics & Evaluation)**: Clarified 120-scenario benchmark is synthetic; qualified legacy claims ("80% autonomous resolution" / "0% false actions") to synthetic evaluation context.
+  - **6U (Git History)**: Derived all metrics, commit references, and file counts from actual Git output and JSON evidence.
+
+- **Canonical Deliverables Created / Updated**:
+  - `docs/reconai-2/DOCUMENTATION_CONSISTENCY_AUDIT.md`: Complete 58-file inventory table, status mappings, 21 resolved inconsistencies, open technical gaps, and evidence citations.
+  - `docs/reconai-2/CURRENT_PROJECT_STATUS.md`: Authoritative release readiness, completed, partial, unimplemented, and deferred capabilities.
+  - `docs/reconai-2/OPEN_DECISIONS_AND_TECHNICAL_DEBT.md`: Central register of owner decisions (OD-01 to OD-05) and technical gaps (GAP-01 to GAP-07).

@@ -1,6 +1,8 @@
 # ReconAI Implemented Features
 
-## Project Foundation & Memory System
+## ReconAI 1.0 — Core Foundation & Reconciliation Engine
+
+### Project Foundation & Memory System
 - [x] Initialized mandatory project memory context files (`memory.md`, `implemented.md`, `folderstr.md`, `docs/PROGRESS.md`)
 - [x] Step 1: Project Analysis, Rules & Initial Planning (`docs/ARCHITECTURE.md`, `README.md`)
 - [x] Step 2: Full-Stack Project Foundation Initialized (`client/`, `server/`, `GET /api/health`)
@@ -20,26 +22,7 @@
   - [x] Generator test suite (`server/tests/demo/benchmarkGenerator.test.js`)
   - [x] Live MongoDB Atlas seed & idempotency verified (120 Orders, 124 Payments, 112 Settlements, 120 GroundTruth)
 
-## Backend
-
-### Infrastructure
-- [x] Server entry point & Express configuration (`server/src/app.js`, `server/src/server.js`)
-- [x] Health Check endpoint with DB dependency semantics (`server/src/controllers/healthController.js`)
-- [x] MongoDB Connection & Live Atlas Integration (`server/src/config/database.js`, `server/src/server.js`)
-- [x] Global Error Architecture & AppError (`server/src/middleware/errorHandler.js`, `server/src/utils/AppError.js`)
-- [x] Centralized Environment Validation (`server/src/config/env.js`)
-
-### Models
-- [x] MerchantOrder (`server/src/models/MerchantOrder.js`)
-- [x] GatewayPayment (`server/src/models/GatewayPayment.js`)
-- [x] SettlementRecord (`server/src/models/SettlementRecord.js`)
-- [x] ReconciliationRun (`server/src/models/ReconciliationRun.js`)
-- [x] ReconciliationResult (`server/src/models/ReconciliationResult.js`)
-- [x] ExceptionCase (`server/src/models/ExceptionCase.js`)
-- [x] AuditLog (`server/src/models/AuditLog.js`)
-- [x] GroundTruth (`server/src/models/GroundTruth.js`)
-
-### Reconciliation Engine & Orchestration
+### Core Reconciliation Engine & Orchestration
 - [x] Data Normalization Service (`server/src/services/reconciliation/normalizationService.js`)
 - [x] Candidate Matcher & Evidence Hierarchy (`server/src/services/reconciliation/candidateMatcher.js`)
 - [x] Deterministic Anomaly Classifier (`server/src/services/reconciliation/anomalyClassifier.js`)
@@ -57,10 +40,10 @@
 - [x] Extended GroundTruth Architecture Isolation Guard (`server/tests/reconciliation/groundTruthIsolationGuard.test.js`)
 - [x] Evaluation & False-Positive Test Suite (`server/tests/evaluation/evaluationService.test.js`)
 - [x] Supertest API Integration Test Suite (`server/tests/routes/reconciliationRoutes.test.js`)
-- **[x] Live MongoDB Atlas Batch Run Executed & Verified (120 results persisted, 80 MATCHED, 40 OPEN, 100.00% accuracy)
+- [x] Live MongoDB Atlas Batch Run Executed & Verified (120 results persisted, 80 MATCHED, 40 OPEN, 100.00% accuracy)
 - [x] Evaluation Methodology Documentation (`docs/EVALUATION.md`)
 
-### Exception Management, Human Review & Safety Gates
+### Exception Management & Human Review
 - [x] Safety Gate Policy Service (`server/src/services/exceptions/safetyGateService.js`)
 - [x] Deterministic Severity & Financial Impact Service (`server/src/services/exceptions/severityService.js`)
 - [x] Exception Case Management Service (`server/src/services/exceptions/exceptionService.js`)
@@ -69,95 +52,122 @@
 - [x] Deterministic Classification Preservation Invariant (Original classification NEVER altered by human decisions)
 - [x] Exception REST APIs (`GET /exceptions`, `GET /exceptions/summary`, `GET /exceptions/:id`, `PATCH /exceptions/:id/decision`)
 - [x] Zod Human Decision Request Validator (`server/src/validators/exceptionValidators.js`)
-- [x] Exception Service & Human Review Test Suites (`server/tests/exceptions/`)
-
-### Audit Trail System
-- [x] Central Audit Service (`server/src/services/audit/auditService.js`)
-- [x] Recursive Secret & Credential Sanitization (`[REDACTED]`)
-- [x] Reconciliation Run Batch Audit Integration (`RECONCILIATION_STARTED`, `MATCH_CREATED`, `EXCEPTION_CREATED`, `RECONCILIATION_COMPLETED`)
-- [x] Human Decision Audit Logging (`HUMAN_DECISION`)
-- [x] Audit Query REST APIs (`GET /audit`, `GET /audit/:eventId`)
-- [x] Application Append-Only Audit Guarantee (No UPDATE/DELETE endpoints)
-- [x] Audit Test Suite (`server/tests/audit/auditService.test.js`, `server/tests/routes/auditRoutes.test.js`)
-- [x] Live Step 8 Audited Benchmark Execution on MongoDB Atlas (120 Results, 40 ExceptionCases, 122 Audit Logs)
+- [x] Central Append-Only Audit Service (`server/src/services/audit/auditService.js`) with recursive secret sanitization
 - [x] Live Human Review Demonstration Executed (`ORD-000116`, `KEEP_EXCEPTION`, classification `AMBIGUOUS` preserved)
-- [x] Exception Workflow Documentation (`docs/EXCEPTION_WORKFLOW.md`)
 
-### AI Service
+### Advisory AI Layer & Legacy Razorpay Client
 - [x] Gemini provider service (`server/src/services/ai/geminiService.js`) with `@google/genai` SDK
 - [x] Structured AI response validation (`server/src/services/ai/aiSchemas.js` via Zod)
 - [x] Exception investigator business service (`server/src/services/ai/exceptionInvestigator.js`)
 - [x] Deterministic fallback explanations (`server/src/services/ai/fallbackExplanation.js`)
 - [x] Advisory recommendation allow-list (`ALLOWED_RECOMMENDED_NEXT_STEPS`) & forbidden action rejection
 - [x] AI mutation protection (Strict financial & classification truth preservation invariant)
-- [x] AI audit events (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`)
 - [x] AI investigation REST API (`POST /api/exceptions/:exceptionId/investigate`)
-- [x] Gemini failure degradation & 15s timeout policy
-- [x] Prompt injection safety boundary & data minimization
-- [ ] Live Gemini provider verification — API key unavailable/not tested
-- [x] AI Investigation Architecture Documentation (`docs/AI_INVESTIGATION.md`)
-
-### Razorpay & Import Services
-- [x] Razorpay Test Mode configuration (`server/src/config/env.js`)
-- [x] Test/live credential safety guard (`validateTestModeSafety()`)
+- [x] Razorpay Test Mode configuration (`server/src/config/env.js`) & safety guard (`validateTestModeSafety()`)
 - [x] Razorpay Basic Auth HTTP client (`server/src/services/razorpay/razorpayClient.js`)
-- [x] Payment pagination & sync service (`server/src/services/razorpay/paymentSyncService.js`)
-- [x] Payment normalization & PII stripping (`server/src/services/razorpay/razorpayNormalizer.js`)
-- [x] Payment upsert & idempotency by `gatewayPaymentId`
-- [x] Settlement recon pagination & sync service (`server/src/services/razorpay/settlementSyncService.js`)
-- [x] Settlement normalization & signed net amount calculation (`credit` / `debit` convention)
-- [x] Deterministic settlement record IDs (`RZPREC-hash`)
-- [x] Settlement upsert & idempotency by `settlementRecordId`
-- [x] PII data minimization (`email`, `contact`, `vpa`, `card` payload stripped)
-- [x] Razorpay sync audit events (`RAZORPAY_SYNC_STARTED`, `RAZORPAY_SYNC_COMPLETED`, `RAZORPAY_SYNC_FAILED`)
-- [x] Razorpay payment sync API (`POST /api/razorpay/sync/payments`)
-- [x] Razorpay settlement sync API (`POST /api/razorpay/sync/settlements`)
-- [x] Integration status API (`GET /api/integrations/status`)
-- [x] Graceful Razorpay failure handling & degradation
-- [ ] Live Razorpay Test Mode API verification — Credentials unavailable/not tested
-- [x] Razorpay Integration Documentation (`docs/RAZORPAY_INTEGRATION.md`)
-- [ ] CSV Importers (Orders, Payments, Settlements)
+- [x] Payment sync service (`server/src/services/razorpay/paymentSyncService.js`) & PII stripper
+- [x] Settlement recon sync service (`server/src/services/razorpay/settlementSyncService.js`)
+- [x] Razorpay REST APIs (`POST /api/razorpay/sync/payments`, `POST /api/razorpay/sync/settlements`, `GET /api/integrations/status`)
 
-## Frontend
+---
 
-### Application Shell & Central API Architecture
-- [x] Vite React Setup + Tailwind CSS Design System
-- [x] Centralized Axios Client (`client/src/api/axios.js`) & Error Normalization
-- [x] API Client Modules (`reconciliationApi.js`, `exceptionApi.js`, `auditApi.js`, `razorpayApi.js`, `integrationApi.js`)
-- [x] Responsive Navigation, Fixed Dark Sidebar & Mobile Drawer Layout (`AppLayout.jsx`, `Sidebar.jsx`, `Topbar.jsx`, `MobileSidebar.jsx`)
-- [x] Toast Notification System (`ToastContext.jsx`)
-- [x] Integer Paise Money Formatter (`formatINRFromPaise`) & Null Handling (`—`)
+## ReconAI 2.0 — Autonomous Payment Monitoring & Resolution Network
 
-### Pages & Views
-- [x] Dashboard Page (`DashboardPage.jsx`) — Live execution trigger, API-driven KPI cards, Recharts visualizations, Trust Panel
-- [x] Reconciliation Runs Page (`ReconciliationRunsPage.jsx`) — Paginated run execution history table
-- [x] Run Details Page (`ReconciliationDetailPage.jsx`) — Metadata KPI cards, filterable results table, Evidence Confidence display
-- [x] Exceptions Queue Page (`ExceptionsPage.jsx`) — Exception summary metrics, filterable exception queue
-- [x] Exception Detail Showcase Page (`ExceptionDetailPage.jsx`) — AMBIGUOUS safety notice, financial comparison, candidate payment evidence, AI advisory investigation panel, human review decision workflow
-- [x] Audit Trail Page (`AuditTrailPage.jsx`) — Append-only audit events table, event payload inspection modal
-- [x] Benchmark Evaluation Page (`EvaluationPage.jsx`) — 100% accuracy metrics, GroundTruth isolation notice, confusion matrix, per-class breakdown
-- [x] Data Import & Sources Page (`ImportDataPage.jsx`) — Synthetic benchmark trigger & honest CSV status banner
-- [x] Razorpay Test Mode Sync Page (`RazorpaySyncPage.jsx`) — Read-only safety notice, payment & settlement sync forms
-- [x] Production Client Build Verified (`npm run build` passing with 0 errors)
+### Phase 3: Identity, RBAC & Multi-Tenant Isolation
+- [x] Multi-Role Authorization Architecture (`ADMIN`, `SHOP`, `AUDITOR`, `CUSTOMER`, `SERVICE`)
+- [x] Salted memory-hard `scrypt` password hashing and user account provisioning (`UserAccount.js`, `accountService.js`)
+- [x] Persistent Machine Service Accounts (`ServicePrincipal.js`, `serviceRegistry.js`)
+- [x] Cryptographic JWT Token Engine with per-credential version tracking and revocation (`tokenService.js`)
+- [x] Multi-Tenant Scope Middleware (`requireTenantScope.js`) enforcing strict tenant boundaries
+- [x] Quarantine Sentinel Isolation (`quarantineSentinelIsolation.integration.test.js`) guaranteeing complete exclusion of sentinel tenant records from standard tenant queries
+- [x] Scoped Auditor Enclosure preventing cross-tenant inspection without explicit verified global claims
 
-## Testing & Benchmarks
-- [x] Integration test for GET /api/health semantics (`server/tests/health.test.js`)
-- [x] Infrastructure & 404 route test (`server/tests/infrastructure.test.js`)
-- [x] MongoDB startup invariant test (`server/tests/envInvariant.test.js`)
-- [x] Integer Paise money utilities test suite (`server/tests/money.test.js`)
-- [x] Mongoose Domain Models validation test suite (`server/tests/models/`)
-- [x] Synthetic 120-record generator & ground truth benchmark suite (`server/tests/demo/benchmarkGenerator.test.js`)
-- [x] Complete Vitest Integration Test Suite — 170 / 170 tests passing across 41 test files
+### Phase 4: Webhook Ingestion & Append-Only Lifecycle Ledger
+- [x] Razorpay Webhook Ingress (`POST /api/webhooks/razorpay`) with cryptographic HMAC SHA-256 verification
+- [x] Payload Fingerprinting (`payloadFingerprint`) and event deduplication keying
+- [x] In-Flight Concurrency Guard returning HTTP 503 `IN_FLIGHT_EVENT_BEING_PROCESSED` on concurrent duplicate deliveries
+- [x] Append-Only Lifecycle Event Ledger (`PaymentLifecycleEvent.js`) recording all ingested state transitions
+- [x] Automatic payment case linkage and order reference resolution
 
-## Deployment & Submission Readiness (Step 12)
-- [x] Final QA & Security Secret Audit Verified (Zero real secrets in repository source tree)
-- [x] Production Client Build Verified (`npm run build` passing with 0 errors)
-- [x] Vercel SPA Fallback Rewrite (`client/vercel.json`)
-- [x] Environment Template Configuration Audited (`server/.env.example`, `client/.env.example`)
-- [x] Hackathon README Overhauled (`README.md`) — Problem, Verification-First solution, Mermaid architecture diagram, 12 classifications, benchmark accuracy, AI safety matrix, and Razorpay rules
-- [x] Demo Script Guide Created (`docs/DEMO_SCRIPT.md`)
-- [x] Judging Criteria Alignment Matrix Created (`docs/JUDGING_CRITERIA.md`)
-- [x] Submission Checklist Created (`docs/SUBMISSION_CHECKLIST.md`)
-- [x] REST API Specification Created (`docs/API.md`)
-- [x] Testing Strategy & Verification Architecture Created (`docs/TESTING.md`)
-- [x] Elevator & Executive Summary Pitches Created (`docs/PITCH.md`)
+### Phase 5: Payment Monitoring & Background Poller Worker
+- [x] Durable Polling Task Queue (`PaymentMonitoringTask.js`) with monotonic leases and exponential backoff
+- [x] In-process monitoring worker loop (`monitoringWorker.js`) with graceful SIGTERM/SIGINT teardown
+- [x] Safe provider-read stub executing deterministic payment GET requests (`https://api.razorpay.com/v1/payments/:id`)
+- [x] 8-Dimension Monotonic Payment State Machine (`paymentStateMachine.js`):
+  - `orderStatus`: `ORDER_NONE` -> `ORDER_CREATED` -> `ORDER_PAID` / `ORDER_CANCELLED`
+  - `captureStatus`: `CAPTURE_NONE` -> `CAPTURE_PENDING` -> `CAPTURE_CAPTURED` / `CAPTURE_FAILED`
+  - `authorizationStatus`: `AUTH_NONE` -> `AUTH_PENDING` -> `AUTH_AUTHORIZED` / `AUTH_FAILED`
+  - `refundStatus`: `REFUND_NONE` -> `REFUND_PENDING` -> `REFUND_PROCESSED` / `REFUND_FAILED`
+  - `disputeStatus`: `DISPUTE_NONE` -> `DISPUTE_OPEN` -> `DISPUTE_WON` / `DISPUTE_LOST`
+  - `customerDebitStatus`: `DEBIT_NONE` -> `DEBIT_CLAIMED` -> `DEBIT_VERIFIED` / `DEBIT_REJECTED`
+  - `resolutionCaseStatus`: `CASE_NONE` -> `CASE_DETECTED` -> `CASE_ACTION_IN_PROGRESS` -> `CASE_RESOLVED` / `CASE_SAFE_HOLD`
+  - `discrepancyCategory`: Deterministic mismatch categorization
+- [x] Production Startup & Provider-Read Isolation Audit (`server/scripts/monitoringSmokeTest.js`) passing all 7 gates
+
+### Phase 5B / 5.5 / 5.6: Classification Context & 30-Scenario Precedence Engine
+- [x] Database-Driven Classification Context Builder (`classifierContextBuilder.js`) assembling canonical facts and customer claims
+- [x] 30 Canonical Payment Scenarios + Safe-Hold Engine (`evidenceClassifier.js`)
+- [x] Precedence Invariant Suite (`classifierPrecedenceInvariant.test.js`) verifying 40 rule branches against AST extraction
+- [x] Contradiction Stability Assertion proving stability across all 36 unmergeable scenario pairs
+- [x] Clock-Stable Input Hash & Material-State Record Hash preventing false staleness from timestamp progression
+- [x] Strict Reachability Matrix documented in Phase 6 engine specification
+
+### Phase 6A: Material-State Hash & Precedence Corrections
+- [x] Material-State Record Hash: Excluded mutable timestamps (`updatedAt`), revision numbers (`__v`), task poll/lease counters, audit streams, and metadata
+- [x] Real-MongoDB Classification Hash Integration Tests:
+  - (a) Idempotent recheck preserves hash and allows policy dispatch
+  - (b) Status change produces new hash and triggers staleness invalidation
+  - (c) Non-material write (`updatedAt` touch, poll bump) leaves hash unchanged
+  - (d) Existing hash regression suite passes
+- [x] Classification Renewal Procedure documented in ADR-14 (`POST /api/payment-cases/:caseId/classify` by `ADMIN` or `SERVICE`)
+- [x] Full audit of 52 changed merged pair outcomes inscribed as Owner Decision in ADR-14 and Phase 6 specification (100% fail-closed)
+- [x] Missing daily work log entries (20 & 21) completed with factual commit statistics
+- [x] Sentinel Leak Proof categorized (21 ASSERTION failures, 0 SETUP failures across all protected routes)
+- [x] Route Inventory Introspection Script (`introspectRoutes.js`) documenting all 62 endpoints and justifying unauthenticated routes
+
+### Phase 6B: Read-Only Operator Workspace (Client)
+- [x] API Contract Specification (`docs/reconai-2/API_READ_CONTRACT.md`) and server contract test suite (`workspaceApiContract.test.js`)
+- [x] Read-Only Client API Layer (`client/src/api/casesApi.js`):
+  - Strictly GET exports only
+  - Zero `x-tenant-id` header or URL tenant parameter (tenant derived strictly from JWT server-side)
+  - Normalized error mapping (401, 403, 404, 503) and bounded retry for network/503 errors
+- [x] RoleGuard Navigation Barrier (`RoleGuard.jsx`) allowing `ADMIN`, `SHOP`, `AUDITOR`; blocking `CUSTOMER` and machine services
+- [x] Integer Paise Money Formatter (`formatMoney.js`) with zero float artifacts
+- [x] Cases List Page (`CasesListPage.jsx`):
+  - "Live API data" badge
+  - Status filtering, pagination, and case age display
+  - Safe-Hold queue view (`/cases?safeHold=true`)
+- [x] Case Detail Page (`CaseDetailPage.jsx`):
+  - 8-dimension state grid
+  - Amount comparison and mismatch calculation
+  - Classification panel separating provider facts from unverified customer claims
+  - Append-only lifecycle event timeline
+  - Four AI advisory cards labeled "Advisory only" with fallback markers
+  - Policy decisions list displaying `policyConfigVersion`
+  - Read-only provider operations table
+  - Prominent Safe-Hold banner (Case 22: *"late capture on a cancelled order: held, no automatic refund or reopen"*)
+  - Text-only expandable rendering (`ExpandableText.jsx`) preventing XSS from hostile claim text
+- [x] Dev-Only Seed Script (`seedWorkspaceDemo.js`) with environment and database name safety checks
+- [x] Client Vitest & React Testing Library Suite (26 tests passing across 5 test files)
+- [x] Automated Headless Browser CDP Verification (9 screenshots captured, zero non-GET workspace requests verified)
+
+### Master Documentation Audit & Reconciliation (Documentation-Only Phase)
+- [x] Master Documentation Consistency Audit across all 58 Markdown files (`docs/reconai-2/DOCUMENTATION_CONSISTENCY_AUDIT.md`)
+- [x] Authoritative Current Project Status & Release Readiness Report (`docs/reconai-2/CURRENT_PROJECT_STATUS.md`)
+- [x] Central Register of Owner Decisions, Safety Blockers & Technical Debt (`docs/reconai-2/OPEN_DECISIONS_AND_TECHNICAL_DEBT.md`)
+- [x] Reconciled canonical vision, 4 AI roles, financial safety invariants, and 977 test baseline in `README.md`
+- [x] Synchronized ADR-01 through ADR-15 across all architectural documents
+
+---
+
+## Test Footprint & Verification Summary
+
+| Category | Suite | Test Files | Total Tests | Status |
+| :--- | :--- | :---: | :---: | :---: |
+| Server Unit | Vitest Unit | 80 | 795 | **PASS (100%)** |
+| Server Integration | Real MongoDB Integration | 14 | 156 | **PASS (100%)** |
+| Engine Scenarios | Synthetic 120-Benchmark | 1 | 120 | **PASS (100.00%)** |
+| Client Unit | Vitest + React Testing Library | 5 | 26 | **PASS (100%)** |
+| Production Smoke | Monitoring & Provider Isolation | 1 | 7 gates | **PASS (100%)** |
+| Client Build | Vite Production Bundle | - | 0 errors | **BUILT (17.51s)** |
+| **Total Automated Tests** | | **100** | **977** | **ALL PASS** |

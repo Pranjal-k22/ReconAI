@@ -1,43 +1,22 @@
 # ReconAI 2.0 — Payment Provider Capability & Safety Boundary Matrix
 
-> **DOCUMENT STATUS: PROPOSED — AWAITING OWNER REVIEW**  
-> *This document defines the payment provider integration boundaries, operational execution modes, security configurations, and API capability mappings for ReconAI 2.0. No application code has been modified.*
+> **DOCUMENT STATUS: IMPLEMENTED & VERIFIED (TEST MODE / READ-ONLY INGESTION)**<br/>
+> *This document defines the payment provider integration boundaries, operational execution modes, security configurations, and API capability mappings for ReconAI 2.0 based on verified implementation.*
 
 ---
 
-## 1. Multi-Tier Operational Execution Modes
+## 1. Provider Modes, Environments & Execution Authority
 
-To ensure strict financial safety, ReconAI 2.0 architecture decouples provider capabilities into **Four Isolated Operational Modes**. Live financial execution is disabled by default:
+In ReconAI 2.0, provider execution authority is governed by three orthogonal dimensions:
+1. **Provider Environment (`RAZORPAY_MODE`)**: Runtime configures `test` mode. Live credentials (`rzp_live_`) are hardcoded to throw immediate security exceptions.
+2. **Provider Write Permission (`RAZORPAY_SANDBOX_WRITES_ENABLED`)**: Defaults to `false`. When false, any write attempt is immediately rejected with zero network traffic and zero database mutations.
+3. **Execution Operation Status**: Provider operations follow strict lifecycle states: `REQUESTED`, `OUTCOME_UNKNOWN`, `VERIFIED_SUCCEEDED`, `VERIFIED_FAILED`, `SAFE_HOLD`.
 
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│               RECONAI 2.0 PROVIDER OPERATIONAL MODES                   │
-├────────────────────┬───────────────────────────────────────────────────┤
-│ Mode 1: INGEST_ONLY│ Read-only HTTP GET polling. Zero write capability.│
-│ Mode 2: SIMULATED  │ Dry-run autonomous decisions. Zero external calls.│
-│ Mode 3: SANDBOX    │ Autonomous execution using Razorpay Test Keys.    │
-│ Mode 4: LIVE       │ DISABLED BY DEFAULT. Requires multi-party sign-off│
-└────────────────────┴───────────────────────────────────────────────────┘
-```
-
-### Mode 1: Read-Only Ingestion Mode (`INGEST_ONLY`)
-- **Status**: **VERIFIED & OPERATIONAL** (Current baseline).
-- **Behavior**: Queries Razorpay payments and settlements using existing `razorpayClient.js`.
-- **Safety Boundary**: Blocked from modifying provider or local accounting records.
-
-### Mode 2: Simulated / Dry-Run Resolution Mode (`SIMULATED`)
-- **Status**: **PROPOSED FOR PHASE 2 IMPLEMENTATION**.
-- **Behavior**: Evaluates full autonomous resolution pipeline (Monitoring $\rightarrow$ Investigation $\rightarrow$ Policy Engine). Calculates idempotency keys, generates refund payloads, but records action as `SIMULATED_EXECUTION` without invoking external network endpoints.
-- **Purpose**: Enables testing full multi-agent autonomous loops without external network dependencies.
-
-### Mode 3: Sandbox / Test-Mode Write Operations (`SANDBOX`)
-- **Status**: **IMPLEMENTED & HARDENED IN STAGE 3 (`razorpaySandboxAdapter.js`)**.
-- **Behavior**: Executes write mutations (full refunds) against Razorpay Test Mode API (`https://api.razorpay.com/v1/...`) using valid `rzp_test_...` credentials.
-- **Safety Boundary**: Hardcoded safety guard blocks any key beginning with `rzp_live_`. Writes are disabled by default via `RAZORPAY_SANDBOX_WRITES_ENABLED=false`. Execution strictly requires a signed Gate 3 `PolicyAuthorizationToken` (HMAC-SHA256, 120s TTL), server-derived dispatch evidence and idempotency key, authoritative fresh preflight GET read, atomic refund reservation (`reserveRefundAmount`), and fail-closed policy limits. Dispatch is restricted strictly to authenticated human `ADMIN` principals (`POST /api/payment-cases/:caseId/provider/dispatch`); machine identities (workers, orchestrators, schedulers, AI agents, PAYMENT_CONTROLLER) cannot dispatch. Autonomous or machine-triggered worker refunds are strictly prohibited.
-
-### Mode 4: Live-Mode Write Operations (`LIVE`)
-- **Status**: **STRICTLY BLOCKED & PROHIBITED**.
-- **Safety Boundary**: Cannot be enabled via simple environment flag. Requires dual administrative approval, multi-signature configuration, and formal owner authorization.
+Conceptual descriptors used in architectural docs map to code as follows:
+- `INGEST_ONLY` / Read-Only Ingestion: Standard `razorpayClient.js` GET queries. Verified active.
+- `SIMULATED` / Dry-Run: Evaluated by `dryRunSimulatorService.js`. Computes recommendations and idempotency keys with zero external API calls.
+- `SANDBOX` / Test Mode: Guarded write adapter (`razorpaySandboxAdapter.js`) using `rzp_test_` keys. Enabled only when `RAZORPAY_SANDBOX_WRITES_ENABLED=true` and invoked by authenticated human `ADMIN` with Gate 3 `PolicyAuthorizationToken`.
+- `LIVE`: Strictly prohibited. Live writes are not implemented or authorized.
 
 ---
 
@@ -48,12 +27,12 @@ To ensure strict financial safety, ReconAI 2.0 architecture decouples provider c
 | **Fetch Payments List** | `/v1/payments` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Fetch Payment Details** | `/v1/payments/:id` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Fetch Settlements Recon** | `/v1/settlements/recon/combined` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
-| **Capture Payment** | `/v1/payments/:id/capture` | `POST` | Proposed Write Adapter (Deferred) | `SIMULATED` | `X-Razorpay-Idempotency-Key` |
+| **Capture Payment** | `/v1/payments/:id/capture` | `POST` | Deferred (Auto-capture via checkout preferred) | `SIMULATED` | `X-Razorpay-Idempotency-Key` |
 | **Create Full Refund** | `/v1/payments/:id/refund` | `POST` | **Hardened Sandbox Adapter** (`razorpaySandboxAdapter.js`) | `SANDBOX` (Default Off; Token Required) | `X-Refund-Idempotency` |
 | **Create Partial Refund** | `/v1/payments/:id/refund` | `POST` | Deferred / Blocked (Full balance refunds only in Stage 3) | N/A | `X-Refund-Idempotency` |
 | **Fetch Refund Details** | `/v1/payments/:id/refunds/:rfd_id` | `GET` | **Verified Supported** | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **List Payment Refunds** | `/v1/payments/:id/refunds` | `GET` | **Verified Supported** (Preflight & Reconcile) | `INGEST_ONLY`, `SANDBOX` | N/A |
-| **Receive Webhook Stream** | `/api/webhooks/razorpay` | `POST` | Proposed Ingestion Engine | All Modes | Verified via HMAC Header |
+| **Receive Webhook Stream** | `/api/webhooks/razorpay` | `POST` | **Verified Implemented** (`webhookService.js`) | All Modes | Verified via HMAC Header |
 | **Fetch Disputes List** | `/v1/disputes` | `GET` | Proposed Read Adapter | `INGEST_ONLY`, `SANDBOX` | N/A |
 | **Direct Bank UTR Reversal Query** | Partner Bank API | `POST/GET` | Unsupported (3rd Party Bank Dependent) | N/A | Requires Direct Bank Tie-Up |
 
@@ -77,10 +56,13 @@ Adhering to Razorpay's official security recommendations:
        .update(rawBodyBuffer)
        .digest("hex");
        
-     return crypto.timingSafeEqual(
-       Buffer.from(expectedSignature, "utf8"),
-       Buffer.from(signature, "utf8")
-     );
+     // Length check prevents timingSafeEqual from throwing on mismatched lengths
+    const sigBuffer = Buffer.from(signature, "utf8");
+    const expectedBuffer = Buffer.from(expectedSignature, "utf8");
+    if (sigBuffer.length !== expectedBuffer.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(expectedBuffer, sigBuffer);
    }
    ```
 4. **Body Parsing Invariant**: Express middleware must capture the raw `req.rawBody` buffer **before** `express.json()` parses the stream into an object. Failure to do so alters whitespace and breaks HMAC signature verification.

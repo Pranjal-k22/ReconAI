@@ -339,8 +339,110 @@ Retrieves status, state history, and metrics for a specific controller run.
 
 ### `GET /api/finance-controller/runs/:runId/report`
 Retrieves the complete Track 4 Finance Controller Report (13 operational metrics, financial sum invariant, unresolved exception list, dynamic classification & severity summaries, throughput semantics, and benchmark accuracy evaluation).
-
 ### `GET /api/finance-controller/runs/:runId/status`
 Lightweight status endpoint for controller state machine execution.
+
+---
+
+## 7. Payment Cases REST APIs (ReconAI 2.0)
+
+Role-scoped management and query endpoints for canonical payment exceptions.
+
+### `GET /api/payment-cases`
+Returns a paginated list of payment cases scoped strictly to the caller's tenant (or all tenants for `ADMIN`).
+- **Query Parameters**: `status` (`CASE_DETECTED`, `CASE_ACTION_IN_PROGRESS`, `CASE_RESOLVED`, `CASE_SAFE_HOLD`), `safeHold` (`true`/`false`), `page`, `limit`.
+- **Response**: `{ cases: [...], pagination: { page, limit, total, pages } }`
+
+### `GET /api/payment-cases/:caseId`
+Retrieves a single payment case by case ID, including full 8-dimension state grid values:
+- `orderStatus`, `captureStatus`, `authorizationStatus`, `refundStatus`, `disputeStatus`, `customerDebitStatus`, `resolutionCaseStatus`, `discrepancyCategory`.
+
+### `GET /api/payment-cases/:caseId/classification`
+Retrieves the authoritative `EvidenceRecord` for the case:
+- `scenarioId`, `category`, `reasonCode`, `confidence`, `facts`, `claims`, `missingEvidence`, `contradictions`, `safeHold`, `safeHoldCode`, `safeHoldReason`, `suggestedNextStep`, `inputHash`, `recordHash`, `evaluatedAt`.
+
+### `POST /api/payment-cases/:caseId/classify`
+Executes classification evaluation against canonical state, creates a new `EvidenceRecord`, and updates case resolution state. Callable by `ADMIN` or `SERVICE`.
+
+### `GET /api/payment-cases/:caseId/evidence`
+Retrieves verified facts, unverified customer claims, and missing evidence items for the case.
+
+### `GET /api/payment-cases/:caseId/investigations`
+Retrieves historical AI investigation runs for the case:
+- Four perspectives: `customerPerspective`, `shopPerspective`, `investigatorFindings`, `resolutionProposal`.
+- Flags: `isExecutable: false`, `authoritative: false`, `modelUsed` (or `FALLBACK_DETERMINISTIC`).
+
+### `POST /api/payment-cases/:caseId/investigate`
+Triggers an on-demand multi-agent advisory investigation run for the case.
+
+### `GET /api/payment-cases/:caseId/policy/decisions`
+Retrieves policy evaluation records for the case, including `policyConfigVersion`, `appliedRuleIds`, `decisionReasons`, and outcome status (`ALLOW`, `DENY`, `HOLD`).
+
+### `POST /api/payment-cases/:caseId/policy/evaluate`
+Evaluates the case against active governed policy limits and produces an immutable `PolicyDecision`.
+
+### `GET /api/payment-cases/:caseId/provider/operations`
+Retrieves the read-only audit ledger of provider operations associated with the case (`operationType`, `operationStatus`, `amountPaise`, `idempotencyKey`).
+
+### `PATCH /api/payment-cases/:caseId/safe-hold`
+Explicitly updates safe-hold status or reason code for manual intervention.
+
+---
+
+## 8. Payment Lifecycle Events REST APIs
+
+Append-only event ledger capturing all state transitions from incoming webhooks, provider syncs, and worker polls.
+
+### `GET /api/payment-events`
+Lists paginated lifecycle events. Supports `tenantId` (ADMIN only), `caseId`, `gatewayPaymentId`, `page`, `limit`.
+
+### `GET /api/payment-events/case/:caseId`
+Retrieves the chronological lifecycle timeline for a specific payment case.
+
+### `GET /api/payment-events/payment/:paymentId`
+Retrieves all lifecycle events associated with a specific gateway payment ID.
+
+### `POST /api/payment-events`
+Ingests a manual lifecycle event behind tenant and RBAC verification.
+
+---
+
+## 9. Webhook Ingress REST API
+
+Ingress endpoint for external payment provider callbacks.
+
+### `POST /api/webhooks/razorpay`
+Ingests live Razorpay webhook payloads.
+- **Authentication**: Cryptographic HMAC SHA-256 signature verification via `x-razorpay-signature` against `RAZORPAY_WEBHOOK_SECRET`.
+- **Concurrency Guard**: Returns HTTP 503 `IN_FLIGHT_EVENT_BEING_PROCESSED` if an identical payload fingerprint is actively being processed by another worker.
+- **Deduplication**: Silently acknowledges duplicate events (`200 OK`) if already committed to the lifecycle ledger.
+- **State Transition**: Advances the 8-dimension state machine and enqueues monitoring tasks as necessary.
+
+---
+
+## 10. Governed Policy Configuration REST APIs
+
+Two-person governed monetary limits and resolution policy configuration.
+
+### `GET /api/policy-config`
+Lists policy configurations for the tenant.
+
+### `GET /api/policy-config/:id`
+Retrieves a specific policy configuration by ID.
+
+### `POST /api/policy-config`
+Proposes a new versioned policy configuration. Callable by `ADMIN`. Requires approval before activation.
+
+### `POST /api/policy-config/:id/approve`
+Activates a proposed configuration. **Two-Person Governance Gate**: The approving `ADMIN` must be distinct from the proposer (`approvedBy !== proposedBy`).
+
+### `POST /api/policy-config/:id/reject`
+Rejects a proposed configuration.
+
+### `POST /api/policy-config/:id/deactivate`
+Deactivates an active configuration. Automatically drops monetary limits to zero (fail-closed).
+
+### `POST /api/policy-config/rollback`
+Rolls back to the immediately preceding active configuration version.
 
 

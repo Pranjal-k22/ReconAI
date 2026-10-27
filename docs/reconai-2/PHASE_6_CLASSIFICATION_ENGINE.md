@@ -183,20 +183,26 @@ Below is the per-case reachability analysis generated directly from `evidence/st
 
 ### Production Inactive Cases: Cases 18 & 23
 
-Cases 18 and 23 (conflicting and ambiguous records) have no production source and therefore never fire today:
-- **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Represents contradictory status or amount across multiple gateway records for the same transaction. In the current production pipeline, incoming webhook deliveries and polling jobs enforce single-record upsert semantics. No production component writes or persists conflicting duplicate gateway payment documents, so Case 18 never fires in production.
-- **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Represents ambiguous partial matching across order references where multiple candidate orders match payment details. In current production normalization, order references are mapped 1-to-1 via strict `merchantOrderId` index lookups without heuristic fuzzy or partial candidate matching. Hence, Case 23 has no production source and never fires today.
+Cases 18 and 23 have decisive fields read by the classifier with no production writer in `server/src`:
+- **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Decisive fields read by classifier:
+  - `conflictingRecords`: `git grep -n "conflictingRecords" -- server/src` -> no production writer found.
+  - `notes.merchantOrderId`: `git grep -n "notes\.merchantOrderId" -- server/src` -> no production writer found.
+  - `directOrderId`: `git grep -n "directOrderId" -- server/src` -> no production writer found.
+- **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Decisive fields read by classifier:
+  - `ambiguousCandidates`: `git grep -n "ambiguousCandidates" -- server/src` -> no production writer found.
+  - `candidateMatches`: `git grep -n "candidateMatches" -- server/src` -> no production writer found.
 
 ### Six Reserved Cases and Reasons
 
-- **Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`):** Requires authenticated client telemetry beacon endpoint with server-verified signature (not yet implemented). (Doc line: `EDGE_CASE_POLICY_MATRIX.md:16`).
-- **Case 4 (`CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT`):** Requires late-auth timeout correlation worker; reserved in classifier and policy domain models. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:64`).
-- **Case 9 (`CASE_9_PARTIAL_PAYMENT`):** Installment agreement tracking model reserved for future stage. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:161`).
-- **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Requires cross-provider settlement audit interface; reserved in domain matrix. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:305`).
-- **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Multi-candidate ambiguity resolver reserved for AI investigator phase. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:385`).
-- **Case 27 (`CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS`):** Concurrent case locking protocol reserved for Stage 6 multi-operator workspace. (Doc line: `EDGE_CASE_POLICY_MATRIX.md:449`).
+Sourced strictly by script from `evidence/stage5_6/05-strict-reachability.json`:
+- **Case 1 (`CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS`):** Requires authenticated client telemetry beacon endpoint with server-verified signature (not yet implemented).
+- **Case 4 (`CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT`):** Requires late-auth timeout correlation worker; reserved in classifier and policy domain models.
+- **Case 9 (`CASE_9_PARTIAL_PAYMENT`):** Installment agreement tracking model reserved for future stage.
+- **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Requires cross-provider settlement audit interface; reserved in domain matrix.
+- **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Multi-candidate ambiguity resolver reserved for AI investigator phase.
+- **Case 27 (`CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS`):** Concurrent case locking protocol reserved for Stage 6 multi-operator workspace.
 
 ### Owner Decision: Precedence Reordering Impact on Merged Inputs
 
 > [!IMPORTANT]
-> **OWNER DECISION:** Stage 5B reorder changed 52 outcomes on merged inputs, all from not-held to held; classifications persisted before ac18699 for such inputs may differ. The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.
+> **OWNER DECISION:** Stage 5 reorder changed 52 outcomes on merged inputs: out of 155 evaluated merged pairs, 52 differences were observed (49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held). Classifications persisted before ac18699 for such inputs may differ. The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.

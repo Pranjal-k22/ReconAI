@@ -1,332 +1,108 @@
 # ReconAI Development Progress
 
-## Project Status (Updated: 12/10/2026)
-**ReconAI 2.0 Phase 3 Completed — Authentication, RBAC, Tenant Isolation & Persistent Machine-Service Authorization Verified (PASS_PENDING_REVIEW).**
-All 51 test files (304/304 tests) pass, Track 4 deterministic reconciliation benchmark achieves 100.00% match rate across 120 scenarios, Vite frontend production build succeeds with 0 errors, and working tree on `main` is completely clean. Comprehensive daily work log documented in [`docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md`](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md).
+## Project Status (Updated: 26/10/2026)
+**ReconAI 2.0 Stage 6 Completed — Corrections (Part A) & Read-Only Operator Workspace (Part B) Verified & Committed.**
+- **Part A Commit**: `9b6804b7a6fdf07224e8ade2dc13009cdefc73f3` (`fix(reconai-2): stage 6a material-state classification hash and evidence corrections`)
+- **Part B Commit**: `fa3357bb6afd36f4396695baad524e8dd6ee3e8c` (`feat(client): stage 6b read-only payment case workspace with token-only tenant scope`)
+- **Automated Test Footprint**:
+  - Server Unit Tests: **795 / 795 passed** across 80 test files
+  - Server Integration Tests: **156 / 156 passed** across 14 test files
+  - Track 4 Reconciliation Benchmark: **120 / 120 scenarios passed** (100.00% match rate)
+  - Client Vitest Suite: **26 / 26 passed** across 5 test files
+  - Production Startup & Isolation Smoke Test: **7 / 7 gates passed**
+  - Production Client Build: **Built in 17.51s with 0 errors**
+  - **Total Automated Tests**: **977 passed** across all suites.
+- Working tree on `main` is clean and synchronized with `origin/main`. Comprehensive daily audit trail documented in [`docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md`](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md).
+
+---
 
 ## Current Milestone
-**ReconAI 2.0 — Phase 3 Verification Complete; Ready for Phase 4 Independent Review.**
-
-## Completed Steps
-- [x] Initialized mandatory project memory context (`memory.md`, `implemented.md`, `folderstr.md`, `docs/PROGRESS.md`).
-- [x] Documented core project rules & financial safety principles (integer paise, deterministic matching priority, advisory AI boundaries).
-- [x] Created system architecture documentation (`docs/ARCHITECTURE.md`) and project overview (`README.md`).
-- [x] Initialized React + Vite + Tailwind CSS client application (`client/`) and Node.js + Express API (`server/`).
-- [x] Created Zod schema for environment validation (`server/src/config/env.js`).
-- [x] Implemented Mongoose connection module with state tracking (`server/src/config/database.js`).
-- [x] Configured Pino logger with secret key & authorization header redaction (`server/src/config/logger.js`).
-- [x] Created operational error architecture (`AppError`, `errorHandler`, `notFoundHandler`, `asyncHandler`).
-- [x] Configured API rate limiter (`server/src/middleware/rateLimiter.js`).
-- [x] Enforced strict MongoDB startup invariant (`server/src/server.js`).
-- [x] Verified live MongoDB Atlas database connection (`reconai` database on Cluster0).
-- [x] Created 8 Mongoose models in `server/src/models/` with integer paise validation and index optimization.
-- [x] Developed deterministic synthetic benchmark dataset generator (120 scenarios, exact distribution).
-- [x] Created dataset exporter generating CSVs (`merchant_orders.csv`, `gateway_payments.csv`, `settlements.csv`) and JSONs (`ground_truth.json`, `dataset_summary.json`).
-- [x] Created safe dataset-scoped CLI scripts (`demo:generate`, `demo:seed`, `demo:reset`).
-- [x] Verified live MongoDB Atlas seeding, idempotency, and reset operations.
-- [x] Documented benchmark dataset specification in `docs/DATASET.md`.
-- [x] Built generator test suite (`server/tests/demo/benchmarkGenerator.test.js`).
-- [x] Implemented core deterministic reconciliation engine services (`normalizationService.js`, `candidateMatcher.js`, `anomalyClassifier.js`, `confidenceEngine.js`, `matchingEngine.js`, `syntheticFeePolicy.js`).
-- [x] Built pure reconciliation API (`reconcileScenario`).
-- [x] Implemented static GroundTruth architecture isolation guard test (`groundTruthIsolationGuard.test.js`).
-- [x] Achieved 100.00% accuracy (120/120 scenarios) on benchmark compatibility test harness (`benchmarkCompatibility.test.js`).
-- [x] Documented reconciliation engine architecture in `docs/RECONCILIATION_ENGINE.md`.
-- [x] Implemented reconciliation run batch orchestration (`reconciliationService.js`), result persistence with compound unique index, and operational metrics (`metricsService.js`).
-- [x] Built benchmark evaluation service (`evaluationService.js`) calculating accuracy, precision, recall, F1, and per-class metrics.
-- [x] Built REST API endpoints under `/api/reconciliation/runs` with Zod validation.
-- [x] Verified live batch reconciliation execution on MongoDB Atlas (120/120 scenarios processed, 80 MATCHED, 40 OPEN, status `COMPLETED_WITH_EXCEPTIONS`, 100% accuracy).
-- [x] Documented evaluation methodology in `docs/EVALUATION.md`.
-- [x] Implemented formal Safety Gate Policy Service (`safetyGateService.js`).
-- [x] Implemented deterministic Severity & Financial Impact Service (`severityService.js`).
-- [x] Implemented Exception Case Service (`exceptionService.js`) and unique compound index `{ runId: 1, resultId: 1 }`.
-- [x] Implemented Human Review Service (`humanReviewService.js`) enforcing original classification preservation.
-- [x] Implemented Centralized Append-Only Audit Service (`auditService.js`) with recursive secret redacting.
-- [x] Built Exception REST APIs (`/api/exceptions`) and Audit REST APIs (`/api/audit`).
-- [x] Verified live audited run on MongoDB Atlas (`RUN-20260902113400-FA3I`: 120 results, 40 exceptions, 122 audit logs).
-- [x] Verified live human review decision on `ORD-000116` (`KEEP_EXCEPTION`), preserving `UNDER_REVIEW` state and `AMBIGUOUS` classification.
-- [x] Documented exception workflow and safety policy in `docs/EXCEPTION_WORKFLOW.md`.
-- [x] Installed official Google GenAI SDK (`@google/genai`) and configured `GEMINI_MODEL`.
-- [x] Implemented Gemini Provider Infrastructure (`geminiService.js`), 15s timeout, and normalized error mapping.
-- [x] Implemented Zod structured output contract (`aiSchemas.js`) enforcing allowed recommendation enum allow-list and rejecting forbidden execution actions.
-- [x] Implemented Business Exception Investigator (`exceptionInvestigator.js`) with minimal evidence payload and prompt injection safety instructions.
-- [x] Implemented Deterministic Fallback Generator (`fallbackExplanation.js`) supporting all 11 exception types with zero workflow breakage.
-- [x] Built Investigation REST API (`POST /api/exceptions/:exceptionId/investigate`).
-- [x] Implemented AI Audit Integration (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`).
-- [x] Documented AI Investigator architecture and safety policy in `docs/AI_INVESTIGATION.md`.
-- [x] Implemented Razorpay Test Mode Client (`razorpayClient.js`) & Safety Guard (`validateTestModeSafety()`).
-- [x] Implemented Razorpay Normalizer & PII Stripper (`razorpayNormalizer.js`).
-- [x] Implemented Payment Sync Service (`paymentSyncService.js`) with count/skip pagination and bulk upsert.
-- [x] Implemented Settlement Recon Sync Service (`settlementSyncService.js`) with deterministic line item IDs (`RZPREC-hash`).
-- [x] Implemented Integration Status Service (`razorpayStatusService.js`).
-- [x] Built Sync REST APIs (`POST /api/razorpay/sync/payments`, `POST /api/razorpay/sync/settlements`, `GET /api/integrations/status`).
-- [x] Implemented Razorpay Audit Logging (`RAZORPAY_SYNC_STARTED`, `RAZORPAY_SYNC_COMPLETED`, `RAZORPAY_SYNC_FAILED`).
-- [x] Built Razorpay Isolation Architecture Guard (`razorpayIsolationGuard.test.js`).
-- [x] Documented Razorpay Read-Only Integration Architecture (`docs/RAZORPAY_INTEGRATION.md`).
-- [x] Implemented React + Vite + Tailwind CSS frontend dashboard, exception review showcase UI, audit trail inspection view, evaluation page, Razorpay sync UI, and responsive application shell.
-
-## Pending Steps
-- [ ] Step 12: End-to-End Testing, Final Verification, and Hackathon Presentation Polish.
-
-## Known Issues
-None.
-
-## Important Architecture Decisions
-- **Deterministic Seeded PRNG**: Generator uses Mulberry32 initialized with `RECONAI_DEMO_2026` ensuring 100% reproducible output across environments.
-- **Strict Ground Truth Isolation**: `GroundTruth` data is stored in `ground_truth.json` / `GroundTruth` collection. Production reconciliation services (`server/src/services/reconciliation/`) NEVER import `GroundTruth`. GroundTruth is imported ONLY in `server/src/services/evaluation/evaluationService.js` (enforced by `groundTruthIsolationGuard.test.js`).
-- **Pure In-Memory Engine & Orchestration**: `reconcileScenario` runs in-memory. Orchestration persists `ReconciliationResult` documents with compound index `{ runId: 1, merchantOrderId: 1 }` preventing duplicate results per run.
-- **Evidence Hierarchy**: Amount alone NEVER establishes a transaction match.
-- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`. Missing values remain `null`.
-- **Run Resolution Safety Gate Rule**: Only `classification === "MATCHED"` AND `confidence >= 0.95` AND `requiresReview === false` may auto-reconcile (`safetyGateService.js`). All anomaly classifications (`AMOUNT_MISMATCH`, `AMBIGUOUS`, etc.) FORCE `allowedAutomaticResolution = false` and `requiresHumanReview = true` regardless of confidence score.
-- **Classification Preservation Invariant**: Human review decisions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) update workflow status fields (`resolutionStatus`, `requiresReview`), but NEVER change original `ReconciliationResult.classification`.
-- **Centralized Append-Only Audit Trail**: All audit events pass through `auditService.js` with recursive credential sanitization. No UPDATE/DELETE routes exist for `/api/audit`.
-- **Advisory AI Boundary & Fallback Semantics**: Gemini AI cannot perform primary matching or classification. AI investigation is triggered on-demand per exception, uses minimal untrusted evidence payloads, strictly rejects forbidden actions via Zod, and falls back to deterministic explanations without workflow interruption.
-- **Razorpay Read-Only & Safety Guard**: Razorpay integration is strictly read-only and Test Mode only (`RAZORPAY_MODE=test`). `rzp_live_` keys trigger safety blocks. Customer PII is stripped. Sync never automatically launches reconciliation runs or alters synthetic benchmark data.
-
-## Last Verification
-- Vitest Test Suite: PASS (41/41 test files passed, 169/169 tests passed).
-- Razorpay Isolation Guard: VERIFIED PASS (`razorpayIsolationGuard.test.js` proves zero imports of `GroundTruth`, `syntheticFeePolicy`, or `matchingEngine`).
-- PII Stripping Invariant: VERIFIED PASS (`razorpayNormalizer.test.js` proves email, phone, VPA, and card payloads are stripped).
-- Merchant ID Safety Invariant: VERIFIED PASS (`razorpayNormalizer.test.js` proves Razorpay `order_id` is NOT automatically set as `merchantOrderId`).
-- Signed Net Amount & Deterministic Settlement ID: VERIFIED PASS.
-- Test Mode Safety Guard: VERIFIED PASS (`validateTestModeSafety()` blocks `rzp_live_` keys).
-- AI Separation Invariant: VERIFIED PASS (`aiSeparation.test.js`).
-- Live MongoDB Atlas Audited Run Executed: PASS (runId: `RUN-20260902113400-FA3I`, 120 results, 40 ExceptionCases, 122 Audit Logs).
-- Benchmark Accuracy: 120/120 (100.00%).
-- GroundTruth Isolation Guard: VERIFIED PASS.
+**ReconAI 2.0 — Stage 6 Complete; Ready for Stage 7 (Controlled Actions & Two-Person Governance UI).**
 
 ---
 
-## Track 4 Phase 0 Baseline Audit
+## Completed Milestones & Architectural History
 
-- **Audit Date**: 2026-09-30
-- **Actual Baseline Status**: PASS (All baseline reconciliation, financial safety, audit logging, Gemini advisory, Razorpay read-only, and evaluation modules verified and passing).
-- **Verified Tests**: 41 backend test files passed, 170 tests passed (0 failed, 0 skipped). Frontend Vite build succeeded cleanly (0 errors).
-- **Verified Benchmark**: 120 synthetic scenarios (`RECONAI_DEMO_V1`, seed `RECONAI_DEMO_2026`). 80 auto-reconciled clean matches, 40 exception cases. 100.00% classification accuracy, precision, recall, and F1 score against GroundTruth.
-- **Track 4 Requirement Matrix**:
-  | Requirement | Current Implementation | Evidence | Status | Gap |
-  | :--- | :--- | :--- | :--- | :--- |
-  | Finance-ops loop | End-to-end multi-pass reconciliation loop from ingestion to human review & audit. | `reconciliationService.js`, `humanReviewService.js`, `auditService.js` | VERIFIED | Fully implemented baseline |
-  | 50+ record synthetic batch | 120 synthetic scenario records generated deterministically. | `benchmarkGenerator.js` (120 orders, 120 payments, 120 settlements) | VERIFIED | Fully satisfied (120 records) |
-  | Agentic/orchestrated workflow | Batch reconciliation orchestration & on-demand AI exception investigation. | `reconciliationService.js`, `exceptionInvestigator.js` | PARTIAL | Autonomous multi-step Finance Controller agent loop missing |
-  | Match rate | 66.67% auto-reconciled (80/120), 33.33% routed to exceptions (40/120). 100% engine classification match rate. | `benchmarkCompatibility.test.js`, `metricsService.js` | VERIFIED | Fully satisfied |
-  | Throughput | Pure in-memory matching engine processes 120 scenarios in ~26ms. | `benchmarkCompatibility.test.js` | VERIFIED | Measured |
-  | Accuracy/evaluation | GroundTruth evaluation service calculates accuracy, precision, recall, and F1. | `evaluationService.js` (100% Accuracy/Precision/Recall/F1) | VERIFIED | GroundTruth strictly isolated |
-  | Exception reporting | ExceptionCase records created with severity, financial impact, and reason details. | `exceptionService.js`, `severityService.js` | VERIFIED | Fully satisfied |
-  | Unresolved exception reporting | Open exceptions tracked by resolution status (`OPEN`, `UNDER_REVIEW`, `APPROVED`, etc.). | `exceptionController.js`, `humanReviewService.js` | VERIFIED | Fully satisfied |
-  | Human review | Review actions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) preserving classification. | `humanReviewService.js` | VERIFIED | Fully satisfied |
-  | Audit trail | Append-only audit logging for batch runs, human review, and AI queries. | `auditService.js`, `AuditLog.js` | VERIFIED | Zero update/delete routes |
-  | Graceful failure | Deterministic fallback explanations on Gemini timeout/error; Razorpay error handling. | `fallbackExplanation.js`, `razorpayClient.js` | VERIFIED | Fully satisfied |
-  | Financial safety | Integer paise standard, confidence safety gate (>= 0.95), anomaly lockout, Razorpay test mode guard. | `money.js`, `safetyGateService.js`, `razorpayClient.js` | VERIFIED | Strictly enforced |
-  | Explainability | Rule-based deterministic explanations + Gemini advisory structured output. | `matchingEngine.js`, `aiSchemas.js` | VERIFIED | Fully satisfied |
-  | GroundTruth isolation | GroundTruth model forbidden from production reconciliation import paths. | `groundTruthIsolationGuard.test.js` | VERIFIED | Strictly isolated |
-  | Production/demo readiness | Full test suite passing (170/170 tests), Vite build passing (0 errors), MongoDB Atlas integrated. | Vitest output, Vite build output | VERIFIED | Baseline ready |
-- **Known Gaps**: Autonomous agent state-machine for Track 4 autonomous controller loops (Phase 1 candidate).
-- **Preserved Invariants**: Integer paise math, deterministic matching priority, safety gate anomaly lockout, original classification preservation, append-only audit, advisory-only AI boundary, Razorpay read-only test mode guard.
-- **Phase 1 Recommendation**: Build autonomous Track 4 Agent Controller loop wrapping baseline reconciliation & exception workflows without altering baseline invariants.
+### 1. ReconAI 1.0 — Three-Way Reconciliation Foundation
+- [x] Initialized full-stack architecture (`client/` React + Vite + Tailwind, `server/` Node.js + Express).
+- [x] Enforced strict MongoDB startup invariant; verified live MongoDB Atlas connectivity.
+- [x] Implemented integer paise financial utilities, eliminating floating-point rounding errors.
+- [x] Created deterministic synthetic benchmark generator (120 scenarios, seeded PRNG `RECONAI_DEMO_2026`).
+- [x] Built pure, in-memory reconciliation engine (`normalizationService.js`, `candidateMatcher.js`, `anomalyClassifier.js`, `confidenceEngine.js`, `matchingEngine.js`).
+- [x] Implemented GroundTruth architecture isolation guard enforcing complete separation between evaluation data and production reconciliation routines.
+- [x] Built batch reconciliation orchestrator (`reconciliationService.js`) with compound index `{ runId: 1, merchantOrderId: 1 }`.
+- [x] Built Safety Gate Policy Service, Exception Case Management, and Human Review Service preserving original classification invariants.
+- [x] Built central append-only audit trail (`auditService.js`) with recursive secret sanitization.
+- [x] Built advisory Gemini AI exception investigator (`geminiService.js`, `exceptionInvestigator.js`) with structured Zod contracts, strict allow-list, and deterministic fallbacks.
+- [x] Built read-only Razorpay Test Mode sync adapter with PII data minimization.
+- [x] Built full client dashboard, exception review showcase, audit inspection modal, and benchmark evaluation views.
 
----
+### 2. ReconAI 2.0 — Phase 3: Identity, RBAC & Multi-Tenant Isolation
+- [x] Designed and implemented 5-role RBAC architecture (`ADMIN`, `SHOP`, `AUDITOR`, `CUSTOMER`, `SERVICE`).
+- [x] Implemented memory-hard salted `scrypt` hashing for human users (`UserAccount.js`, `accountService.js`).
+- [x] Implemented persistent machine service principals (`ServicePrincipal.js`, `serviceRegistry.js`).
+- [x] Implemented cryptographic JWT engine with per-credential version tracking and token revocation (`tokenService.js`).
+- [x] Implemented multi-tenant scoping middleware (`requireTenantScope.js`).
+- [x] Implemented and verified quarantine sentinel tenant isolation (`quarantineSentinelIsolation.integration.test.js`).
 
-## Track 4 Phase 1 Architecture Plan
+### 3. ReconAI 2.0 — Phase 4: Webhook Ingestion & Lifecycle Ledger
+- [x] Built Razorpay webhook ingress endpoint (`POST /api/webhooks/razorpay`) with cryptographic HMAC SHA-256 verification.
+- [x] Implemented payload fingerprinting and deduplication keying.
+- [x] Implemented in-flight concurrency guard returning HTTP 503 `IN_FLIGHT_EVENT_BEING_PROCESSED` on concurrent duplicate deliveries.
+- [x] Built append-only `PaymentLifecycleEvent` ledger capturing all ingested state transitions.
 
-- **Phase Status**: ARCHITECTURE COMPLETE — AWAITING PHASE 2 APPROVAL.
-- **Authoritative Baseline Verification**:
-  - Scenarios: 120
-  - MerchantOrders: 120
-  - GatewayPayments: 124
-  - SettlementRecords: 112
-  - GroundTruth: 120
-  - Total Financial Value: ₹1,030,180.00 (103,018,000 paise)
-  - Auto-Reconciled Value: ₹717,020.00 (71,702,000 paise)
-  - Value Under Review: ₹313,160.00 (31,316,000 paise)
-  - Matched Count: 80 (66.67% auto-reconciliation rate)
-  - Exception Count: 40 (33.33% exception rate)
-  - Accuracy / Precision / Recall / F1: 100.00%
-- **Planned Phase 2 Scope**:
-  - `FinanceControllerAgent.js` state machine (`IDLE` → `INGESTING` → `VALIDATING` → `RECONCILING` → `SAFETY_EVALUATION` → `EXCEPTION_PROCESSING` → `REPORTING` → `COMPLETED` / `FAILED`)
-  - `FinanceControllerRun` Mongoose Model
-  - REST endpoints (`POST /api/finance-controller/run`, `GET /api/finance-controller/runs`, `GET /api/finance-controller/runs/:id/report`)
-  - React client AI Finance Controller dashboard tab
-- **NOT IMPLEMENTED YET**: Phase 2 code implementation. (Phase 1 zero-code gate strictly maintained).
+### 4. ReconAI 2.0 — Phase 5: Payment Monitoring & Poller Worker
+- [x] Implemented durable task queue (`PaymentMonitoringTask.js`) with monotonic leases and exponential backoff.
+- [x] Built in-process monitoring worker loop (`monitoringWorker.js`) with graceful teardown.
+- [x] Built safe provider-read stub executing deterministic payment GET requests (`https://api.razorpay.com/v1/payments/:id`).
+- [x] Implemented 8-dimension monotonic payment state machine (`paymentStateMachine.js`).
+- [x] Built production startup and provider-read isolation smoke test (`monitoringSmokeTest.js`) passing all 7 gates.
 
----
+### 5. ReconAI 2.0 — Phase 5B / 5.5 / 5.6: Classification Context & 30-Scenario Precedence Engine
+- [x] Built database-driven classification context builder (`classifierContextBuilder.js`).
+- [x] Implemented 30 canonical payment scenarios + Safe-Hold engine (`evidenceClassifier.js`).
+- [x] Built regex over comments and `Function#toString` branch counting precedence invariant verification (`classifierPrecedenceInvariant.test.js`).
+- [x] Asserted contradiction stability across all 36 unmergeable contradictory pairs.
+- [x] Built clock-stable input hash preventing false staleness from timestamp progression.
 
-## Track 4 Phase 2 Implementation
+### 6. ReconAI 2.0 — Stage 6A: Material-State Hash & Precedence Corrections
+- [x] Redesigned classification hash (`recordHash`) to hash strictly material business state (document IDs, statuses, amounts in paise, currencies, capture/refund/dispute/settlement states, linked IDs, customer claims), purging mutable timestamps (`updatedAt`), revision numbers (`__v`), poll/lease counters, audit streams, and metadata.
+- [x] Verified real-MongoDB classification hash integration tests:
+  - (a) Idempotent recheck preserves hash and allows policy dispatch.
+  - (b) Status change produces new hash and triggers staleness invalidation.
+  - (c) Non-material write leaves hash unchanged.
+  - (d) Existing hash regression suite passes.
+- [x] Documented classification renewal procedure in ADR-14 (`POST /api/payment-cases/:caseId/classify` by `ADMIN` or `SERVICE`).
+- [x] Inscribed 52 changed merged pair outcomes as Owner Decision in ADR-14 and Phase 6 specification (49 not-held to held, 3 held to held).
+- [x] Categorized sentinel leak proof (21 ASSERTION failures, 0 SETUP failures across protected routes).
+- [x] Created route introspection script (`introspectRoutes.js`) documenting all 62 endpoints and justifying unauthenticated routes.
 
-- **Phase Status**: IMPLEMENTATION & VERIFICATION COMPLETE.
-- **Backend Components Implemented**:
-  - `FinanceControllerAgent.js` (`server/src/services/finance/financeControllerAgent.js`)
-  - `FinanceControllerRun.js` (`server/src/models/FinanceControllerRun.js`)
-  - `financeController.js` (`server/src/controllers/financeController.js`)
-  - `financeRoutes.js` (`server/src/routes/financeRoutes.js`)
-  - `financeControllerAgent.test.js` (`server/tests/finance/financeControllerAgent.test.js`)
-- **Backend Test Suite Results**: 42 test files, 181/181 tests passed (0 failed, 0 skipped).
-- **Frontend Production Build**: PASS (Vite build completed cleanly in 8.60s with 0 errors).
-- **Live Controller Benchmark Run**:
-  - `runId`: `FCRUN-20260930110838-2FVT`
-  - `reconciliationRunId`: `RUN-20260930110839-LW4U`
-  - `batchSize`: 120 scenarios
-  - `matchedRecords`: 80
-  - `exceptionRecords`: 40
-  - `matchRate`: 66.67%
-  - `totalAmountProcessedPaise`: 103,018,000 paise (₹1,030,180.00)
-  - `autoReconciledAmountPaise`: 71,702,000 paise (₹717,020.00)
-  - `amountUnderReviewPaise`: 31,316,000 paise (₹313,160.00)
-  - `unresolvedRecords`: 40 (`OPEN` or `UNDER_REVIEW` status)
-  - `financialSumInvariant`: 71,702,000 + 31,316,000 = 103,018,000 (**VERIFIED PASS**)
-  - `directEngineParityMismatches`: 0 (100% classification & amount consistency verified).
-
----
-
-## Track 4 Phase 3 — Finance Controller Frontend
-
-- **Phase Status**: IMPLEMENTATION & VERIFICATION COMPLETE (PASS).
-- **Frontend Route**: `/finance-controller`
-- **Components Created/Updated**:
-  - `client/src/pages/FinanceControllerPage.jsx`
-  - `client/src/api/financeControllerApi.js`
-  - `client/src/components/layout/Sidebar.jsx`
-  - `client/src/App.jsx`
-- **API Integration**:
-  - `POST /api/finance-controller/run` (Triggers Track 4 autonomous agent execution)
-  - `GET /api/finance-controller/runs` (Fetches historical controller runs list)
-  - `GET /api/finance-controller/runs/:runId` (Fetches run metadata and status)
-  - `GET /api/finance-controller/runs/:runId/report` (Fetches complete controller report)
-  - `GET /api/finance-controller/runs/:runId/status` (Polls state machine status)
-- **UI & Metric Highlights**:
-  - **State Machine Pipeline**: IDLE → INGESTING → VALIDATING → RECONCILING → SAFETY_EVALUATION → EXCEPTION_PROCESSING → REPORTING → COMPLETED / FAILED
-  - **Metric Distinction**: Operational Match Rate (66.67%) clearly separated from Benchmark Accuracy (100.00%) with explanatory tooltips.
-  - **Integer Paise Financial Sum Invariant**: ₹10,30,180.00 Total = ₹7,17,020.00 Auto-Reconciled + ₹3,13,160.00 Under Review.
-  - **Unresolved Exceptions Table**: Displays 40 unresolved exceptions with "AI ADVISORY ONLY" safety labels and direct navigation to human review workflow (`/exceptions/:id`).
-  - **Advisory AI Drawer**: Explains Gemini/Fallback root causes with clear disclaimer that AI analysis does not modify financial reconciliation state.
-  - **Audit & Evaluation Links**: Direct navigation to `/audit` and `/evaluation`.
-- **Test & Build Results**:
-  - Backend Vitest Suite: 42 test files, 183/183 tests passed (0 failed).
-  - Frontend Vite Production Build: Completed cleanly with 0 errors.
-- **Safety Invariants**:
-  - NO payment execution authority.
-  - NO Gemini financial authority.
-  - NO GroundTruth participation in production reconciliation.
-  - Phase 4 started: NO. Stopped: YES.
+### 7. ReconAI 2.0 — Stage 6B: Read-Only Operator Workspace (Client)
+- [x] Created API Read Contract (`docs/reconai-2/API_READ_CONTRACT.md`) and server contract test suite (`workspaceApiContract.test.js`).
+- [x] Built strictly read-only client API module (`client/src/api/casesApi.js`):
+  - Strictly GET exports only (asserted by automated export inspection).
+  - Interceptor strips all `x-tenant-id` variations and URL tenant parameters; tenant scoping derived solely from JWT server-side.
+  - Bounded retry (max 2 retries) on 503/network errors with normalized error mapping.
+- [x] Built RoleGuard navigation barrier (`RoleGuard.jsx`): allows `ADMIN`, `SHOP`, `AUDITOR`; renders inline *"not available for your role"* for `CUSTOMER` and machine service accounts without initiating data fetchers.
+- [x] Built shared integer paise money formatter (`formatMoney.js`) with zero floating-point artifacts.
+- [x] Built Cases List Page (`CasesListPage.jsx`) with Live API badge, status filtering, safe-hold queue view (`?safeHold=true`), and case age calculation.
+- [x] Built Case Detail Page (`CaseDetailPage.jsx`):
+  - 8-dimension state grid.
+  - Amount comparison and mismatch calculation.
+  - Classification panel separating provider facts from unverified claims with staleness badge.
+  - Append-only lifecycle events timeline.
+  - Four AI advisory cards labeled *"Advisory only"* with fallback markers.
+  - Policy decisions list displaying `policyConfigVersion`.
+  - Read-only provider operations table.
+  - Prominent Safe-Hold banner (Case 22: *"late capture on a cancelled order: held, no automatic refund or reopen"*).
+  - Text-only expandable rendering (`ExpandableText.jsx`) preventing XSS from hostile claim text.
+- [x] Built dev-only demo seed script (`seedWorkspaceDemo.js`) with strict safety guards and multi-role accounts.
+- [x] Built Client Vitest Suite (26 tests passing across 5 test files).
+- [x] Executed automated headless browser CDP verification (captured 9 screenshots, verified 0 non-GET workspace calls).
 
 ---
 
-## Track 4 Phase 3A — Frontend Metric + Progress Semantics Correction
-
-- **Phase Status**: VERIFIED & ACCEPTED (PASS).
-- **Corrected Semantic Features**:
-  1. **Authoritative Throughput**:
-     - **Controller Throughput**: **12.51 records/sec** (Full persisted controller workflow including ingestion, validation, DB persistence of 120 results and 40 exceptions, safety gate evaluation, and automated AI exception investigation dispatch).
-     - **Batch Engine Throughput**: **~40-60 records/sec** (Persisted batch matching without AI analysis).
-     - **Matching Engine Pure Execution**: **~4,615 records/sec** (In-memory matching logic).
-     - UI label updated to **"Controller Throughput"** with explicit subtext definition **"Full persisted workflow"**.
-  2. **Truthful Progress Model (Run State Presentation)**:
-     - Terminology changed from "REAL-TIME PROGRESS" to **"RUN STATE PRESENTATION"**.
-     - Display truthful loading state while synchronous POST is executing, followed by actual final state returned from backend. No fake progress bars or fabricated polling loops.
-  3. **Verified Financial Sum**:
-     - ₹10,30,180.00 Total = ₹7,17,020.00 Auto-Reconciled + ₹3,13,160.00 Under Review (**PASS**).
-  4. **Verified Unresolved Exception Count**:
-     - 40 Exceptions, 40 Unresolved (`OPEN` or `UNDER_REVIEW`). AI investigation attached without altering resolution status.
-  5. **Operational vs Evaluation Distinction**:
-     - Operational Match Rate (66.67%) kept distinct from GroundTruth Benchmark Classification Accuracy (100.00%).
-  6. **AI Advisory Notice**:
-     - Prominently displays: **"AI ADVISORY ONLY: AI investigation does not modify financial reconciliation state."**
-- **Test & Build Results**:
-  - Backend Vitest Suite: 42 test files, **183/183 tests passed** (0 failed).
-  - Frontend Vite Production Build: **Completed cleanly (0 errors)**.
-- **Phase 4 Started**: NO. Stopped: YES.
-
----
-
-## Track 4 Phase 4 — Safety, Guardrails & Auditability Hardening
-
-- **Phase Status**: VERIFIED & HARDENED (PASS).
-- **Hardening Achievements**:
-  1. **Finance Controller Authority Enforced**: Controller orchestrates batch processing and AI advisory calls, but cannot alter money amounts, invent classifications, or execute payments/refunds/payouts.
-  2. **AI Boundary Enforced**: Gemini operates 100% advisory. Output validated by Zod (`aiAnalysisOutputSchema`) against forbidden execution actions (`REFUND_CUSTOMER`, `CAPTURE_PAYMENT`, `MARK_AS_MATCHED`, etc.).
-  3. **Prompt Injection Defense**: Financial evidence items formatted strictly as untrusted string literals.
-  4. **GroundTruth Isolation Guard**: Proves zero GroundTruth imports in production reconciliation and controller modules.
-  5. **Razorpay Read-Only Guard**: Test Mode enforced (`validateTestModeSafety()`). PII (`email`, `contact`, `vpa`, `card`) stripped. HTTP GET requests only.
-  6. **Append-Only Audit Trail**: All events logged with recursive secret sanitization (`[REDACTED]`). Zero UPDATE/DELETE REST endpoints.
-  7. **Failure Isolation**: Failures during individual AI investigations trigger fallback without crashing batch execution. Controller state transitions to `FAILED` safely on unrecoverable errors.
-  8. **Security Hardening Suite**: New test file [`controllerSafetyAndHardening.test.js`](file:///c:/WEB%20DEVELOPMENT/ReconAI/server/tests/finance/controllerSafetyAndHardening.test.js) (13 tests passing).
-- **Test Suite Results**: 43 test files, **196 / 196 backend unit, integration, and security tests passing** (0 failing, 0 skipped).
-- **Frontend Production Build**: **PASS** (Vite build completed cleanly with 0 errors in 8.16s).
-- **Phase 5 Started**: NO. Stopped: YES.
-
----
-
-## Track 4 Phase 5 — Track 4 Metrics, Reporting & Benchmark Hardening
-
-- **Phase Status**: VERIFIED & HARDENED (PASS).
-- **Key Metrics & Reporting Enhancements**:
-  1. **Authoritative Operational Metrics**: 13 operational metrics calculated dynamically (`batchSize: 120`, `processedRecords: 120`, `matchedRecords: 80`, `exceptionRecords: 40`, `autoResolvedRecords: 80`, `manualReviewRecords: 40`, `unresolvedRecords: 40`, `matchRate: 66.67%`, `exceptionRate: 33.33%`, `throughput: 12.51 rec/s`, `totalAmountProcessedPaise: 103018000`, `autoReconciledAmountPaise: 71702000`, `amountUnderReviewPaise: 31316000`).
-  2. **Financial Sum Invariant**: Enforced `totalAmountProcessedPaise === autoReconciledAmountPaise + amountUnderReviewPaise` with explicit runtime validation assertion in `FinanceControllerAgent`.
-  3. **Operational vs Evaluation Metric Isolation**: Kept Operational Match Rate (66.67%) strictly separated from GroundTruth Benchmark Classification Accuracy (100.00%).
-  4. **Dynamic Exception & Severity Summaries**: Controller report dynamically breaks down exception counts, unresolved counts, and financial impacts by anomaly classification enum (`AMBIGUOUS`, `AMOUNT_MISMATCH`, etc.) and severity levels (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`).
-  5. **Unresolved Exception Report Structure**: Full listing of all `OPEN` and `UNDER_REVIEW` cases including `exceptionId`, `merchantOrderId`, `type`, `severity`, `financialImpact`, `currentStatus`, `aiInvestigated`, `deterministicExplanation`, `aiExplanation`, `aiRecommendation`.
-  6. **Track 4 Batch Requirement**: Validated minimum batch size requirement (`isTrack4DemoBatch: true` for 120 scenarios, batch size >= 50).
-  7. **Throughput Semantics**: Explicitly labeled `Controller Throughput` as `Full persisted controller workflow` (12.51 rec/s).
-  8. **Evaluation Robustness**: Zero-denominator safe mathematical handling in `evaluationService.js` for dynamic accuracy, precision, recall, and F1 calculations.
-- **Test Suite Results**: 44 test files, **196 / 196 backend unit, integration, security, and metrics tests passing** (0 failing, 0 skipped).
-- **Frontend Production Build**: **PASS** (Vite build completed cleanly with 0 errors).
-- **Phase 6 Started**: NO. Stopped: YES.
-
----
-
-## Track 4 Phase 7 — Final Submission Readiness & Reproducibility Lock
-
-- **Phase Status**: SUBMISSION READY (PASS).
-- **Final Verification & Reproducibility Audit**:
-  1. **Clean Start / Reproducibility**: Fresh developer startup path verified (`npm install`, `npm run demo:seed`, `npm run dev`).
-  2. **Authoritative Dataset & Seed**: `RECONAI_DEMO_V1` dataset, seed `RECONAI_DEMO_2026` generating 120 scenarios (80 MATCHED, 40 Exceptions, 40 Unresolved, 66.67% Operational Match Rate).
-  3. **Financial Sum Invariant**: $103,018,000\text{ paise} = 71,702,000\text{ paise} + 31,316,000\text{ paise}$ ($\text{₹10,30,180.00} = \text{₹7,17,020.00} + \text{₹3,13,160.00}$).
-  4. **Hard-Coded Result Audit**: All production KPI values derived strictly from live backend APIs (`/api/finance-controller/runs/:runId/report`).
-  5. **Secret & Credential Security**: Scanned source tree; zero real credentials committed. `.env` files protected by `.gitignore`.
-  6. **Track 4 Safety Boundaries**: Deterministic engine authoritative, Gemini advisory-only, GroundTruth strictly isolated, append-only audit log active, Razorpay read-only test mode guard active.
-- **Test Suite & Build Final Results**:
-  - Backend Vitest Test Suite: **44 test files passed, 200 / 200 tests passing (0 failing, 0 skipped)**.
-  - Frontend Production Build: **Vite build completed cleanly with 0 errors**.
-- **Phase 8 Started**: NO.
-- **Submission Readiness**: **SUBMISSION READY (YES)**.
-
-
----
-
-## Track 4 Phase 6 — Final Demo Experience & Judge-Ready Integration
-
-- **Phase Status**: VERIFIED & DEMO READY (PASS).
-- **Key Experience & UX Enhancements**:
-  1. **Finance Controller Landing Experience**: Clean, high-impact landing page at `/finance-controller` with clear title, 30-second product value proposition, and prominent `Run Finance Controller` action.
-  2. **Track 4 Visual Workflow Story Panel**: Pipeline banner rendering `INPUT → VALIDATE → RECONCILE → SAFETY GATE → AUTO-RECONCILE / EXCEPTION → AI ADVISORY → HUMAN REVIEW → AUDIT & REPORT`.
-  3. **Judge Quick Action Links**: Direct navigation to `Audit Trail (Filtered)`, `Evaluation Benchmark`, `Exceptions Queue`, and `Graceful Failure Case (ORD-000116)`.
-  4. **Dynamic Unresolved Exceptions Panel**: Prominent `EXCEPTIONS NOT RESOLVED` section displaying active cases, severity breakdown, classification badges, and direct `Review Exception` links.
-  5. **Safety & Boundary Architecture Panel**: 8-point checklist showcasing deterministic engine, anomaly lockout, safety gates, human review, AI advisory boundary, GroundTruth isolation, Razorpay read-only guard, and append-only audit trail.
-  6. **Synthetic Benchmark Panel**: Explicitly labeled benchmark card exposing Accuracy (100%), Precision (100%), Recall (100%), and F1 Score (100%) with post-run GroundTruth disclaimer.
-  7. **Financial Sum Flow Visualization**: Visual card demonstrating $103,018,000\text{ paise} = 71,702,000\text{ paise} + 31,316,000\text{ paise}$ ($\text{₹10,30,180.00} = \text{₹7,17,020.00} + \text{₹3,13,160.00}$).
-  8. **Truthful Progress & Execution Loading**: Truthful loading modal during execution (`Controller run in progress...`).
-- **Test Suite Results**: 44 test files, **200 / 200 backend tests passing** (0 failing, 0 skipped).
-- **Frontend Production Build**: **PASS** (Vite build completed cleanly with 0 errors).
-- **Phase 7 Started**: NO. Stopped: YES.
-
----
-
-## ReconAI 2.0 — Milestone Progress Log (Completed: 12/10/2026)
-
-### Phase 1: Architecture & System Requirements (Completed)
-- Designed autonomous payment monitoring & resolution architecture while preserving Track 4 deterministic engine as authoritative financial evidence subsystem.
-- Created `docs/reconai-2/` documentation framework: `PRODUCT_REQUIREMENTS.md`, `ARCHITECTURE_DECISIONS.md` (ADR-01 to ADR-10), `ACCEPTANCE_CRITERIA.md` (Gates 1-7), `PAYMENT_STATE_MACHINE.md`, `ROLE_PERMISSION_MATRIX.md`, `PROVIDER_CAPABILITY_MATRIX.md`, and `EDGE_CASE_POLICY_MATRIX.md`.
-
-### Phase 2: Domain Model, Event Ledger & Action Ledger (Completed)
-- Implemented `PaymentCase`, `PaymentLifecycleEvent`, and `PaymentAction` domain models with strictly validated state enums, composite idempotency keys, and safe-hold controls.
-- Enforced non-executing financial guardrail: actions restricted to `PROPOSED`, `SIMULATED`, `REJECTED_BY_POLICY`, and `HELD_IN_SAFE_HOLD`.
-- Preserved GroundTruth isolation, Razorpay test mode constraints, and integer paise accounting invariants.
-
-### Phase 3: Authentication, RBAC, Tenant Isolation & Persistent Authorization (Completed: 12/10/2026)
-- **Status**: `PASS_PENDING_REVIEW` (All verification gates passing on `main`).
-- **Persistent Machine-Service State**: Implemented `ServicePrincipal` Mongoose model storing machine identities with salted `scrypt` credential hashes, monotonic `credentialVersion`, permitted scopes, and active flags.
-- **Immediate Authorization Revocation**: Dynamic in-flight claim validation on every request; account/service disablement triggers immediate `401 Unauthorized`; role downgrades, scope removals, and tenant changes immediately enforce `403 Forbidden` with zero stale-privilege window.
-- **Restart-Safe Bootstrapping**: `initDefaultServices()` idempotently bootstraps default principals without overwriting existing records, reactivating disabled services, or reverting rotated credentials across application restarts.
-- **Scoped Auditor Scoping**: Auditor role is tenant-scoped by default; cross-tenant auditing strictly requires verified server-side `GLOBAL_AUDIT` claims and logs append-only audit events. Mutations are unconditionally rejected with `HTTP 403 Forbidden`.
-- **Fail-Closed Production Invariant**: Database unavailability in production triggers `503 Service Unavailable`.
-- **Automated Verification**: **51 test files, 304/304 backend tests passing**, Track 4 benchmark at 100.00% match rate across 120 scenarios, Vite frontend build clean (0 errors), `git diff --check` clean.
-- **Master Daily Log**: Fully documented in [`docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md`](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md).
+## Next Steps (Stage 7 Preview)
+- [ ] Controlled Actions & Two-Person Governance UI: Proposing and activating versioned policy limits via UI.
+- [ ] Controlled operator dispatch actions (classify, investigate, evaluate, release safe-hold).
+- [ ] Safe sandbox write execution behind two-person authorization.

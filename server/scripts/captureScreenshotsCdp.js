@@ -5,13 +5,37 @@ import path from "path";
 const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PORT = 9222;
 
-const tokens = JSON.parse(fs.readFileSync("evidence/stage6/tokens.json", "utf8"));
+const seedPassword = process.env.DEMO_SEED_PASSWORD;
+if (!seedPassword || typeof seedPassword !== "string" || seedPassword.trim().length === 0) {
+  console.error("[CaptureScreenshots] Error: DEMO_SEED_PASSWORD environment variable is required; hardcoded credentials prohibited.");
+  process.exit(1);
+}
+
+async function loginAccount(email, password) {
+  const res = await fetch("http://127.0.0.1:5000/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password })
+  });
+  if (!res.ok) {
+    throw new Error(`Login failed for ${email}: HTTP ${res.status}`);
+  }
+  const body = await res.json();
+  return body.data.token;
+}
 
 async function sleep(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
 async function run() {
+  const tokens = {
+    admin: await loginAccount("admin@reconai-test.local", seedPassword),
+    shopA: await loginAccount("shop-a@reconai-test.local", seedPassword),
+    shopB: await loginAccount("shop-b@reconai-test.local", seedPassword),
+    auditorA: await loginAccount("auditor-a@reconai-test.local", seedPassword),
+    customerA: await loginAccount("customer-a@reconai-test.local", seedPassword)
+  };
   const tmpProfile = path.resolve("C:\\Users\\pc\\AppData\\Local\\Temp\\chrome-reconai-profile");
   if (!fs.existsSync(tmpProfile)) {
     fs.mkdirSync(tmpProfile, { recursive: true });

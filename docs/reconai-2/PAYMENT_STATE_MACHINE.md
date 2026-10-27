@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Canonical Payment State Machine & Lifecycle Specification
 
-> **DOCUMENT STATUS: PROPOSED — AWAITING OWNER REVIEW**  
-> *This document specifies the canonical multi-dimensional payment state machine, lifecycle transitions, event sequencing rules, and recovery behaviors for ReconAI 2.0. No application code has been modified.*
+> **DOCUMENT STATUS: IMPLEMENTED & VERIFIED**<br/>
+> *This document specifies the canonical multi-dimensional payment state machine, lifecycle transitions, event sequencing rules, and recovery behaviors for ReconAI 2.0 based on verified implementation.*
 
 ---
 
@@ -26,7 +26,7 @@ ReconAI 2.0 maintains an **8-Dimensional Canonical State Machine** for every tra
 │ 5. Settlement Payout State     │ NONE | PENDING | SETTLED | ADJUSTED   │
 │ 6. Refund State                │ NONE | ELIGIBLE | PENDING | CONFIRMED │
 │ 7. Dispute / Chargeback State  │ NONE | INQUIRY | FORMAL | WON | LOST  │
-│ 8. Case Resolution State       │ DETECTED | INVESTIGATING | RESOLVED   │
+│ 8. Case Resolution State       │ CASE_DETECTED | CASE_SAFE_HOLD | ...    │
 └────────────────────────────────┴───────────────────────────────────────┘
 ```
 
@@ -90,16 +90,18 @@ Tracks formal bank disputes and consumer chargebacks:
 - `DISPUTE_WON`: Merchant won dispute; funds re-credited.
 - `DISPUTE_LOST`: Customer won dispute; funds permanently debited.
 
-### Dimension 8: Case Resolution State (`resolutionCaseState`)
-Tracks autonomous lifecycle of the issue inside ReconAI Controller:
+### Dimension 8: Case Resolution State (`resolutionCaseStatus`)
+Tracks autonomous lifecycle of the issue inside ReconAI Controller (`PaymentCase.js`):
 - `CASE_DETECTED`: Inconsistency detected; case record created.
 - `CASE_INVESTIGATING`: Multi-agent evidence gathering and diagnosis in progress.
 - `CASE_PENDING_POLICY`: Investigator proposed action; policy engine evaluating invariants.
 - `CASE_ACTION_IN_PROGRESS`: Authorized provider action dispatched under lock lease.
 - `CASE_VERIFYING_OUTCOME`: Action executed; polling or awaiting outcome confirmation.
 - `CASE_RESOLVED`: Authoritative final state confirmed; audit sealed; parties notified.
-- `CASE_SAFE_HOLD`: Automated action halted due to risk, fraud, or ambiguity; routed to admin.
+- `CASE_SAFE_HOLD`: Automated action halted due to risk, fraud, ambiguity, or Case 22 invariant; routed to admin.
 - `CASE_EXTERNAL_ESCALATION`: Escalated to partner bank or legal dispute team.
+
+*(Important Architectural Note: All primary case lifecycle states strictly use the `CASE_` prefix. The value `UNKNOWN` is an enum value only for the 7 orthogonal sub-states [e.g. `CAPTURE_UNKNOWN`, `ORDER_UNKNOWN`], but is NOT a valid `resolutionCaseStatus`).*
 
 ---
 
@@ -120,19 +122,19 @@ sequenceDiagram
     Shop->>Gateway: Create Payment Order
     Customer->>Gateway: Submit UPI / Card Credentials
     Gateway-->>ReconAI: Webhook: payment.authorized
-    Note over ReconAI: Auth: AUTHORIZED, Capture: NONE, Case: DETECTED
+    Note over ReconAI: Auth: AUTHORIZED, Capture: NONE, Case: CASE_DETECTED
     Gateway-->>ReconAI: Webhook: payment.captured (pay_001)
     Note over ReconAI: Capture: CAPTURED, Settlement: PENDING
     ReconAI->>Shop: Verify & Confirm Order Paid
     Note over Shop: Order: PAID
     Gateway->>Bank: Process Batch Settlement (T+2)
     Bank-->>ReconAI: Webhook: settlement.processed (set_001)
-    Note over ReconAI: Settlement: SETTLED, Case: RESOLVED
+    Note over ReconAI: Settlement: SETTLED, Case: CASE_RESOLVED
 ```
 
 ---
 
-### 3.2 Failure & Autonomous Reversal Path (Customer Debited on Failed Gateway)
+### 3.2 Autonomous Resolution Path (Refund on Verified Captured Discrepancy)
 
 ```mermaid
 sequenceDiagram
@@ -142,20 +144,22 @@ sequenceDiagram
     participant ReconAI as ReconAI Controller
     participant Gateway as Razorpay Gateway
 
-    Customer->>CustomerAI: "₹1,500 was deducted but checkout failed!"
+    Customer->>CustomerAI: "₹1,500 was deducted but order was cancelled/unfulfilled!"
     CustomerAI->>ReconAI: Open Claim (ORD-505, Amount: 150000 paise)
-    Note over ReconAI: CustomerDebit: REPORTED, Resolution: INVESTIGATING
+    Note over ReconAI: CustomerDebit: REPORTED, Case: CASE_INVESTIGATING
     ReconAI->>Gateway: Authoritative GET /v1/payments/pay_505
-    Gateway-->>ReconAI: Status: FAILED (issuer_error)
-    Note over ReconAI: Capture: FAILED, Debit: VERIFIED
-    ReconAI->>ReconAI: Policy Check: Eligible for Auto-Reversal under RBI TAT? YES
-    Note over ReconAI: Resolution: ACTION_IN_PROGRESS (Lease acquired)
-    ReconAI->>Gateway: POST /v1/payments/pay_505/refund (Idempotency Key: IDEM-505)
+    Gateway-->>ReconAI: Status: CAPTURED, Amount: 150000 paise
+    Note over ReconAI: Capture: CAPTURED, Order: CANCELLED
+    ReconAI->>ReconAI: Policy Check: Eligible for Refund under merchant limits? YES
+    Note over ReconAI: Case: CASE_ACTION_IN_PROGRESS (Lease acquired)
+    ReconAI->>Gateway: POST /v1/payments/pay_505/refund (Idempotency Key: IDEM_KEY)
     Gateway-->>ReconAI: HTTP 200 (Refund ID: rfd_505, status: processed)
-    Note over ReconAI: Refund: CONFIRMED, Case: RESOLVED
+    Note over ReconAI: Refund: CONFIRMED, Case: CASE_RESOLVED
     ReconAI->>CustomerAI: Send Verified Resolution Confirmation
     CustomerAI->>Customer: "Your ₹1,500 refund is confirmed (Refund ID: rfd_505). Bank credit in 24-48h."
 ```
+
+*(Note on Failed Gateway Payments: If gateway payment status is `FAILED`, Razorpay cannot execute a refund because funds were never captured by the gateway. For uncaptured debits, ReconAI tracks the incident against RBI TAT auto-reversal timelines and verifies if the issuing bank's reversal completes; it never dispatches an invalid refund call to Razorpay for uncaptured payments).*
 
 ---
 
@@ -224,7 +228,8 @@ To guarantee data integrity, the state machine strictly enforces **Monotonic Pro
 | `resolutionCaseState: CASE_VERIFYING_OUTCOME` | `CASE_RESOLVED`, `CASE_SAFE_HOLD` | Provider authoritative verification completes. |
 
 ### 4.2 Strictly Prohibited Transitions & Terminality Rules
-1. **FAILED is NOT Terminal for GatewayPayment**: While `CAPTURE_CAPTURED` is non-regressible, `CAPTURE_FAILED` is non-terminal. In asynchronous payment networks, delayed bank capture confirmations can legitimately overturn an apparent initial failure. Arrival of late capture transitions the payment to `CAPTURED`, marks `isLateCapture: true`, and places the case into `CASE_SAFE_HOLD` under `safeHoldCode: "LATE_CAPTURE_AFTER_FAILURE"`.
+0. **Case 22 Safe-Hold Invariant (Non-Negotiable)**: Case 22 (Late Capture on Cancelled Order) must remain strictly in `CASE_SAFE_HOLD` with `safeHoldCode: "LATE_CAPTURE_CANCELLED_ORDER"`. It must NEVER trigger an automatic refund and NEVER trigger automatic reopening/fulfilment of the cancelled order.
+1. **FAILED is NOT Terminal for GatewayPayment**:: While `CAPTURE_CAPTURED` is non-regressible, `CAPTURE_FAILED` is non-terminal. In asynchronous payment networks, delayed bank capture confirmations can legitimately overturn an apparent initial failure. Arrival of late capture transitions the payment to `CAPTURED`, marks `isLateCapture: true`, and places the case into `CASE_SAFE_HOLD` under `safeHoldCode: "LATE_CAPTURE_AFTER_FAILURE"`.
 2. **Regressing Final Capture**: `CAPTURE_CAPTURED` $\rightarrow$ `CAPTURE_FAILED` or `CAPTURE_NONE` is strictly forbidden. Once captured, only refunds or chargebacks can alter fund balances.
 3. **Regressing Final Settlement**: `SETTLEMENT_SETTLED` $\rightarrow$ `SETTLEMENT_PENDING` is strictly forbidden.
 4. **Reverting Terminal Refund**: `REFUND_CONFIRMED` or `REFUND_FAILED` $\rightarrow$ `REFUND_PENDING`, `REFUND_INITIATED`, or `REFUND_NONE` is strictly forbidden. Both `processed` and `failed` refund states are terminal and never overwrite each other.

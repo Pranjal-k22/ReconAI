@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Measurable Acceptance Criteria & Verification Framework
 
-> **DOCUMENT STATUS: GATE 1 VERIFIED; GATE 3 IMPLEMENTED & VERIFIED WITH MOCKED TRANSPORT (NO REAL RAZORPAY TEST-MODE RUN YET)**
-> *Gate 1 (Zero Cross-Tenant Access Leaks) has been implemented, hardened, and verified with automated test suites. Gate 3 (Zero Actions Initiated Directly by LLM Generation via Signed PolicyAuthorizationToken) is implemented; verified with mocked provider transport; no real Razorpay test-mode run yet.*
+> **DOCUMENT STATUS: GATES 1–13 IMPLEMENTED & VERIFIED (STAGE 6 COMPLETED: 977 TESTS PASSING, 0 ERRORS)**
+> *Gates 1–7 verified across Stages 1–5. Gate 8–11 (Two-Person Policy Governance & Limits) verified in Stage 4. Gate 12 (Material-State Classification Hash & Precedence Invariants) verified in Stage 6A. Gate 13 (Read-Only Operator Workspace with Token-Only Multi-Tenant Scoping) verified in Stage 6B with automated client tests, server contract tests, and headless browser CDP verification.*
 
 ---
 
@@ -109,3 +109,15 @@ ReconAI 2.0 defines explicit operational metrics for its autonomous payment cont
 - **Limit Semantics Plain Meaning**: `maxSingleRefundPaise` caps single refund executions against the transaction's refundable balance. `maxCumulativeRefundPaise` has **no effect today** because `currentCumulativeDailyPaise = 0` and `maxSingleRefundPaise <= maxCumulativeRefundPaise` is strictly enforced; Guard 7 single limit always triggers first. True per-day velocity caps and cumulative-per-payment caps are NOT IMPLEMENTED today. OWNER DECISION: implement real aggregation, or remove the field. Do not change evaluator behavior.
 - **Two-Person Provisioning**: Activation requires two distinct ADMIN accounts (`approvedBy !== proposedBy`); second ADMIN account is provisioned via `accountService.provisionUserAccount`.
 - **Honest Reachability**: 30 deterministic rules are implemented in the classifier. Reachability is strictly evaluated via runtime proxy tracing and DB-driven classification (Stage 5 Part B). No claim that 30 scenarios are supported end to end without intake routes.
+
+---
+
+## 5. Stage 6 Acceptance Gates (Corrections & Read-Only Workspace)
+
+### Gate 12: Material-State Classification Hash & Precedence Robustness (Stage 6A)
+- **Criterion**: `recordHash` must hash strictly material business state (document IDs, statuses, amounts in paise, currencies, capture/refund/dispute/settlement states, linked IDs, customer claims). Non-material operational writes (touching `updatedAt`, incrementing background poll/lease counters) must NEVER invalidate the classification hash. Status transitions must invalidate the hash and require formal renewal via `POST /api/payment-cases/:caseId/classify`. Precedence rules must assert 40 regex-over-comments and Function#toString branches and stable contradiction lists across all 36 unmergeable pairs.
+- **Measurement**: 100% pass rate on real MongoDB hash stability integration tests; zero stale-hash false positives; stable contradiction assertion verified.
+
+### Gate 13: Read-Only Operator Workspace & Token-Only Multi-Tenant Scoping (Stage 6B)
+- **Criterion**: The operator workspace client must be strictly read-only by construction (zero mutation exports; zero mutation buttons; zero POST/PUT/PATCH/DELETE requests issued). All tenant scoping must derive exclusively from verified server-side JWT claims; client interceptors must strip all `x-tenant-id` headers and URL tenant parameters. Roles must be strictly enforced via `RoleGuard` (Admin/Shop/Auditor allowed; Customer blocked inline without API calls). All dynamic text must render safely as string literals (zero `dangerouslySetInnerHTML`), and money amounts must format via pure integer paise arithmetic.
+- **Measurement**: 100% pass rate across client Vitest suites (26 tests); server contract suites (7 tests); headless browser CDP verification (9 screenshots); zero non-GET workspace requests verified in browser network audit log.

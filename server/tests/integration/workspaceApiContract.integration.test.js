@@ -395,4 +395,18 @@ describe("Workspace Read API Contract Invariant Tests (Real MongoDB)", { timeout
     expect(op).toHaveProperty("idempotencyKey");
     expect(op).toHaveProperty("createdAt");
   });
+
+  it("Contract 8: GET /api/payment-cases/:caseId/evidence returns evidence investigation records", async () => {
+    const res = await request(app)
+      .get(`/api/payment-cases/${CASE_ID}/evidence`)
+      .set("Authorization", `Bearer ${shopToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    const item = res.body.data[0];
+    expect(item).toHaveProperty("investigationId");
+    expect(item).toHaveProperty("caseId", CASE_ID);
+    expect(item).toHaveProperty("evidenceCards");
+  });
 });

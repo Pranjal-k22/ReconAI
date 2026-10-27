@@ -18,7 +18,7 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
      "exp": 1791823900
    }
    ```
-2. **Service Identities (Customer AI, Shop AI, Payment Controller)**: Authenticated via signed, short-lived internal service tokens (`x-service-token`) and internal mTLS communication.
+2. **Service Identities (Customer AI, Shop AI, Payment Controller)**: Authenticated via signed service JWTs (`Authorization: Bearer <token>`, with `aud: "reconai-service"`) or internal service tokens (`x-service-token`) validated against the persistent `ServicePrincipal` datastore. *(Note: Mutual TLS / mTLS transport binding is `UNIMPLEMENTED / PROPOSED` and not enforced at the transport layer).*
 
 ---
 
@@ -39,7 +39,7 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 
 3. **`ADMIN`**:
    - Represents the privileged finance operations controller.
-   - *Scope*: System-wide access across tenants with multi-factor authentication (2FA).
+   - *Scope*: System-wide access across tenants. *(Note: Multi-factor authentication / 2FA is a documented security target but is currently `UNIMPLEMENTED / PROPOSED`; no second-factor flow exists in code today).*
    - *Capabilities*: Full visibility over live payment cases, AI interactions, safe-hold queue, configuration of policy thresholds, and manual overrides.
    - *Restrictions*: Cannot bypass append-only audit logging; all admin actions are logged with actor identity.
 

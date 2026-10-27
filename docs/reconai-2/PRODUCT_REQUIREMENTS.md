@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Product Requirements Document (PRD)
 
-> **DOCUMENT STATUS: PROPOSED — AWAITING OWNER REVIEW**  
-> *This document represents the target product specification and system requirements for ReconAI 2.0. No application code has been modified.*
+> **DOCUMENT STATUS: RECONCILED & UPDATED**<br/>
+> *This document represents the authoritative product specification, safety boundaries, and system requirements for ReconAI 2.0 based on verified implementation across Stages 1–6.*
 
 ---
 
@@ -16,7 +16,7 @@ In **ReconAI 1.0**, the platform was positioned primarily as a merchant-facing, 
 In **ReconAI 2.0**, ReconAI expands from an offline batch dashboard into a **continuous, autonomous AI payment monitoring and resolution platform**. 
 
 The core mission:
-> **Monitor every payment from initiation through final settlement, detect incomplete, ambiguous, or inconsistent payment states across consumers, merchants, and gateways, coordinate scoped Customer AI and Shop AI agents to investigate evidence, and autonomously resolve eligible routine payment exceptions through verified payment-provider actions—without requiring the customer or merchant to contact their bank.**
+> **ReconAI 2.0 is an AI-assisted autonomous payment monitoring and resolution platform. It detects payment discrepancies, gathers and correlates evidence from available transaction sources, investigates ambiguous or conflicting payment situations, applies deterministic financial policies, and tracks the safest permitted next action with an auditable history.**
 
 The existing deterministic reconciliation engine from Track 4 is **retained intact** as the core financial evidence and benchmark validation subsystem underneath the autonomous controller.
 
@@ -175,18 +175,19 @@ Validated and executed by Server Policy & Provider Adapter:
 - `ACTION_ESCALATE_DISPUTE`: Case assigned to merchant dispute management workflow.
 
 ### 5.3 Case Lifecycle States (Case Manager)
-Monitored by the Payment Controller:
-- `DETECTED`: Case opened via webhook, claim, or monitor.
-- `INVESTIGATING`: Evidence collection and multi-agent cross-examination in progress.
-- `PENDING_POLICY`: Recommendation submitted; awaiting deterministic policy validation.
-- `ACTION_IN_PROGRESS`: Authorized provider action dispatched with a verified Gate 3 `PolicyAuthorizationToken` and atomic refund reservation; awaiting callback/verification.
-- `VERIFYING_OUTCOME`: Action executed; authoritative GET read verification or confirmation webhook required before transition to `RESOLVED`.
-- `RESOLVED`: Authoritative outcome confirmed by provider; audit log sealed; parties notified.
-- `SAFE_HOLD`: Suspended due to risk or ambiguity; awaiting manual operator decision.
-- `ESCALATED`: Referred to external bank/legal/dispute process.
+Monitored by the Payment Controller (canonical `resolutionCaseStatus`):
+- `CASE_DETECTED`: Case opened via webhook discrepancy, claim intake, or monitoring worker sweep.
+- `CASE_INVESTIGATING`: Evidence collection and sequential multi-agent cross-examination in progress.
+- `CASE_PENDING_POLICY`: Recommendation submitted; awaiting deterministic policy validation.
+- `CASE_ACTION_IN_PROGRESS`: Authorized provider action dispatched with a verified Gate 3 `PolicyAuthorizationToken` and atomic refund reservation; awaiting callback/verification.
+- `CASE_VERIFYING_OUTCOME`: Action executed; authoritative GET read verification or confirmation webhook required before transition to `CASE_RESOLVED`.
+- `CASE_RESOLVED`: Authoritative outcome confirmed by provider; audit log sealed; parties notified.
+- `CASE_SAFE_HOLD`: Suspended due to risk, ambiguity, or Case 22 invariant; awaiting manual operator decision.
+- `CASE_EXTERNAL_ESCALATION`: Referred to external bank/legal/dispute process.
+
+*(Note: `UNKNOWN` is an enum value only for the 7 orthogonal sub-states, but is NOT a valid `resolutionCaseStatus`).*
 
 > **Stage 3 Provider Mutation Safety Guarantees**: Provider write actions (`ACTION_EXECUTE_PROVIDER_REFUND`) are executed through a dedicated hardened sandbox adapter (`razorpaySandboxAdapter.js`). Sandbox writes are disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), restricted strictly to test keys (`rzp_test_...`), require a cryptographically signed HMAC-SHA256 `PolicyAuthorizationToken` (Gate 3), enforce atomic conditional refund reservation (`reserveRefund`), and fail closed when policy limits are missing in production. Live writes are strictly prohibited.
-
 
 ---
 
@@ -207,26 +208,21 @@ Monitored by the Payment Controller:
 5. **Customer AI informs Customer**: *"Good news! Your payment of ₹2,000 was successfully verified with Razorpay. Your order #ORD-9871 is now confirmed and being prepared."*
 6. **Result**: Zero human involvement. Case resolved in 4.2 seconds.
 
-### Scenario B: Fully Autonomous Customer Refund (Customer Does Not Call Bank)
-1. **Event**: Customer attempts payment of ₹1,500. Gateway payment fails due to issuer timeout.
-2. **Issue**: Customer's bank account was debited, but Razorpay marks payment `pay_XYZ789` as `FAILED`.
-3. **Detection**: Customer AI registers claim with UPI reference / RRN, OR webhook `payment.failed` arrives with debit claim.
+### Scenario B: Autonomous Refund for Captured Discrepancies & Auto-Reversal Monitoring
+1. **Event**: Customer pays ₹1,500 for order `ORD-7788`. Razorpay captures payment `pay_XYZ789`, but merchant inventory allocation fails or order was duplicate/cancelled.
+2. **Issue**: Customer was debited and payment was captured, but merchant cannot fulfill order.
+3. **Detection**: Payment Monitoring Worker or webhook identifies discrepancy (`Root Cause: CAPTURED_ON_CANCELLED_OR_UNFULFILLED_ORDER`).
 4. **ReconAI Controller Execution**:
-   - Evidence Collector verifies authoritative gateway status is `FAILED`.
-   - Shop AI confirms merchant received ₹0 and order was cancelled.
-   - Investigator diagnoses: `Root Cause: CUSTOMER_DEBIT_ON_FAILED_GATEWAY; Gateway: FAILED; Merchant: UNPAID; Debit: REPORTED`.
+   - Evidence Collector verifies authoritative gateway status is `CAPTURED`.
+   - Shop AI confirms order is cancelled/unfulfilled.
+   - Investigator diagnoses verified capture discrepancy.
    - Resolution Planner recommends: `RECOMMEND_REFUND_CUSTOMER`.
-   - Resolution Policy Engine checks:
-     - Is payment captured? No.
-     - Has merchant delivered goods? No.
-     - Is auto-reversal eligible under RBI Turnaround Time (TAT) framework? **YES**.
-     - Has a refund or reversal already been executed? No.
-     - Idempotency key generated: `IDEM-REF-XYZ789-20261011`.
-   - Action Executor dispatches refund / reversal check to payment provider API.
-   - Provider returns `refund_id: rfd_999`, status: `processed`.
-   - Verification Agent verifies refund completion at provider.
-5. **Customer AI informs Customer**: *"We verified with the payment gateway that your transaction failed after deduction. A full refund of ₹1,500 has been autonomously initiated to your original payment method (Refund ID: rfd_999). Expected credit timeline: 24–48 hours per RBI guidelines."*
-6. **Result**: Customer did not contact bank. Merchant did not process manual ticket.
+   - Resolution Policy Engine validates: Payment is `CAPTURED`, net refundable balance >= 150000 paise, merchant policy limits active, no prior refund in-flight, idempotency key generated: `${policyDecisionId}_EXECUTE_PROVIDER_REFUND_pay_XYZ789`.
+   - Action Executor (in sandbox test mode with Gate 3 token) executes refund against provider.
+   - Provider returns refund ID, status: `processed`.
+   - Verification Agent independently verifies refund outcome via GET `/v1/payments/:id/refunds`.
+5. **Customer AI informs Customer**: *"Your payment of ₹1,500 has been refunded to your original payment method. Reference: rfd_999."*
+6. **Failed Payment Clarification (RBI Auto-Reversal Tracking)**: If gateway status is `FAILED` and funds were never captured by Razorpay, the provider API *cannot* execute a refund. In that scenario, ReconAI monitors the transaction against RBI TAT turnaround windows (T+1 for UPI, T+5 for cards), tracks whether the issuing bank auto-reversal settles, and places the incident in `CASE_SAFE_HOLD` if statutory timelines elapse without confirmation.
 
 ### Scenario C: Safe-Hold for High-Risk Ambiguity (Safety First)
 1. **Event**: Order `ORD-000116` has two separate gateway payments of ₹5,000 attempted within 3 minutes (`pay_116A` and `pay_116B`). Both show `AUTHORIZED`.
@@ -253,7 +249,13 @@ ReconAI 2.0 is designed directly in accordance with authoritative Indian financi
 
 ---
 
-## 8. Open Questions & Assumptions for Owner Review
+## 8. Tracked Gaps, Open Questions & Security Status
+
+- **Admin Two-Factor Authentication (2FA)**: `UNIMPLEMENTED / PROPOSED`. While 2FA is a security requirement for administrative access, no second-factor flow currently exists in the implementation. Tracked as an open engineering issue.
+- **Mutual TLS (mTLS) for Machine Services**: `UNIMPLEMENTED / PROPOSED`. Machine service transport relies on Bearer JWTs (`aud: reconai-service`) or `x-service-token`. mTLS is not implemented at the transport layer.
+- **Regulatory Reversals**: ReconAI tracks and monitors RBI TAT compliance but does NOT trigger interbank NPCI reversals or calculate statutory penalty compensations autonomously.
+
+### 8.1 Assumptions for Owner Review
 
 1. **Assumption A1**: Customer debit verification for failed payments will initially rely on Razorpay gateway status (`payment.failed` with gateway failure reason) and Customer AI claim intake, with future integration for direct bank UPI RRN inquiry APIs.
 2. **Assumption A2**: During Phase 1 and Phase 2 development, all payment provider write operations will execute exclusively in **Simulated Dry-Run** or **Razorpay Test Sandbox** mode. Live financial transactions remain completely prohibited.

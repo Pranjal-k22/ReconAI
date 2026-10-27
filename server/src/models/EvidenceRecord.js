@@ -70,6 +70,7 @@ const claimItemSchema = new mongoose.Schema(
   {
     claimType: { type: String, required: true },
     claimedValue: { type: mongoose.Schema.Types.Mixed, default: null },
+    statement: { type: String, default: null },
     source: { type: String, required: true },
     authority: { type: String, required: true, enum: EVIDENCE_AUTHORITIES },
     receivedAt: { type: Date, default: Date.now },

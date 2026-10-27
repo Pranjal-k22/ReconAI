@@ -194,4 +194,97 @@ describe("inputHash Clock Independence & Staleness Semantics", () => {
     expect(recordsCreated.length).toBe(1);
     expect(recordsCreated[0].hour).toBe(1);
   });
+
+  it("proves recordHash is unchanged when updatedAt/createdAt/__v/poll counters change and changes when a status or amount changes", () => {
+    const baseRecordData = {
+      paymentCase: {
+        caseId: "case_hash_isolation_01",
+        tenantId: "tenant_01",
+        resolutionCaseStatus: "CASE_DETECTED",
+        captureStatus: "CAPTURE_CAPTURED",
+        authorizationStatus: "AUTH_AUTHORIZED",
+        refundStatus: "REFUND_NONE",
+        disputeStatus: "DISPUTE_NONE",
+        customerDebitStatus: "DEBIT_VERIFIED",
+        safeHoldReason: "None",
+        createdAt: new Date("2026-10-12T00:00:00Z"),
+        updatedAt: new Date("2026-10-12T00:00:00Z"),
+        __v: 0,
+        pollCount: 1,
+        leaseRenewalCount: 3,
+        attemptCount: 2
+      },
+      gatewayPayment: {
+        gatewayPaymentId: "pay_hash_01",
+        merchantOrderId: "order_hash_01",
+        status: "CAPTURED",
+        amountPaise: 50000,
+        currency: "INR",
+        createdAt: new Date("2026-10-12T00:00:00Z"),
+        updatedAt: new Date("2026-10-12T00:00:00Z"),
+        __v: 0
+      },
+      merchantOrder: {
+        merchantOrderId: "order_hash_01",
+        status: "COMPLETED",
+        amountPaise: 50000,
+        currency: "INR",
+        createdAt: new Date("2026-10-12T00:00:00Z"),
+        updatedAt: new Date("2026-10-12T00:00:00Z"),
+        __v: 0
+      }
+    };
+
+    const initialHash = computeClassifierRecordHash(baseRecordData);
+
+    // Mutate non-material metadata: dates, __v, poll counters
+    const metadataMutatedData = {
+      paymentCase: {
+        ...baseRecordData.paymentCase,
+        createdAt: new Date("2026-10-12T12:00:00Z"),
+        updatedAt: new Date("2026-10-12T15:30:00Z"),
+        __v: 5,
+        pollCount: 99,
+        leaseRenewalCount: 42,
+        attemptCount: 17
+      },
+      gatewayPayment: {
+        ...baseRecordData.gatewayPayment,
+        createdAt: new Date("2026-10-12T01:00:00Z"),
+        updatedAt: new Date("2026-10-12T16:45:00Z"),
+        __v: 3
+      },
+      merchantOrder: {
+        ...baseRecordData.merchantOrder,
+        createdAt: new Date("2026-10-12T02:00:00Z"),
+        updatedAt: new Date("2026-10-12T17:15:00Z"),
+        __v: 8
+      }
+    };
+
+    const hashAfterMetadataMutation = computeClassifierRecordHash(metadataMutatedData);
+    expect(hashAfterMetadataMutation).toBe(initialHash);
+
+    // Mutate material status: gateway status changes to REFUNDED
+    const statusMutatedData = {
+      ...baseRecordData,
+      gatewayPayment: {
+        ...baseRecordData.gatewayPayment,
+        status: "REFUNDED"
+      }
+    };
+    const hashAfterStatusMutation = computeClassifierRecordHash(statusMutatedData);
+    expect(hashAfterStatusMutation).not.toBe(initialHash);
+
+    // Mutate material amount: amountPaise changes
+    const amountMutatedData = {
+      ...baseRecordData,
+      gatewayPayment: {
+        ...baseRecordData.gatewayPayment,
+        amountPaise: 75000
+      }
+    };
+    const hashAfterAmountMutation = computeClassifierRecordHash(amountMutatedData);
+    expect(hashAfterAmountMutation).not.toBe(initialHash);
+  });
 });

@@ -1,164 +1,79 @@
-# ReconAI Memory
+# ReconAI System Memory & Knowledge Context
 
-## Project Identity
-ReconAI - AI-Assisted Financial Reconciliation Platform with Deterministic Safety & Auditability.
+## 1. Project Identity & Architecture Evolution
+- **ReconAI 1.0**: Deterministic three-way financial reconciliation engine (Merchant Orders, Gateway Payments, Settlement Records) with 120 synthetic benchmark scenarios, GroundTruth isolation, and advisory Gemini AI exception investigation.
+- **ReconAI 2.0**: Enterprise-grade autonomous payment monitoring and resolution controller with multi-tenant RBAC, cryptographic webhook ingestion, background poller worker, 8-dimension monotonic payment state machine, 30-scenario deterministic classification precedence engine, material-state hash staleness gates, governed two-person policy limits, and a read-only operator workspace.
 
-## Hackathon Track
-Financial Tech / AI Automation / Reconciliation Engine.
+---
 
-## Core Objective
-Ingest merchant orders, gateway payments, and settlement records, run deterministic matching rules, classify anomalies, isolate low-confidence exceptions for Gemini AI investigation, and maintain an immutable audit trail.
+## 2. Core Technological Stack
+- **Frontend**: React (Vite, JavaScript), Tailwind CSS, Lucide Icons, Axios, Recharts.
+- **Client Testing**: Vitest 1.6.1 + React Testing Library + JSDOM (`npm test --prefix client`).
+- **Backend API**: Node.js + Express (ES Modules).
+- **Backend Testing**: Vitest (Unit, Integration, Benchmarks, Smoke Tests).
+- **Database**: MongoDB + Mongoose (real MongoDB integration for all authoritative suites).
+- **Security & Cryptography**: Salted memory-hard `scrypt` hashing, JWT (HMAC SHA-256), crypto `timingSafeEqual`, Razorpay webhook HMAC SHA-256 verification.
+- **AI Service**: Google Gemini API (`@google/genai`) strictly advisory; structured Zod validation, fallback generator, never directly mutates financial or case truth.
 
-## Tech Stack
-- Frontend: React (Vite, JavaScript), Tailwind CSS, Lucide Icons, Axios, Recharts.
-- Backend: Node.js + Express API (ES modules).
-- Database: MongoDB + Mongoose.
-- AI Service: Google Gemini API (used strictly for exception root cause investigation, fallback explanations, and human-in-the-loop recommendations; NOT for direct matching).
+---
 
-## Architecture Decisions
-- Full-stack monorepo structure with `client/` and `server/` managed by root `package.json` with `concurrently`.
-- Centralized Zod environment validation (`server/src/config/env.js`).
-- Database connection lifecycle management (`server/src/config/database.js`).
-- **MongoDB Startup Invariant**: MongoDB connection is mandatory before HTTP server startup in `development` and `production` modes (`MONGODB_URI` required). Server refuses to start without a valid DB connection.
-- **Test Environment Independence**: In `NODE_ENV=test`, Express `app.js` can be imported by Supertest without triggering DB connection or HTTP listener locks.
-- **Domain Data Layer**: 8 Mongoose models in `server/src/models/`: `MerchantOrder`, `GatewayPayment`, `SettlementRecord`, `ReconciliationRun`, `ReconciliationResult`, `ExceptionCase`, `AuditLog`, `GroundTruth`.
-- **Benchmark Dataset Strategy**:
-  - Dataset Version: `RECONAI_DEMO_V1`
-  - Seed: `RECONAI_DEMO_2026`
-  - Import Batch ID: `BATCH-DEMO-V1`
-  - Size: 120 deterministic scenarios (80 MATCHED, 8 AMOUNT_MISMATCH, 6 MISSING_SETTLEMENT, 5 DUPLICATE_PAYMENT, 5 FEE_MISMATCH, 4 REFUND_MISMATCH, 4 MISSING_PAYMENT, 3 REFERENCE_MISMATCH, 3 AMBIGUOUS, 2 INVALID_DATA).
-  - Synthetic Fee Policy: 2% fee + 18% GST on fee.
-  - Primary ambiguous demo scenario ID: `ORD-000116`.
-  - Database cleanup & reset operations MUST be scoped strictly to `importBatchId: "BATCH-DEMO-V1"` and `datasetVersion: "RECONAI_DEMO_V1"`.
-- **Application Business Identifiers**: Strings (`ORD-100001`, `pay_ABC123`, `set_rec_001`, `RUN-001`, `RES-001`, `EXC-001`, `AUD-001`) indexed for high throughput queries.
-- **Settlement Id Granularity**: `settlementRecordId` is unique per line item; `settlementId` groups multiple line items per batch payout.
-- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`.
-- **Ground Truth Isolation**: `GroundTruth` model is evaluation-only and strictly isolated from production reconciliation import paths (`groundTruthIsolationGuard.test.js` enforces zero imports in `server/src/services/reconciliation/`). GroundTruth is imported ONLY in `server/src/services/evaluation/evaluationService.js`.
-- **Pure In-Memory Reconciliation Engine**: Engine (`reconcileScenario`) is 100% pure, deterministic, and in-memory (`server/src/services/reconciliation/matchingEngine.js`). It never queries/mutates MongoDB, never calls Gemini or Razorpay.
-- **Reconciliation Run Persistence & Unique Compound Index**: Runs persist exactly one `ReconciliationResult` document per scenario. Compound index `{ runId: 1, merchantOrderId: 1 }` prevents duplicate results within a run.
-- **Run Resolution Safety Gate Rule**: Only `classification === "MATCHED"` AND `confidence >= 0.95` AND `requiresReview === false` may auto-reconcile (`safetyGateService.js`). All anomaly classifications (`AMOUNT_MISMATCH`, `AMBIGUOUS`, etc.) FORCE `allowedAutomaticResolution = false` and `requiresHumanReview = true` regardless of confidence score.
-- **ExceptionCase & Deterministic Classification Preservation**: Every result requiring review generates an `ExceptionCase`. Human review decisions (`APPROVE_MATCH`, `KEEP_EXCEPTION`, `MARK_RESOLVED`) change workflow state (`resolutionStatus`, `humanDecision`, `requiresReview`), but NEVER alter original `ReconciliationResult.classification`. `APPROVE_MATCH` is a human operational resolution, not a system reclassification.
-- **Compound Unique Index on ExceptionCase**: `{ runId: 1, resultId: 1 }` uniquely identifies an exception case per run.
-- **Centralized Append-Only Audit Trail**: `auditService.js` centrally writes all audit events. The REST API exposes `GET /api/audit` and `GET /api/audit/:eventId` only; no UPDATE or DELETE routes exist.
-- **Recursive Audit Secret Sanitization**: All audit fields (`before`, `after`, `metadata`) undergo recursive key sanitization redacting secret keys (`GEMINI_API_KEY`, `RAZORPAY_KEY_SECRET`, `authorization`, etc.) to `"[REDACTED]"`.
-- **Primary Demo Ambiguous Failure Case**: `ORD-000116` is classified as `AMBIGUOUS` (`confidence = 0.45`). During live demonstration, `KEEP_EXCEPTION` is applied, preserving its `UNDER_REVIEW` state and `AMBIGUOUS` classification for hackathon presentation.
-- **Operational vs Evaluation Metrics**: Operational metrics (`metricsService.js`) calculate counts, financial totals, throughput, and rates without GroundTruth. Benchmark evaluation (`evaluationService.js`) calculates accuracy, precision, recall, and F1 by comparing results against GroundTruth.
-- **Evidence Hierarchy Rule**: Amount alone can NEVER establish a match between transactions. Match hierarchy requires direct order reference (`merchantOrderId`) or entity linkage (`settlementRecord.entityId === gatewayPayment.gatewayPaymentId`).
-- **Signed Difference Convention**: `differencePaise = actualAmountPaise - expectedAmountPaise`. Missing values (`MISSING_PAYMENT`) keep `actualAmountPaise = null` and `differencePaise = null` (missing values are never faked as 0).
-- **Deterministic Confidence Model**: Confidence (0.00 - 1.00) measures evidence strength, not financial permission. All anomaly classifications require review (`requiresReview = true`).
-- **Primary Ambiguous Demo Scenario**: `ORD-000116` with two payment candidates and unlinked settlement is deterministically classified as `AMBIGUOUS` (`requiresReview = true`, `confidence = 0.45`). Engine never guesses.
-- **Synthetic Fee Policy**: Standard synthetic fee (2% gross + 18% GST on fee) encapsulated in `server/src/services/finance/syntheticFeePolicy.js`.
-- **Engine Version**: `RECON_ENGINE_V1`.
-- **AI / Deterministic Separation**: Gemini AI cannot perform primary matching or classification.
-- **Gemini Advisory Exception Investigator Boundary**:
-  - Gemini is invoked strictly on-demand via `POST /api/exceptions/:exceptionId/investigate`.
-  - Gemini is NEVER invoked during batch reconciliation runs (`POST /api/reconciliation/runs`).
-  - Provider integration uses official `@google/genai` SDK with `GEMINI_MODEL` (default `gemini-2.5-flash`).
-  - AI input is minimized and strictly excludes `GroundTruth`, API credentials, raw provider payloads, internal database keys, and customer PII.
-  - AI structured JSON output is validated at runtime via Zod (`aiAnalysisOutputSchema`).
-  - AI recommendations use a strict enum allow-list (`ALLOWED_RECOMMENDED_NEXT_STEPS`); forbidden execution actions (`REFUND_CUSTOMER`, `CAPTURE_PAYMENT`, `APPROVE_MATCH`, etc.) are rejected by schema.
-  - Server-side advisory safety override normalizes any `NO_ACTION` recommendation on anomaly classifications to `MANUAL_REVIEW`.
-  - Gemini failure (missing key, timeout >15s, quota, network error, invalid JSON) triggers deterministic fallback (`fallbackExplanation.js`), logging `AI_INVESTIGATION_FAILED` and returning HTTP 200 with `source: "FALLBACK"`.
-  - AI cannot modify `classification`, `confidence`, `severity`, `financialImpactPaise`, `status`, `humanDecision`, `requiresReview`, or `resolutionStatus`.
-  - AI investigation logs append-only audit events (`AI_INVESTIGATION_REQUESTED`, `AI_INVESTIGATION_COMPLETED`, `AI_INVESTIGATION_FAILED`).
-  - Primary ambiguous scenario `ORD-000116` remains human-controlled (`AMBIGUOUS`, `confidence = 0.45`, `status = UNDER_REVIEW`, `humanDecision = KEEP_EXCEPTION`) regardless of AI investigation output.
-- **Razorpay Test Mode Read-Only Adapter Boundary**:
-  - Razorpay integration is strictly Test Mode (`RAZORPAY_MODE=test`) and read-only (GET requests only).
-  - Safety guard `validateTestModeSafety()` blocks synchronization if a live Key ID (`rzp_live_...`) is configured.
-  - Razorpay credentials (`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`) are optional during server startup and strictly server-side (Basic Auth). Secrets are never exposed to client or logs.
-  - Payments fetched from `/v1/payments` with count/skip pagination (max 1000 sync limit).
-  - Customer PII (`email`, `contact`, `vpa`, `card_id`, `card` payload) is stripped prior to saving in `rawData`.
-  - Razorpay `order_id` is preserved as provider metadata; `GatewayPayment.merchantOrderId` is left `null` unless explicit safe mapping exists.
-  - Settlement recon fetched from `/v1/settlements/recon/combined`.
-  - Settlement records use deterministic IDs (`RZPREC-hash`) and signed net amount conventions (`credit > 0` positive net, `debit > 0` negative net).
-  - Razorpay records use actual provider fee/tax values and NEVER use `syntheticFeePolicy.js`.
-  - Razorpay synchronization does NOT automatically trigger reconciliation execution.
-  - Razorpay failure logs `RAZORPAY_SYNC_FAILED` audit events without affecting synthetic benchmark runs.
+## 3. Financial & Operational Safety Invariants
+1. **Integer Paise Representation**: All monetary values are strictly represented and calculated in integer paise ($1\text{ INR} = 100\text{ paise}$) using pure integer arithmetic (`Math.trunc`, safe addition/subtraction). Floating-point arithmetic is forbidden.
+2. **Deterministic Priority**: Transaction matching, candidate pairing, anomaly categorization, and 30-scenario edge case classifications are 100% deterministic and pure. LLMs never classify or match transactions.
+3. **Fail-Closed Policy Limits**: Monetary refund limits cannot ship defaulted or seeded. Limits exist only as two-person-approved per-tenant records (`approvedBy !== proposedBy`). If no policy configuration is active, automated refunds fail closed.
+4. **Advisory AI Boundary**: All multi-agent investigation perspectives (Customer, Shop, Findings, Resolution) are marked `isExecutable: false`, `authoritative: false`, and labeled "Advisory only" in all user interfaces.
+5. **Writes Disabled**: `RAZORPAY_SANDBOX_WRITES_ENABLED=false` is enforced; provider action execution is stubbed/mocked; no automated machine dispatch is triggered without human authorization.
+6. **Token-Only Multi-Tenant Scoping**: All tenant context is derived strictly from verified JWT claims server-side. The client API layer strips all `x-tenant-id` headers and query parameters.
+7. **Append-Only Auditing**: Every state mutation, webhook receipt, worker poll, policy evaluation, and human decision appends an immutable event to `AuditLog` or `PaymentLifecycleEvent`. No `UPDATE` or `DELETE` endpoints exist.
 
-## Financial Safety Rules
-- All money amounts stored as integer paise (1 INR = 100 paise) to prevent floating-point rounding errors.
-- Financial arithmetic uses integer math utilities (`rupeesToPaise`, `paiseToRupees`, `formatINR`, `isValidPaise`, `safeAddPaise`, `safeSubtractPaise`).
-- Any discrepancy (amount mismatch, fee discrepancy, missing record, status conflict) triggers an Anomaly flag.
-- Financial records are immutable; audit trails record every human/AI action.
+---
 
-## Reconciliation Rules
-- Rule 1: Exact Match (Order ID, Payment Gateway Ref, Amount, Currency).
-- Rule 2: Multi-Field Fuzzy Match (Amount + Time Window + Customer Reference).
-- Rule 3: Fee & Settlement Reconciliation (Gateway Fee + Tax + Net Settlement).
-- Rule 4: Anomaly Classification (AMOUNT_MISMATCH, FEE_DISCREPANCY, TIMING_MISMATCH, UNMATCHED_PAYMENT, DUPLICATE_PAYMENT, REFUND_UNACCOUNTED).
+## 4. Payment State Machine (8 Dimensions)
+The canonical state of any payment exception is tracked across 8 monotonic dimensions in `PaymentCase`:
+1. `orderStatus`: `ORDER_NONE` -> `ORDER_CREATED` -> `ORDER_PAID` / `ORDER_CANCELLED`
+2. `captureStatus`: `CAPTURE_NONE` -> `CAPTURE_PENDING` -> `CAPTURE_CAPTURED` / `CAPTURE_FAILED`
+3. `authorizationStatus`: `AUTH_NONE` -> `AUTH_PENDING` -> `AUTH_AUTHORIZED` / `AUTH_FAILED`
+4. `refundStatus`: `REFUND_NONE` -> `REFUND_PENDING` -> `REFUND_PROCESSED` / `REFUND_FAILED`
+5. `disputeStatus`: `DISPUTE_NONE` -> `DISPUTE_OPEN` -> `DISPUTE_WON` / `DISPUTE_LOST`
+6. `customerDebitStatus`: `DEBIT_NONE` -> `DEBIT_CLAIMED` -> `DEBIT_VERIFIED` / `DEBIT_REJECTED`
+7. `resolutionCaseStatus`: `CASE_NONE` -> `CASE_DETECTED` -> `CASE_ACTION_IN_PROGRESS` -> `CASE_RESOLVED` / `CASE_SAFE_HOLD`
+8. `discrepancyCategory`: Deterministic categorization (e.g. `STATUS_MISMATCH`, `AMOUNT_MISMATCH`, `CANCELLED_ORDER_CAPTURED`).
 
-## Confidence Policy
-- Match confidence score between 0.00 and 1.00 calculated deterministically based on match rule weights.
-- Score >= 0.95 with zero anomalies -> Auto-Reconciled.
-- Score < 0.95 or any anomaly present -> Flagged as Exception for AI investigation & human review.
+---
 
-## AI Restrictions
-- Gemini AI is restricted to exception analysis, context summarization, and resolution recommendations.
-- Gemini MUST NEVER alter financial match status directly without safety rule validation.
+## 5. Classification Engine & Material-State Hash
+- **30 Canonical Payment Scenarios**: Covering standard repairs, delayed settlements, duplicate payment attempts, partial payments, partial refunds, customer debit claims, and safe-hold categories.
+- **Precedence Rule Engine**: 40 rule branches enforced by AST-level branch counting against `Function#toString`. Stability is asserted across all 36 unmergeable contradictory pairs.
+- **52 Changed Merged Outcomes (Owner Decision ADR-14)**: The Stage 5B reorder changed 52 outcomes on merged inputs, all from not-held to held (100% fail-closed).
+- **Material-State Record Hash (`recordHash`)**:
+  - *Included*: Document IDs, statuses, amounts in paise, currencies, capture/refund/dispute/settlement states, linked IDs, and customer claims.
+  - *Purged*: Mutable operational timestamps (`updatedAt`), revision markers (`__v`), background task counters (`pollCount`, `leaseExpiresAt`), audit streams, and telemetry metadata.
+  - *Renewal Invariant*: If a provider status changes, the classification becomes stale, invalidating existing policy decisions. Renewal requires re-evaluation via `POST /api/payment-cases/:caseId/classify` (callable by `ADMIN` or `SERVICE`), which writes a fresh `EvidenceRecord`.
 
-## Environment & Server Conventions
-- Server Port: `process.env.PORT || 5000`.
-- Client Dev Server: `http://localhost:5173`.
-- Environment Validation: Zod schema (`server/src/config/env.js`). Required in Dev/Prod: `PORT`, `NODE_ENV`, `CLIENT_URL`, `MONGODB_URI`. Optional: `GEMINI_API_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`.
-- Health Endpoint: `GET /api/health` -> `200 OK` (healthy) when `database.status === "connected"`; `503 Service Unavailable` (degraded) when disconnected.
-- API Error Format: `{ success: false, error: { code: string, message: string, details?: any } }`.
+---
 
-## Testing Conventions
-- Vitest + Supertest for Express API integration testing (`server/tests/`).
-- Benchmark evaluation script for precision/recall testing against ground truth.
+## 6. Read-Only Operator Workspace (Stage 6B)
+- **Client Architecture**:
+  - `client/src/api/casesApi.js`: Strictly GET functions exported; strips all `x-tenant-id` variations; implements bounded retry (max 2) for 503/network errors.
+  - `client/src/components/common/RoleGuard.jsx`: Enforces access for `ADMIN`, `SHOP`, and `AUDITOR`; renders `"not available for your role"` for `CUSTOMER` and machine service accounts without initiating data fetchers.
+  - `client/src/components/common/ExpandableText.jsx`: Pure text-only truncation/expansion (zero `dangerouslySetInnerHTML`). Hostile script tags render safely as inert string literals.
+  - `client/src/utils/formatMoney.js`: Pure integer paise-to-INR math (`formatPaiseToInr`).
+- **Workspace Pages**:
+  - `CasesListPage.jsx`: Live API data badge, status filtering, safe-hold queue filter (`?safeHold=true`), pagination, and case age display.
+  - `CaseDetailPage.jsx`: 8-dimension state grid, amount mismatch calculation, facts vs claims separation, unverified badges, staleness badge, lifecycle timeline, four advisory agent cards, policy decisions with `policyConfigVersion`, read-only provider operations, and Case 22 safe-hold banner (*"late capture on a cancelled order: held, no automatic refund or reopen"*).
+- **Dev-Only Demo Seed**:
+  - `server/scripts/seedWorkspaceDemo.js`: Refuses in production, requires localhost Mongo and database name containing `"test"` and not `"prod"`, requires `DEMO_SEED_PASSWORD`. Seeds Tenants A and B, multi-role users, Case 22, Case 6, Case 5, an investigation run, hostile claim text, and cross-tenant isolation cases. Zero limits seeded.
 
-## Frontend Architecture & Conventions
-- ReconAI frontend is React + Vite + JavaScript + Tailwind CSS.
-- Frontend uses centralized Axios API modules (`client/src/api/`).
-- Dashboard is 100% API-driven; benchmark metrics and financial totals are never hard-coded.
-- Null financial values display as unavailable (`—`), never `₹0`.
-- Deterministic confidence is labeled "Evidence Confidence".
-- Gemini output is labeled "Advisory only"; Fallback analysis is visually distinguished with a "Deterministic Fallback" badge.
-- Razorpay credentials are never entered or exposed in the frontend.
-- Human review decisions preserve the original deterministic classification for auditability.
-- Primary hackathon demo path: Dashboard -> Run -> Exceptions -> ORD-000116 -> AI -> Human Review -> Audit -> Evaluation.
+---
 
-## Submission Readiness & Verification
-- Project Status: Step 12 Completed — Final QA, deployment readiness, and documentation overhaul complete.
-- Test Baseline: 170/170 Vitest unit/integration tests passing across 41 test files.
-- Frontend Build: Production bundle verified (`npm run build` passing with 0 errors). SPA routing rewrite configured (`client/vercel.json`).
-- Pre-Deployment Benchmark: Run `RUN-20260902122249-2EZ2` verified with 120 processed scenarios, 80 MATCHED, 40 Exceptions, 100% GroundTruth accuracy, ₹10,03,095.82 total processed, ₹7,17,020.00 auto-reconciled, ₹2,86,075.82 under review. Sum invariant verified (`auto + review = total`).
-- Hackathon Deliverables: Complete documentation package in `docs/` (`DEMO_SCRIPT.md`, `JUDGING_CRITERIA.md`, `SUBMISSION_CHECKLIST.md`, `API.md`, `TESTING.md`, `PITCH.md`).
+## 7. Current Test & Verification Footprint
 
-## Critical Notes For Future Agents
-- React uses JavaScript (JSX), not TypeScript.
-- Money is ALWAYS integer paise in backend models and API payloads.
-- Always check `memory.md`, `implemented.md`, `folderstr.md`, and `docs/PROGRESS.md` before making changes.
-
-## ReconAI 2.0 Stage 3 Hardening & Safety Architecture
-- **Stage 3A Corrections**:
-  - Safe-hold mapping: All 30 scenarios emit unique specific codes (Case 18 emits `CONFLICTING_RECORDS`; general safe-hold eliminated).
-  - Audit fail-closed: Audit writes occur before mutations; failures fail closed with 503; webhooks carry `processingStatus` (`RECEIVED`, `PROCESSED`, `QUARANTINED`, `FAILED`); unmapped events are quarantined and reprocessed via authoritative server-side tenant lookup (never payload notes).
-- **Stage 3B Hardened Dispatch Path**:
-  - Strict dispatch route: `POST /api/payment-cases/:caseId/provider/dispatch` accepts strictly `{ actionType: "REQUEST_REFUND" }` alongside `:caseId`. Client-supplied amounts, limits, approval flags, and idempotency keys are strictly rejected with 400.
-  - Server-Derived Evidence: `dispatchEvidenceCollector.js` loads canonical DB state. Amount is derived as full refundable balance. Idempotency key is server-derived (`policyDecisionId + actionType + gatewayPaymentId`).
-  - Injected Limits Provider: Allowed only when `NODE_ENV === "test"`. Production fails closed without configured limits.
-  - Case 22 Unconditionally Blocked: Dispatch route halts on Case 22 with hard safe-hold (`LATE_CAPTURE_CANCELLED_ORDER`).
-  - Authoritative Provider Preflight: GET `/v1/payments/:id` and `/v1/payments/:id/refunds` verify status, currency, and amounts. Mismatch -> `SAFE_HOLD` (`PROVIDER_PREFLIGHT_MISMATCH`); timeout/network error -> `INSUFFICIENT_EVIDENCE`.
-  - Gate 3 `PolicyAuthorizationToken`: Cryptographically signed HMAC-SHA256 token (short TTL 120s, max 300s, signed with `POLICY_TOKEN_SECRET` >= 32 chars distinct from JWT/Service secrets). Bound to tenant, case, payment, amount, currency, and idempotency key. Timing-safe verification with length check. Single-use enforced via unique sparse index on `tokenId` in `ProviderOperation`. Status: implemented; verified with mocked provider transport; no real Razorpay test-mode run yet.
-  - Dispatch Invariant Ordering: preflight GET -> reserve -> issue token -> verify token -> INSERT ProviderOperation (`REQUESTED`, tokenId unique: consumes token) -> POST -> verification GET. A crash between insert and POST leaves a `REQUESTED` operation resolved via reconcile without blind re-send.
-  - Atomic Refund Reservation: `reserveRefund` conditional `$expr` update on `GatewayPayment.reservedRefundPaise` and compound unique index `{ tenantId, idempotencyKey }` on `RefundReservation` prevents balance race conditions across concurrent dispatches.
-  - No Blind Retries on `OUTCOME_UNKNOWN` or `REQUESTED`: Lists provider refunds matching by idempotency key and amount before retrying.
-  - Razorpay Refund Idempotency Header: Uses `X-Refund-Idempotency` (minimum 10 characters, alphanumeric + hyphens/underscores).
-  - Razorpay Auto-Refund Window: Authorized uncaptured payments auto-refund after 3 days per Razorpay official documentation (no direct void API exists in Razorpay). Normal refunds take 5-7 working days.
-  - Safety Invariants: `RAZORPAY_SANDBOX_WRITES_ENABLED` is false by default. No live keys (`rzp_live_`). Autonomous worker refunds strictly prohibited.
-
-## ReconAI 2.0 Stage 4: Corrections & Governed Policy-Limits Configuration
-- **Stage 4A Provenance & Hardening**:
-  - Dispatch is strictly human `ADMIN` only: Service principals (including `PAYMENT_CONTROLLER`) and non-admin roles receive HTTP 403 Forbidden.
-  - Race assertions restored: Integration tests strictly verify exactly one applied mutation, exactly one audit set, no 500s across concurrent deliveries.
-  - Safe-hold codes strictly align with Phase 6 engine specification and pass Mongoose `validateSync` across all 30 scenarios.
-  - Case 8 (Partial Capture) and Case 1 marked RESERVED: not detectable from documented Razorpay fields without custom split-capture webhooks.
-- **Stage 4B Governed Versioned Policy-Limits Configuration**:
-  - Quote: "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
-  - Append-only model `PolicyConfigVersion` with compound index `{ tenantId, configVersion }` and partial unique index on `{ tenantId }` where `status: "ACTIVE"`.
-  - Immutable limits and contentHash; atomic supersession; fail-closed emergency deactivation.
-  - Two-person rule enforced: `approvedBy !== proposedBy` (proposer cannot approve own config).
-  - Single production path: `getActivePolicyConfig(tenantId)` reads database directly; removed test injection limits from production services.
-  - Decision binding: `PolicyDecision` stores `policyConfigVersion` and `contentHash`. Dispatch re-reads config and aborts with HTTP 409 `POLICY_CONFIG_CHANGED` on version or hash drift.
-  - `PolicyAuthorizationToken` cryptographically binds `policyConfigVersion` and `policyConfigHash`, verified by adapter before execution.
+| Test Harness | Scope | Files | Tests | Result |
+| :--- | :--- | :---: | :---: | :---: |
+| Server Unit Tests | Core services, classifiers, models, routes | 80 | 795 | **PASS (100%)** |
+| Server Integration Tests | Real MongoDB multi-tenant, webhooks, monitoring | 14 | 156 | **PASS (100%)** |
+| Synthetic Benchmark | Deterministic 120-scenario compatibility | 1 | 120 | **PASS (100.00%)** |
+| Client Unit Tests | Cases API, RoleGuard, formatters, workspace pages | 5 | 26 | **PASS (100%)** |
+| Production Smoke Test | Startup & provider-read isolation gates | 1 | 7 gates | **PASS (100%)** |
+| Production Client Build | Vite SPA production bundle | - | 0 errors | **BUILT (17.51s)** |
+| **Total Automated Tests** | | **100** | **977** | **ALL PASS** |

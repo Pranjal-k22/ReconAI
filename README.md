@@ -1,66 +1,80 @@
-# ReconAI
+# ReconAI 2.0
 
-> **Verification-First AI Finance Controller for Razorpay Merchants**
+> **AI-Assisted Autonomous Payment Monitoring & Resolution Platform**
 
 [![Stack](https://img.shields.io/badge/Stack-React%20%7C%20Node.js%20%7C%20MongoDB%20%7C%20Gemini-indigo.svg)](#technology-stack)
 [![Status](https://img.shields.io/badge/Status-Hackathon%20Submission%20Ready-emerald.svg)](#verified-benchmark-results)
 [![Accuracy](https://img.shields.io/badge/Benchmark%20Accuracy-100%25%20(120%2F120)-blue.svg)](#verified-benchmark-results)
-[![Tests](https://img.shields.io/badge/Vitest-196%2F196%20Passing-brightgreen.svg)](#test-suite--verification)
+[![Tests](https://img.shields.io/badge/Tests-977%20Passing-brightgreen.svg)](#test-suite--verification)
 
 ---
 
-## Pitch
+## Canonical Project Vision
 
-**ReconAI** is a **Verification-First AI Finance Controller**. It closes a finance-ops reconciliation loop over a synthetic benchmark batch, reports operational match rate and throughput, and explicitly identifies exceptions that remain unresolved for human review backed by an append-only audit trail.
+**ReconAI 2.0 is an AI-assisted autonomous payment monitoring and resolution platform. It detects payment discrepancies, gathers and correlates evidence from available transaction sources, investigates ambiguous or conflicting payment situations, applies deterministic financial policies, and tracks the safest permitted next action with an auditable history.**
 
-
----
-
-## The Problem
-
-Finance operations teams at e-commerce merchants spend hundreds of hours manually reconciling orders against gateway payments and bank payouts. 
-
-- **Manual reconciliation** using static spreadsheets is slow, expensive, and error-prone.
-- **Blind LLM automation** is dangerous—if an unconstrained AI model makes a hallucinated decision on missing or ambiguous financial data, funds are misallocated without safety gates or compliance auditability.
+The original Track 4 reconciliation engine remains an underlying evidence collection, integer-paise normalization, and mathematical discrepancy-matching subsystem. ReconAI 2.0 is not positioned merely as an offline batch dashboard; it is a continuous, controller-governed payment monitoring and resolution platform.
 
 ---
 
-## The Solution: Verification-First Architecture
+## The Core Workflow
 
-ReconAI introduces a **Verification-First Architecture** where deterministic rules establish financial truth, safety gates lock out uncertainty, Gemini AI provides root-cause advisory insights, and human operators retain final resolution authority.
+1. **Detect** an unusual or unresolved payment situation via real-time webhooks, monitoring sweeps, or claim intake.
+2. **Collect and validate** transaction, webhook, order, settlement, and provider evidence available to the system.
+3. **Classify** the scenario using deterministic rules across 6 priority tiers (41 rules, 30 canonical scenarios).
+4. **Investigate** using specialized AI roles in a controller-mediated sequential pipeline:
+   - `CUSTOMER_AI`: Analyzes customer-side claims, timestamps, and payment assertions.
+   - `SHOP_AI`: Analyzes merchant order, transaction fulfillment, and inventory state.
+   - `INVESTIGATOR_AI`: Correlates evidence, identifies missing records and contradictions, and formulates supported findings.
+   - `RESOLUTION_PLANNER_AI`: Formulates candidate next-step proposals for policy evaluation.
+5. **Apply deterministic backend policy** (`evaluateResolutionPolicy`) to determine which financial actions are permitted under merchant-governed limits.
+6. **Monitor, escalate, hold, or perform** an authorized operation through a guarded sandbox adapter (`razorpaySandboxAdapter.js`).
+7. **Verify** provider outcomes independently through authoritative GET reads before updating lifecycle states.
+8. **Persist** decisions, supporting evidence, lifecycle events, and audit logs with immutable provenance.
 
 ```mermaid
-flowchart LR
-    O[Merchant Orders]
-    P[Gateway Payments]
-    S[Settlement Records]
+flowchart TD
+    subgraph Ingestion["1. Ingestion & Detection"]
+        WH["Razorpay Webhook (HMAC-SHA256)"] --> CG["In-Flight Concurrency Guard (503)"]
+        CG --> EVT["Append-Only Lifecycle Ledger"]
+        POLL["Monitoring Worker (30s Monotonic Lease)"] --> PR["Provider GET Read"]
+        PR --> SM["8-Dimension Payment State Machine"]
+    end
 
-    O --> N[Normalization]
-    P --> N
-    S --> N
+    subgraph Classification["2. Deterministic Classification"]
+        SM --> CTX["Classifier Context Builder"]
+        CTX --> HASH["Material-State RecordHash"]
+        CTX --> RULES["41 Deterministic Precedence Rules"]
+        RULES --> EVID["Immutable EvidenceRecord Store"]
+    end
 
-    N --> R[Deterministic Reconciliation Engine]
-    R --> G[Confidence & Safety Gate]
+    subgraph Investigation["3. Controller-Mediated AI Investigation"]
+        EVID --> CAI["CUSTOMER_AI: Customer Claims"]
+        CAI --> SAI["SHOP_AI: Merchant Fulfillment"]
+        SAI --> IAI["INVESTIGATOR_AI: Contradictions & Facts"]
+        IAI --> RPAI["RESOLUTION_PLANNER_AI: Candidate Proposal"]
+        RPAI --> ADVISORY["Advisory Proposal (isExecutable: false)"]
+    end
 
-    G -->|Confidence ≥ 95% + 0 Anomalies| A[Auto-Reconciled]
-    G -->|Exception / Ambiguous| E[Exception Queue]
-
-    E --> AI[Gemini Advisory Investigator]
-    E --> F[Deterministic Fallback]
-
-    AI --> H[Human Review & Decision]
-    F --> H
-
-    A --> U[Append-Only Audit Trail]
-    H --> U
+    subgraph Policy["4. Deterministic Policy & Safe Execution"]
+        ADVISORY --> POL["Deterministic Policy Evaluator"]
+        POL -->|Safe Hold / Ambiguity / Case 22| HOLD["CASE_SAFE_HOLD (Admin Queue)"]
+        POL -->|Approved under 2-Person Limits| G3["Gate 3 Policy Token (HMAC-SHA256)"]
+        G3 --> ADAPT["Guard Adapter (Writes Disabled by Default)"]
+        ADAPT --> VERIFY["Independent Provider Verification Read"]
+        VERIFY --> RES["CASE_RESOLVED (Audited)"]
+    end
 ```
 
-### Core Architecture Principles
+### Core Architecture & Financial-Safety Principles
 
-1. **Deterministic Matching Engine**: 100% pure, in-memory matching engine operating with integer paise math. GroundTruth answer keys are strictly isolated and never accessed during reconciliation.
-2. **Confidence Safety Gate**: Auto-reconciliation strictly requires ≥95% evidence confidence AND zero anomaly flags.
-3. **AI Advisory Boundary**: Google Gemini model is invoked strictly on-demand for exception root-cause investigation. It cannot mutate financial classifications or move funds.
-4. **Append-Only Audit Trail**: Every batch run, AI request, and human decision is logged immutably with automatic credential sanitization (`[REDACTED]`).
+1. **AI Authority is Strictly Advisory**: AI agents formulate non-binding proposals (`isExecutable: false`, `authoritative: false`). AI cannot authorize refunds, modify policy, bypass safe holds, or call provider write endpoints. Server-side policy is authoritative.
+2. **Deterministic Matching & Classification**: GroundTruth answer keys are strictly isolated. Classification uses 41 pure, deterministic rules where all 22 safe-hold rules strictly precede all 19 non-safe-hold rules.
+3. **Case 22 Non-Negotiable Invariant**: Late capture on a cancelled order (`LATE_CAPTURE_CANCELLED_ORDER`) must remain strictly in `CASE_SAFE_HOLD`, with zero automatic refund and zero automatic reopening of the cancelled order.
+4. **Evidence Quality & Ingestion Realism**: A customer debit claim alone is NOT proof of capture. A failed gateway status alone does NOT authorize a refund. Uncaptured funds cannot be refunded by Razorpay; ReconAI monitors banking auto-reversal turnaround times instead.
+5. **Provider Sandbox Writes Gated**: Writes are disabled by default (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), restricted strictly to test keys (`rzp_test_`), require a single-use HMAC `PolicyAuthorizationToken` (Gate 3), enforce atomic conditional refund reservation (`reserveRefund`), and require human `ADMIN` dispatch.
+6. **Zero Stale Privileges & Tenant Isolation**: Middleware queries MongoDB directly on every request (`UserAccount.findOne`, `ServicePrincipal.findOne`) with zero in-memory L1 cache in production. Tenant identity is derived solely from verified JWT claims. Auditors are strictly read-only and tenant-scoped unless holding the audited `GLOBAL_AUDIT` scope.
+7. **Append-Only Audit Trail**: Every batch run, state change, policy decision, and human review is logged immutably with automatic credential sanitization (`[REDACTED]`). Zero DELETE endpoints exist.
 
 ---
 
@@ -198,16 +212,34 @@ Open browser at `http://localhost:5173`.
 
 ## Test Suite & Verification
 
-Run backend unit and integration tests (170 tests):
+Run server unit tests (795 tests across 80 files):
 ```bash
-cd server
-npm test
+npm test --prefix server
+```
+
+Run server integration tests against real MongoDB (156 tests across 14 files):
+```bash
+npm run test:integration --prefix server
+```
+
+Run 120-scenario deterministic reconciliation benchmark (100.00% match rate):
+```bash
+npx vitest run tests/reconciliation/benchmarkCompatibility.test.js --dir server
+```
+
+Run production monitoring & provider isolation smoke test (7 gates):
+```bash
+node server/scripts/monitoringSmokeTest.js
+```
+
+Run client unit & workspace invariant tests (26 tests across 5 files):
+```bash
+npm test --prefix client
 ```
 
 Build production client bundle:
 ```bash
-cd client
-npm run build
+npm run build --prefix client
 ```
 
 ---
@@ -264,6 +296,7 @@ The operator workspace (`client`) provides a read-only investigation environment
 
 ## Documentation Links
 
+### Core & Hackathon Documents
 - [Demo Script Guide (`docs/DEMO_SCRIPT.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/DEMO_SCRIPT.md)
 - [Judging Criteria Alignment (`docs/JUDGING_CRITERIA.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/JUDGING_CRITERIA.md)
 - [Submission Checklist (`docs/SUBMISSION_CHECKLIST.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/SUBMISSION_CHECKLIST.md)
@@ -274,14 +307,29 @@ The operator workspace (`client`) provides a read-only investigation environment
 - [AI Investigation Architecture (`docs/AI_INVESTIGATION.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/AI_INVESTIGATION.md)
 - [Razorpay Integration (`docs/RAZORPAY_INTEGRATION.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/RAZORPAY_INTEGRATION.md)
 
+### ReconAI 2.0 Architectural Specifications
+- [Current Project Status & Release Readiness (`docs/reconai-2/CURRENT_PROJECT_STATUS.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/CURRENT_PROJECT_STATUS.md)
+- [Master Documentation Consistency Audit (`docs/reconai-2/DOCUMENTATION_CONSISTENCY_AUDIT.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DOCUMENTATION_CONSISTENCY_AUDIT.md)
+- [Open Decisions, Safety Blockers & Technical Debt (`docs/reconai-2/OPEN_DECISIONS_AND_TECHNICAL_DEBT.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/OPEN_DECISIONS_AND_TECHNICAL_DEBT.md)
+- [Workspace API Read Contract (`docs/reconai-2/API_READ_CONTRACT.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/API_READ_CONTRACT.md)
+- [Architecture Decisions ADR-01 to ADR-15 (`docs/reconai-2/ARCHITECTURE_DECISIONS.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/ARCHITECTURE_DECISIONS.md)
+- [Daily Work Log & Audit Trail (`docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md)
+- [Acceptance Criteria & Verification Framework (`docs/reconai-2/ACCEPTANCE_CRITERIA.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/ACCEPTANCE_CRITERIA.md)
+- [Phase 6 Classification Engine & Reachability Matrix (`docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/PHASE_6_CLASSIFICATION_ENGINE.md)
+- [Domain Models & Ledgers (`docs/reconai-2/DOMAIN_MODEL_AND_LEDGERS.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DOMAIN_MODEL_AND_LEDGERS.md)
+- [Payment State Machine (`docs/reconai-2/PAYMENT_STATE_MACHINE.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/PAYMENT_STATE_MACHINE.md)
+- [Edge Case Policy Matrix (`docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/EDGE_CASE_POLICY_MATRIX.md)
+- [Role & Permission Matrix (`docs/reconai-2/ROLE_PERMISSION_MATRIX.md`)](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/ROLE_PERMISSION_MATRIX.md)
+
 ---
 
 ## Limitations
 
-- Synthetic benchmark is a controlled dataset (120 scenarios).
-- Razorpay live financial operations (captures, refunds, payouts) are intentionally unsupported; integration is strictly read-only Test Mode GET requests.
-- Razorpay synchronization stores records in MongoDB but requires explicit merchant-order mapping before reconciliation execution.
-- Customer authentication is not included in the hackathon demo build (default actor: `demo-finance-reviewer`).
+- Synthetic benchmark is a controlled dataset (120 scenarios) fulfilling Track 4 deterministic verification.
+- Razorpay live financial mutations (captures, refunds, payouts) are intentionally disabled (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`); integration uses mocked provider transports.
+- Provider operations on the workspace detail screen represent synthetic records.
+- Admin tenant switching UI is scheduled for a future release; currently `ADMIN` operates across all tenant records without a dropdown selector.
+- Case 18 and Case 23 remain unreachable in production due to upstream schema normalizer fail-closed validation.
 
 ---
 
