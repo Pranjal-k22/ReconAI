@@ -267,10 +267,11 @@ This document defines the strict, code-derived read contract for the read-only o
 
 ## 3. Security and Scoping Invariants
 
-1. **Token-Only Scoping**:
+1. **Token-Only Scoping & Storage**:
    - The workspace NEVER sends an `x-tenant-id` header or URL tenant parameter.
    - For `SHOP` and `AUDITOR` users, the tenant is strictly bound to the authenticated JWT payload on the backend.
-   - For `ADMIN` users in Stage 6, no tenant selector is provided in the workspace UI.
+   - For `ADMIN` users in Stage 6b, no tenant selector is provided in the workspace UI.
+   - Token Storage & XSS Consequence: In Stage 6b, the bearer JWT token is stored in the browser's `localStorage` under key `reconai_token` (`client/src/context/AuthContext.jsx:31,43`). Security consequence: Bearer tokens in `localStorage` can be read by any JavaScript running in the origin, meaning any XSS defect would allow token exfiltration and session impersonation. Production hardening roadmap requires migration to `httpOnly`, `Secure`, `SameSite=Strict` cookies.
 2. **Sentinel Exclusion**:
    - The internal sentinel tenant `unassigned_provider_quarantine` is unconditionally excluded from all workspace queries and returns 404 / empty array.
 3. **Strict Read-Only Enforcement**:

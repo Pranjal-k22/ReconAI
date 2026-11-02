@@ -10,7 +10,7 @@
 
 ## 1. Overview & Governance Principles
 
-Phase 6 implements a deterministic, explainable classification and evidence-collection engine covering all 30 payment lifecycle edge cases specified in `EDGE_CASE_POLICY_MATRIX.md`. Note on production reachability: 30 deterministic rules are implemented in the engine. Reachability is evaluated via runtime proxy tracing and DB-driven classification (Stage 5 Part B). There is no claim that 30 scenarios are supported end to end from live production feeds without intake routes.
+Phase 6 implements a deterministic, explainable classification and evidence-collection engine covering all 30 payment lifecycle edge cases specified in `EDGE_CASE_POLICY_MATRIX.md`. Note on production reachability: 30 deterministic rules are implemented in the engine. Reachability is evaluated via runtime proxy tracing and DB-driven classification (Stage 5b). There is no claim that 30 scenarios are supported end to end from live production feeds without intake routes.
 
 ### Core Safety Safeguards Enforced:
 1. **Rule of Positive Evidence**: Only cryptographically verified provider events establish gateway authorization, capture, failure, or refund facts.
@@ -151,7 +151,7 @@ Below is the per-case reachability analysis generated directly from `evidence/st
 | Case | Scenario ID | Category | Decisive Doc Line | Production Writer (file:line) | One-Line Reachability Reason |
 |---|---|---|---|---|---|
 | 1 | `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:16` | `NONE` | Requires authenticated client telemetry beacon endpoint with server-verified signature (not yet implemented). |
-| 2 | `CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:32` | `NONE` | Requires customer portal claim intake route (out of scope for Stage 5). |
+| 2 | `CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:32` | `NONE` | Requires customer portal claim intake route (out of scope for Stage 5b). |
 | 3 | `CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:48` | `NONE` | Requires customer portal claim intake route for debit claims on failed payments. |
 | 4 | `CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:64` | `NONE` | Requires late-auth timeout correlation worker; reserved in classifier and policy domain models. |
 | 5 | `CASE_5_CAPTURED_PAYMENT_DELAYED_SETTLEMENT` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:80` | `server/src/services/webhook/webhookService.js:1165 (status: CAPTURED)` | Standard webhook ingestion writes CAPTURED; absence of settlements is initial ingestion state within 72h window. |
@@ -176,9 +176,9 @@ Below is the per-case reachability analysis generated directly from `evidence/st
 | 24 | `CASE_24_PROVIDER_UNAVAILABLE_RATE_LIMITED` | **NO_SOURCE** | `EDGE_CASE_POLICY_MATRIX.md:401` | `NONE` | Runtime transient network fault; not persisted in database collections. |
 | 25 | `CASE_25_DATABASE_OUTAGE_DURING_ACTION` | **NO_SOURCE** | `EDGE_CASE_POLICY_MATRIX.md:417` | `NONE` | Infrastructure connectivity fault; not stored as a domain database record. |
 | 26 | `CASE_26_WORKER_CRASH_ACTION_PENDING` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:433` | `NONE (Defined in schema server/src/models/PaymentCase.js:105; zero background worker lease writers in server/src)` | Schema supports lease expiration, but no background worker actively claims/renews action leases in server/src. |
-| 27 | `CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:449` | `NONE` | Concurrent case locking protocol reserved for Stage 6 multi-operator workspace. |
+| 27 | `CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:449` | `NONE` | Concurrent case locking protocol reserved for Stage 6b multi-operator workspace. |
 | 28 | `CASE_28_CROSS_TENANT_ACCESS_ATTEMPT` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:465` | `server/src/middleware/authMiddleware.js:230` | Enforced at API gateway boundary by auth middleware; returns HTTP 403 before ledger operations. |
-| 29 | `CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:481` | `NONE` | Requires customer fraud report submission route (out of scope for Stage 5). |
+| 29 | `CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:481` | `NONE` | Requires customer fraud report submission route (out of scope for Stage 5b). |
 | 30 | `CASE_30_CHARGEBACK_OR_FORMAL_DISPUTE` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:497` | `NONE` | Razorpay dispute webhook ingestion pipeline not yet implemented; representable only via seed. |
 
 ### Production Inactive Cases: Cases 18 & 23
@@ -200,9 +200,9 @@ Sourced strictly by script from `evidence/stage5_6/05-strict-reachability.json`:
 - **Case 9 (`CASE_9_PARTIAL_PAYMENT`):** Installment agreement tracking model reserved for future stage.
 - **Case 18 (`CASE_18_CONFLICTING_PROVIDER_MERCHANT_RECORDS`):** Requires cross-provider settlement audit interface; reserved in domain matrix.
 - **Case 23 (`CASE_23_AMBIGUOUS_PAYMENT_CANDIDATES`):** Multi-candidate ambiguity resolver reserved for AI investigator phase.
-- **Case 27 (`CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS`):** Concurrent case locking protocol reserved for Stage 6 multi-operator workspace.
+- **Case 27 (`CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS`):** Concurrent case locking protocol reserved for Stage 6b multi-operator workspace.
 
 ### Owner Decision: Precedence Reordering Impact on Merged Inputs
 
 > [!IMPORTANT]
-> **OWNER DECISION:** Stage 5 reorder changed 52 outcomes on merged inputs: out of 155 evaluated merged pairs, 52 differences were observed (49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held). Classifications persisted before ac18699 for such inputs may differ. The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.
+> **OWNER DECISION:** Stage 5b reorder changed 52 outcomes on merged inputs: out of 155 evaluated merged pairs, 52 differences were observed (49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held). Classifications persisted before ac18699 for such inputs may differ. The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.

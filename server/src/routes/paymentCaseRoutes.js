@@ -652,22 +652,32 @@ router.get(
         scopedTenantId = req.user.tenantId;
       }
 
+      const isGlobal =
+        req.user.role === ROLES.ADMIN ||
+        (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
+
       if (scopedTenantId && String(scopedTenantId).trim() === "unassigned_provider_quarantine") {
         throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
       }
 
+      const caseQuery = { caseId: caseId.trim() };
+      if (scopedTenantId) {
+        caseQuery.tenantId = scopedTenantId;
+      } else if (isGlobal) {
+        caseQuery.tenantId = { $ne: "unassigned_provider_quarantine" };
+      }
+
       // Tenant ownership check: tenant mismatch returns 404
-      const caseDoc = await PaymentCase.findOne({
-        caseId: caseId.trim(),
-        tenantId: scopedTenantId
-      }).lean();
+      const caseDoc = await PaymentCase.findOne(caseQuery).lean();
 
       if (!caseDoc) {
         throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
       }
 
+      const effectiveTenantId = scopedTenantId || caseDoc.tenantId;
+
       const record = await getCaseClassification({
-        tenantId: scopedTenantId,
+        tenantId: effectiveTenantId,
         caseId: caseId.trim()
       });
 

@@ -267,7 +267,7 @@ Allowing arbitrary or default monetary refund limits in code or deployment confi
 11. **Second ADMIN Account Provisioning:**
     - Because two-person rule enforcement requires `approvedBy !== proposedBy`, every operating tenant must provision at least two administrator identities.
     - A second ADMIN account is provisioned using `accountService.provisionUserAccount({ tenantId, email, role: "ADMIN", ... })` by an existing bootstrap administrator.
-12. **No UI for Configuration Yet:** Policy configuration is strictly server-side API only in ReconAI 2.0 Stage 4.
+12. **No UI for Configuration Yet:** Policy configuration is strictly server-side API only in ReconAI 2.0 Stage 4b.
 
 ---
 
@@ -322,7 +322,7 @@ In prior stages, the edge-case classification engine accepted an arbitrary in-me
    - "Reachable" claims in production count strictly only **PROVEN_END_TO_END (8)**.
 
 8. **Owner Decision on Precedence Reordering Impact (52 Merged Input Pairs):**
-   - **OWNER DECISION:** Stage 5 reorder changed 52 outcomes on merged inputs: out of 155 evaluated merged pairs, 52 differences were observed (49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held); classifications persisted before ac18699 for such inputs may differ.
+   - **OWNER DECISION:** Stage 5b reorder changed 52 outcomes on merged inputs: out of 155 evaluated merged pairs, 52 differences were observed (49 changed from not-held to held, 3 changed from held to held due to Tier 3 precedence, 0 changed from held to not-held); classifications persisted before ac18699 for such inputs may differ.
    - The standalone-fixture evaluation confirms 0 differences across all 30 standalone edge-case scenario fixtures.
 
 ---

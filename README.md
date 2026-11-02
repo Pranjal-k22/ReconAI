@@ -189,7 +189,7 @@ RAZORPAY_KEY_SECRET=your_razorpay_test_key_secret
 RAZORPAY_MODE=test
 ```
 
-Create `client/.env`:
+Create client environment configuration (copy `client/.env.example` to client environment):
 ```env
 VITE_API_BASE_URL=http://localhost:5000/api
 ```
@@ -212,12 +212,12 @@ Open browser at `http://localhost:5173`.
 
 ## Test Suite & Verification
 
-Run server unit tests (795 tests across 80 files):
+Run server unit tests (789 tests across 79 files):
 ```bash
 npm test --prefix server
 ```
 
-Run server integration tests against real MongoDB (156 tests across 14 files):
+Run server integration tests against real MongoDB (164 tests across 15 files):
 ```bash
 npm run test:integration --prefix server
 ```
@@ -267,7 +267,7 @@ npm run build --prefix client
 
 ---
 
-## Governed Versioned Policy-Limits Configuration (Stage 4B)
+## Governed Versioned Policy-Limits Configuration (Stage 4b)
 
 > "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
 
@@ -276,17 +276,18 @@ npm run build --prefix client
 - **Fail-Closed Guarantee**: In the absence of an active configuration or upon deactivation, refund policy evaluation unconditionally yields `INSUFFICIENT_EVIDENCE`. Zero preflight GETs, zero reservations, zero tokens, and zero provider HTTP requests are initiated.
 - **Decision Binding & Concurrency Safety**: Policy decisions persist `policyConfigVersion` and `contentHash`. Provider dispatch validates that the active configuration matches the decision state; any divergence aborts with `HTTP 409 POLICY_CONFIG_CHANGED`. `PolicyAuthorizationToken` cryptographically binds version and hash for execution verification.
 - **Limit Semantics Plain Meaning**: `maxSingleRefundPaise` caps single refund transaction balance against the verified refundable balance. `maxCumulativeRefundPaise` has **no effect today** because `currentCumulativeDailyPaise` is defaulted to 0 and `maxSingleRefundPaise <= maxCumulativeRefundPaise` is strictly enforced at schema and config level; single limit always triggers first. OWNER DECISION: implement real aggregation, or remove the field. Second ADMIN accounts are provisioned via `accountService.provisionUserAccount`.
-- **Honest Scenario Reachability**: 30 deterministic rules are implemented in the classifier. Code-computed reachability breakdown (Stage 5 Part B): **14 PROVEN_FROM_DB**, **3 INGESTION_TIME**, **3 NEEDS_CLAIM_INTAKE**, **8 RESERVED**, **2 NO_SOURCE**. No claim that 30 scenarios are supported end to end from live production feeds without intake routes.
+- **Honest Scenario Reachability**: 30 deterministic rules are implemented in the classifier. Code-computed reachability breakdown (Stage 5b): **14 PROVEN_FROM_DB**, **3 INGESTION_TIME**, **3 NEEDS_CLAIM_INTAKE**, **8 RESERVED**, **2 NO_SOURCE**. No claim that 30 scenarios are supported end to end from live production feeds without intake routes.
 
 
 ---
 
-## Operator Workspace (Read-Only) (Stage 6B)
+## Operator Workspace (Read-Only) (Stage 6b)
 
 The operator workspace (`client`) provides a read-only investigation environment for human controllers and auditors across payment lifecycle cases:
 
 - **Strict Read-Only Enforcement**: The client workspace exports zero mutation functions (no POST, PUT, PATCH, DELETE). It contains no buttons that classify, investigate, dispatch, release, or edit cases.
 - **Token-Only Tenant Scoping**: The workspace strictly forbids `x-tenant-id` headers and reads zero tenant parameters from `localStorage` or URL query strings. All tenant scoping originates exclusively from the authenticated JWT token verified on the server.
+- **Token Storage & XSS Security Consequence**: The JWT authentication token is persisted in browser `localStorage` under the key `reconai_token` (`client/src/context/AuthContext.jsx:31,43`). **Security Consequence**: Storing bearer authentication tokens in `localStorage` exposes them to any script running in the browser context; any Cross-Site Scripting (XSS) vulnerability would allow an attacker to read the token and impersonate the operator. For production deployment, session tokens must migrate to `httpOnly`, `Secure`, `SameSite=Strict` cookies.
 - **Zero Tenant Selector**: Platform `ADMIN` users operate system-wide; no tenant selector UI exists in this stage to guarantee zero accidental cross-tenant mutation.
 - **Fail-Closed Safe-Hold Visibility**: Held cases prominently display active hold reason codes and policies. For Case 22 (`LATE_CAPTURE_CANCELLED_ORDER`), the workspace explicitly displays: *"late capture on a cancelled order: held, no automatic refund or reopen"*.
 - **Inert Adversarial Text Rendering**: All customer claims, agent perspectives, and untrusted inputs are rendered strictly as text with truncation and expansion controls (zero `dangerouslySetInnerHTML`, zero markdown/HTML script execution).

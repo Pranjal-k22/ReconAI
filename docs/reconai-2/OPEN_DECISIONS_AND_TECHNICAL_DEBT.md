@@ -47,7 +47,7 @@ The following decisions require explicit product, financial-policy, risk, or arc
 - **Category**: Ingestion & Evidence Collection
 - **Current Code Reality**:
   - Edge Cases 2 (`CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING`), 3 (`CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED`), and 29 (`FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT`) are categorized as `NEEDS_CLAIM_INTAKE`.
-  - No public or customer-facing claim intake endpoints (`POST /api/claims`) exist in `server/src/routes`.
+  - No public or customer-facing claim intake endpoints (planned `/api/claims` POST route) exist in `server/src/routes`.
 - **Decision Required**:
   - Define authentication, rate limiting, and CAPTCHA requirements for consumer claim submission.
   - Determine whether bank account statements / UPI screenshots can be uploaded and where binary assets are stored (S3 vs local gridfs).
@@ -82,7 +82,7 @@ The following issues represent functional or architectural gaps identified durin
 
 ### Priority 1: Security Hardening & Claim Ingestion (Immediate)
 1. **Implement Admin 2FA (TOTP)**: Integrate `@levminer/speakeasy` or standard TOTP RFC 6238 into `server/src/routes/authRoutes.js` for `ADMIN` role.
-2. **Customer Claim Intake API**: Implement `POST /api/claims` with Zod validation, rate limiting, and tenant scoping to activate Cases 2, 3, and 29.
+2. **Customer Claim Intake API**: Implement claim intake endpoint (`/api/claims` POST) with Zod validation, rate limiting, and tenant scoping to activate Cases 2, 3, and 29.
 3. **Dispute Webhook Handlers**: Add handlers for `dispute.created`, `dispute.under_review`, `dispute.won`, and `dispute.lost` to `webhookService.js`.
 
 ### Priority 2: Policy Limits & Case 22 Resolution (Medium Term)

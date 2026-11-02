@@ -1,23 +1,23 @@
 # ReconAI Development Progress
 
 ## Project Status (Updated: 26/10/2026)
-**ReconAI 2.0 Stage 6 Completed — Corrections (Part A) & Read-Only Operator Workspace (Part B) Verified & Committed.**
+**ReconAI 2.0 Stage 6b Completed — Corrections (Part A) & Read-Only Operator Workspace (Part B) Verified & Committed.**
 - **Part A Commit**: `9b6804b7a6fdf07224e8ade2dc13009cdefc73f3` (`fix(reconai-2): stage 6a material-state classification hash and evidence corrections`)
 - **Part B Commit**: `fa3357bb6afd36f4396695baad524e8dd6ee3e8c` (`feat(client): stage 6b read-only payment case workspace with token-only tenant scope`)
 - **Automated Test Footprint**:
-  - Server Unit Tests: **795 / 795 passed** across 80 test files
-  - Server Integration Tests: **156 / 156 passed** across 14 test files
+  - Server Unit Tests: **789 / 789 passed** across 79 test files
+  - Server Integration Tests: **164 / 164 passed** across 15 test files
   - Track 4 Reconciliation Benchmark: **120 / 120 scenarios passed** (100.00% match rate)
   - Client Vitest Suite: **26 / 26 passed** across 5 test files
   - Production Startup & Isolation Smoke Test: **7 / 7 gates passed**
   - Production Client Build: **Built in 17.51s with 0 errors**
-  - **Total Automated Tests**: **977 passed** across all suites.
+  - **Total Automated Tests**: **979 passed** across all suites.
 - Working tree on `main` is clean and synchronized with `origin/main`. Comprehensive daily audit trail documented in [`docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md`](file:///c:/WEB%20DEVELOPMENT/ReconAI/docs/reconai-2/DAILY_WORK_LOG_2026_10_12.md).
 
 ---
 
 ## Current Milestone
-**ReconAI 2.0 — Stage 6 Complete; Ready for Stage 7 (Controlled Actions & Two-Person Governance UI).**
+**ReconAI 2.0 — Stage 6b Complete; Ready for Stage 7 (Controlled Actions & Two-Person Governance UI).**
 
 ---
 

@@ -409,4 +409,23 @@ describe("Workspace Read API Contract Invariant Tests (Real MongoDB)", { timeout
     expect(item).toHaveProperty("caseId", CASE_ID);
     expect(item).toHaveProperty("evidenceCards");
   });
+
+  it("Contract 9: GET /api/payment-cases/:caseId/classification returns 200 with redacted shape for a seeded case and preserves claims statement", async () => {
+    const res = await request(app)
+      .get(`/api/payment-cases/${CASE_ID}/classification`)
+      .set("Authorization", `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    const data = res.body.data;
+    expect(data).toHaveProperty("recordId");
+    expect(data).toHaveProperty("scenarioId", "CASE_22_PAYMENT_CAPTURED_ORDER_CANCELLED");
+    expect(data).toHaveProperty("safeHold", true);
+    expect(data).toHaveProperty("safeHoldCode", "LATE_CAPTURE_CANCELLED_ORDER");
+    expect(Array.isArray(data.claims)).toBe(true);
+    expect(data.claims.length).toBeGreaterThan(0);
+    expect(data.claims[0]).toHaveProperty("statement", "Money debited from account");
+    expect(data).not.toHaveProperty("__v");
+    expect(data).not.toHaveProperty("secret");
+  });
 });

@@ -926,7 +926,7 @@ ReconAI/
 
 - **Context & Stage 3.6 Mandate**:
   - Verification-and-fix stage: provenance audit, canonical 30-scenario table generation, test count contradiction resolution, Razorpay official field verification, route validation facts, and quarantine sentinel hardening.
-  - Strict scope enforcement: No UI changes, no policy-limits config storage, writes flag remains false (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), mocked transport only in tests, no live keys, Stage 4 not started.
+  - Strict scope enforcement: No UI changes, no policy-limits config storage, writes flag remains false (`RAZORPAY_SANDBOX_WRITES_ENABLED=false`), mocked transport only in tests, no live keys, Stage 4a not started.
 
 - **Provenance & Commit Audit (11b7a33..HEAD)**:
   - Audited commits `f8cc174` and `6888d19`. Commit `f8cc174` landed Stage 3.5 changes across 30 files but omitted `server/tests/helpers/testDbGuard.js`, breaking test imports until `6888d19` added it 2 minutes later. `npm test` and `npm run test:integration` could never have run or passed on `f8cc174`.
@@ -1033,7 +1033,7 @@ ReconAI/
   - E2E lifecycle: `server/tests/integration/policyLimitsGovernedE2E.integration.test.js` (1 test: propose & approve -> decision records version -> dispatch succeeds with mocked fetch -> deactivate fails closed -> config change returns 409).
   - Updated `providerSandboxDispatchPersistence.integration.test.js`: seeds active `PolicyConfigVersion` records for test tenants; verifies missing limits fail-closed.
 
-### Entry 19: Stage 5 Evidence Integrity Corrections
+### Entry 19: Stage 5a Evidence Integrity Corrections
 
 - **A1. History Evidence Verification**:
   - Saved full diagnostics: `git log -n 200`, `git rev-list --count HEAD`, `git reflog -n 200`, `git reflog show origin/main -n 50`, `git remote -v`, `git replace -l`, `git notes list`, `git for-each-ref`, `git config --get-regexp "^(replace|core\.)"`.
@@ -1043,7 +1043,7 @@ ReconAI/
     - Result: Git commit messages in commit objects match reflog commit messages 100%. The discrepancies were solely in earlier stage reports' hallucinated narrative summaries. With `git replace -l` empty and reflog strictly showing linear updates, zero history rewrites occurred. A1 is completely explained.
 
 - **A2. Reachability by Runtime Tracing**:
-  - Deleted static handwritten scripts `server/scripts/auditReachabilityHonest.js` and `server/scripts/auditClassifierReachability.js`.
+  - Deleted legacy handwritten scripts (`auditReachabilityHonest.js` and `auditClassifierReachability.js`).
   - Implemented dynamic runtime tracer `server/scripts/traceClassifierReachability.js` using recursive `Proxy` wrapping input fixtures from `server/tests/helpers/classificationScenarios.js`.
   - Traced exact read-sets and evaluated real `scenarioId` and `safeHoldCode` across all 30 scenarios without hand-typed scenario names. Output persisted to `evidence/stage5/12-reachability-runtime-trace.json` and `.txt`.
 
@@ -1066,7 +1066,7 @@ ReconAI/
   - Added test-only hook `setInFlightPauseHook` in `webhookService.js` (strictly active only when `NODE_ENV === "test"`).
   - Added deterministic race test in `server/tests/integration/webhookPersistence.integration.test.js`: holds Request 1 in flight in `RECEIVED` state, sends concurrent Request 2, asserts HTTP 503 at receipt time, releases Request 1, asserts HTTP 200 `ACCEPTED` at receipt time, then sends Request 3 retry and asserts HTTP 200 `DUPLICATE_ACKNOWLEDGED`. All statuses recorded strictly at the time of receipt.
 
-### Entry 20: Stage 5.5 Classifier Governance, Sentinel Proof, and Clock Stability Audit
+### Entry 20: Stage 5.6 Classifier Governance, Sentinel Proof, and Clock Stability Audit
 
 - **Historical Commits Regenerated from Git (`git show -s --format="%h|%ad|%s"` and `git show --stat --format=`)**:
 
@@ -1278,7 +1278,7 @@ README.md                                        |   13 +
 - **Strict Reachability Audit**:
   - Categorized all 30 scenarios into 6 categories: PROVEN_END_TO_END (8), SEEDABLE_ONLY (6), INGESTION_TIME (5), NEEDS_CLAIM_INTAKE (3), RESERVED (6), NO_SOURCE (2) (`evidence/stage5_5/16b-strict-reachability.json`).
 
-- **Verification Totals (Stage 5.5, from JSON evidence files)**:
+- **Verification Totals (Stage 5.6 Baseline, from JSON evidence files)**:
   - Unit Tests: 786 passed across 78 test files (`evidence/stage5_5/18-unit-tests.json`).
   - Integration Tests: 142 passed across 13 test files (`evidence/stage5_5/19-integration-tests.json`).
   - 120-Scenario Reconciliation Benchmark: 120/120 scenarios passed (`evidence/stage5_5/20-benchmark.json`).
@@ -1310,14 +1310,15 @@ README.md                                        |   13 +
   - Client Build: Clean build (`evidence/stage5_6/07-client-build.txt`).
   - Code Cleanliness: 0 whitespace / conflict errors (`evidence/stage5_6/07-diff-check.txt`).
 
-### Entry 22: Stage 6 Read-Only Operator Workspace and Token-Only Tenant Scoping
+### Entry 22: Stage 6b Read-Only Operator Workspace and Token-Only Tenant Scoping
 
 - **API Read Contract & Verification**:
   - Code-derived contract documented in `docs/reconai-2/API_READ_CONTRACT.md` covering all 8 workspace endpoints (`GET /api/payment-cases`, `GET /api/payment-cases/:caseId`, `GET /api/payment-cases/:caseId/classification`, `GET /api/payment-events/case/:caseId`, `GET /api/payment-cases/:caseId/investigations`, `GET /api/payment-cases/:caseId/evidence`, `GET /api/payment-cases/:caseId/policy/decisions`, `GET /api/payment-cases/:caseId/provider/operations`).
-  - Verified with real-Mongo supertest suite `server/tests/routes/workspaceApiContract.test.js` (7 contract invariant tests).
-- **Read-Only by Construction Client API Layer**:
+  - Verified with real-Mongo supertest suite `server/tests/integration/workspaceApiContract.integration.test.js` (contract invariant tests).
+- **Read-Only by Construction Client API Layer & Token Storage**:
   - Implemented `client/src/api/casesApi.js` with zero mutation function exports (only GET functions exported).
   - Enforced strict token-only tenant scoping: `x-tenant-id` header is unconditionally stripped; zero tenant parameters read from URL or storage.
+  - Token Storage & XSS Consequence: In Stage 6b, JWT authentication token is persisted in browser `localStorage` under key `reconai_token` (`client/src/context/AuthContext.jsx:31,43`). Consequence: Any Cross-Site Scripting (XSS) vulnerability would expose the bearer token to JavaScript execution, allowing token theft and unauthorized session impersonation. Hardening requires migrating token storage to `httpOnly`, `Secure`, `SameSite=Strict` cookies.
   - Bounded GET retries (up to 2 retries on 503 or network failure) with normalized error mapping (401, 403, 404, 503).
 - **Operator Workspace Components & Pages**:
   - `client/src/components/common/RoleGuard.jsx`: Enforces access control allowing `ADMIN`, `SHOP`, `AUDITOR`; renders "not available for your role" for `CUSTOMER` and service principals without invoking data fetchers.

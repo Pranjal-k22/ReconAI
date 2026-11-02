@@ -412,7 +412,7 @@ Ingests a manual lifecycle event behind tenant and RBAC verification.
 Ingress endpoint for external payment provider callbacks.
 
 ### `POST /api/webhooks/razorpay`
-Ingests live Razorpay webhook payloads.
+Ingests authenticated Razorpay webhook payloads (test and sandbox environments; writes disabled by default).
 - **Authentication**: Cryptographic HMAC SHA-256 signature verification via `x-razorpay-signature` against `RAZORPAY_WEBHOOK_SECRET`.
 - **Concurrency Guard**: Returns HTTP 503 `IN_FLIGHT_EVENT_BEING_PROCESSED` if an identical payload fingerprint is actively being processed by another worker.
 - **Deduplication**: Silently acknowledges duplicate events (`200 OK`) if already committed to the lifecycle ledger.

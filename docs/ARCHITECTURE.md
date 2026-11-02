@@ -353,7 +353,7 @@ graph TD
 Stage 3 hardens the provider dispatch path against unauthorized mutations, double refunds, and client spoofing:
 
 1. **Server-Derived Dispatch Evidence (Nothing from Client)**:
-   - Route `POST /api/payment-cases/:caseId/provider-actions` accepts strictly `{ actionType }` plus `:caseId` path parameter (Zod strict validation).
+   - Route `POST /api/payment-cases/:caseId/provider/dispatch` accepts strictly `{ actionType }` plus `:caseId` path parameter (Zod strict validation).
    - Any client-supplied amounts, currencies, limits, idempotency keys, or approval flags return `400 Bad Request` with zero side effects.
    - Evidence collector loads case, payment, order, refunds, findings, and in-flight commitments from authoritative MongoDB records.
    - Refund amount is derived strictly server-side from policy decision (full refundable balance).

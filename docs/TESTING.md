@@ -9,13 +9,13 @@ ReconAI employs a multi-tiered test suite ensuring deterministic matching accura
 ### Server Unit Tests
 ```bash
 npm test --prefix server
-# Executes 795 unit tests across 80 test files (fast, mock/in-memory)
+# Executes 789 unit tests across 79 test files (fast, mock/in-memory)
 ```
 
 ### Server Integration Tests (Real MongoDB)
 ```bash
 npm run test:integration --prefix server
-# Executes 156 integration tests across 14 test files against real MongoDB instances
+# Executes 164 integration tests across 15 test files against real MongoDB instances
 ```
 
 ### Track 4 Deterministic Benchmark Scenarios
@@ -183,14 +183,14 @@ client/src/tests/
 
 ---
 
-## 3. Verified Verification Baseline (Stage 6)
+## 3. Verified Verification Baseline (Stage 6b)
 
 | Harness | Target | Test Files | Total Tests | Passing | Failing |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| Server Unit Tests | `npm test --prefix server` | 80 | 795 | **795** | 0 |
-| Server Integration Tests | `npm run test:integration --prefix server` | 14 | 156 | **156** | 0 |
+| Server Unit Tests | `npm test --prefix server` | 79 | 789 | **789** | 0 |
+| Server Integration Tests | `npm run test:integration --prefix server` | 15 | 164 | **164** | 0 |
 | Benchmark Compatibility | `npx vitest run tests/reconciliation/...` | 1 | 120 | **120** | 0 |
 | Client Unit Tests | `npm test --prefix client` | 5 | 26 | **26** | 0 |
 | Production Smoke Test | `node server/scripts/monitoringSmokeTest.js` | 1 | 7 gates | **7** | 0 |
 | Client Build | `npm run build --prefix client` | - | 0 errors | **BUILT (17.51s)** | 0 |
-| **Total Automated Tests** | | **100** | **977** | **977** | **0** |
+| **Total Automated Tests** | | **100** | **979** | **979** | **0** |

@@ -69,9 +69,9 @@ In accordance with Section 3 of the Master Audit specification, all capabilities
 | **Gate 3 Policy Token** | `server/src/services/policy/policyAuthorizationToken.js` | `VERIFIED` | 17 tests in `policyAuthorizationToken.test.js` | HMAC-SHA256, 120s TTL, single-use, binds tenant, case, payment, amount |
 | **Atomic Refund Reservation** | `server/src/services/policy/refundReservationService.js` | `VERIFIED` | `policyLimitsGovernedE2E.integration.test.js` | Conditional Mongo `$inc` on `reservedRefundPaise`; prevents double refund |
 | **Provider Sandbox Adapter** | `server/src/services/razorpay/razorpaySandboxAdapter.js` | `VERIFIED` | 30 tests in `razorpaySandboxAdapter.test.js` | Gated by `RAZORPAY_SANDBOX_WRITES_ENABLED=false` (default off); test keys only |
-| **Authoritative Outcome Verification** | `server/src/services/provider/providerOutcomeVerification.js` | `VERIFIED` | 9 tests in `providerOutcomeVerification.test.js` | GET read required before state update; timeout is not failure |
+| **Authoritative Outcome Verification** | `server/src/services/razorpay/razorpaySandboxAdapter.js` | `VERIFIED` | 9 tests in `server/tests/provider/providerOutcomeVerification.test.js` | GET read required before state update; timeout is not failure |
 | **Idempotency Key Generation** | `providerDispatchService.js:291` | `VERIFIED` | `providerSandboxDispatchPersistence.integration.test.js` | Canonical key: `${policyDecisionId}_${effectiveActionType}_${gatewayPaymentId}` |
-| **Customer Claim Intake Routes** | `POST /api/claims` | `UNIMPLEMENTED` | Route catalog inspection | Required for Cases 2, 3, 29; out of scope for current stage |
+| **Customer Claim Intake Routes** | Customer claim intake route (`/api/claims` - planned Stage 7B) | `UNIMPLEMENTED` | Route catalog inspection | Required for Cases 2, 3, 29; out of scope for current stage |
 | **Dispute Webhook Pipeline** | `webhookService.js` | `UNIMPLEMENTED` | Webhook route inspection | Required for Case 30 (`dispute.created`, `dispute.won`, `dispute.lost`) |
 | **Read-Only Operator Workspace** | `client/src/pages/CasesListPage.jsx`, `CaseDetailPage.jsx` | `VERIFIED` | 26 tests in `client/src/tests/`, 7 in `workspaceApiContract.test.js`, 9 CDP screenshots | Strictly GET; token-derived tenant scope; zero mutation routes |
 | **XSS-Safe Text Rendering** | `client/src/components/common/ExpandableText.jsx` | `VERIFIED` | `CaseDetailPage.test.jsx`, screenshot `screenshot-08` | Zero `dangerouslySetInnerHTML`; hostile scripts render as inert strings |
@@ -88,23 +88,21 @@ RECONAI 2.0 — AUTHORITATIVE AUTOMATED TEST VERIFICATION BASELINE
 ==========================================================================================
 Harness                    Command                              Files  Tests  Passed  Failed
 ------------------------------------------------------------------------------------------
-Server Unit Tests          npm test --prefix server                80    795     795       0
-Server Integration Tests   npm run test:integration --prefix server14    156     156       0
+Server Unit Tests          npm test --prefix server                79    789     789       0
+Server Integration Tests   npm run test:integration --prefix server15    164     164       0
 Reconciliation Benchmark   npx vitest run benchmarkCompatibility    1    120     120       0
 Client Unit / View Tests   npm test --prefix client                 5     26      26       0
 ------------------------------------------------------------------------------------------
-TOTAL AUTOMATED TESTS                                             100    977     977       0
+TOTAL AUTOMATED TESTS                                             100    979     979       0
 ==========================================================================================
 Production Smoke Gates     node server/scripts/monitoringSmokeTest   1      7       7       0
 Client Production Bundle   npm run build --prefix client            -      -    PASS (0 err)
 ==========================================================================================
 ```
 
-### Clarification on Historical Test Numbers:
-- Stage 3 Baseline: 51 test files / 304 tests.
-- Stage 5.5 Baseline: 786 unit tests / 142 integration tests.
-- Stage 5.6 Baseline: 788 unit tests / 149 integration tests.
-- **Stage 6 Current Authoritative Baseline**: **80 unit test files (795 tests) + 14 integration test files (156 tests) + 1 benchmark file (120 scenarios) + 5 client test files (26 tests) = 977 passing automated tests**.
+### Clarification on Historical Milestones:
+- Historical milestones: Stage 3, Stage 5a, Stage 5b, and Stage 5.6 baselines preceded Stage 6b.
+- **Stage 6b Current Authoritative Baseline**: **79 unit test files (789 tests) + 15 integration test files (164 tests) + 1 benchmark file (120 scenarios) + 5 client test files (26 tests) = 979 passing automated tests**.
 
 ---
 
@@ -154,7 +152,7 @@ Total Edge Cases: 30
 ### Operational Boundaries:
 - Cases 10, 11, and 12 (refund edge cases) and Case 8 (partial capture) are supported in schema and test-seedable, but standard Razorpay webhook ingestion has zero production writers for split captures or provider-initiated refund failures.
 - Cases 18 and 23 remain reserved due to upstream normalizer fail-closed behavior on conflicting currency/status records.
-- Cases 2, 3, and 29 require customer claim-intake API routes (`POST /api/claims`).
+- Cases 2, 3, and 29 require customer claim-intake API routes (planned Stage 7B intake).
 
 ---
 

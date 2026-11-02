@@ -1,7 +1,7 @@
 # ReconAI 2.0 — Measurable Acceptance Criteria & Verification Framework
 
-> **DOCUMENT STATUS: GATES 1–13 IMPLEMENTED & VERIFIED (STAGE 6 COMPLETED: 977 TESTS PASSING, 0 ERRORS)**
-> *Gates 1–7 verified across Stages 1–5. Gate 8–11 (Two-Person Policy Governance & Limits) verified in Stage 4. Gate 12 (Material-State Classification Hash & Precedence Invariants) verified in Stage 6A. Gate 13 (Read-Only Operator Workspace with Token-Only Multi-Tenant Scoping) verified in Stage 6B with automated client tests, server contract tests, and headless browser CDP verification.*
+> **DOCUMENT STATUS: GATES 1–13 IMPLEMENTED & VERIFIED (STAGE 6b COMPLETED: 979 TESTS PASSING, 0 ERRORS)**
+> *Gates 1–7 verified across Stages 1–5b. Gate 8–11 (Two-Person Policy Governance & Limits) verified in Stage 4b. Gate 12 (Material-State Classification Hash & Precedence Invariants) verified in Stage 6a. Gate 13 (Read-Only Operator Workspace with Token-Only Multi-Tenant Scoping) verified in Stage 6b with automated client tests, server contract tests, and headless browser CDP verification.*
 
 ---
 
@@ -89,7 +89,7 @@ ReconAI 2.0 defines explicit operational metrics for its autonomous payment cont
 
 ---
 
-## 4. Governed Versioned Policy-Limits Configuration (Stage 4 Part B)
+## 4. Governed Versioned Policy-Limits Configuration (Stage 4b)
 
 > "No monetary limits ship with the repo. Limits exist only as two-person-approved per-tenant records. With none active, refunds fail closed. No UI for configuration yet."
 
@@ -108,11 +108,11 @@ ReconAI 2.0 defines explicit operational metrics for its autonomous payment cont
 ### Gate 11: Honest Limit Semantics and Reachability
 - **Limit Semantics Plain Meaning**: `maxSingleRefundPaise` caps single refund executions against the transaction's refundable balance. `maxCumulativeRefundPaise` has **no effect today** because `currentCumulativeDailyPaise = 0` and `maxSingleRefundPaise <= maxCumulativeRefundPaise` is strictly enforced; Guard 7 single limit always triggers first. True per-day velocity caps and cumulative-per-payment caps are NOT IMPLEMENTED today. OWNER DECISION: implement real aggregation, or remove the field. Do not change evaluator behavior.
 - **Two-Person Provisioning**: Activation requires two distinct ADMIN accounts (`approvedBy !== proposedBy`); second ADMIN account is provisioned via `accountService.provisionUserAccount`.
-- **Honest Reachability**: 30 deterministic rules are implemented in the classifier. Reachability is strictly evaluated via runtime proxy tracing and DB-driven classification (Stage 5 Part B). No claim that 30 scenarios are supported end to end without intake routes.
+- **Honest Reachability**: 30 deterministic rules are implemented in the classifier. Reachability is strictly evaluated via runtime proxy tracing and DB-driven classification (Stage 5b). No claim that 30 scenarios are supported end to end without intake routes.
 
 ---
 
-## 5. Stage 6 Acceptance Gates (Corrections & Read-Only Workspace)
+## 5. Stage 6b Acceptance Gates (Corrections & Read-Only Workspace)
 
 ### Gate 12: Material-State Classification Hash & Precedence Robustness (Stage 6A)
 - **Criterion**: `recordHash` must hash strictly material business state (document IDs, statuses, amounts in paise, currencies, capture/refund/dispute/settlement states, linked IDs, customer claims). Non-material operational writes (touching `updatedAt`, incrementing background poll/lease counters) must NEVER invalidate the classification hash. Status transitions must invalidate the hash and require formal renewal via `POST /api/payment-cases/:caseId/classify`. Precedence rules must assert 40 regex-over-comments and Function#toString branches and stable contradiction lists across all 36 unmergeable pairs.

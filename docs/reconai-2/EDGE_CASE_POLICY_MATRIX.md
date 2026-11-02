@@ -143,7 +143,7 @@ Reachability is determined strictly by runtime proxy tracing and DB-driven class
 
 ---
 
-### Case 8: Partial Capture [SEEDABLE_ONLY in Stage 5: Schema Added in Part B; Zero Production Ingestion Writers]
+### Case 8: Partial Capture [SEEDABLE_ONLY in Stage 5b: Schema Added in Part B; Zero Production Ingestion Writers]
 - **Detection Signal**: Gateway `amount_captured < amount_authorized` (Not present in documented standard entity).
 - **Authoritative Evidence**: Provider payment record with split capture fields.
 - **Missing / Uncertain Evidence**: Merchant partial fulfillment terms.
