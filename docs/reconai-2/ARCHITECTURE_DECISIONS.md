@@ -346,3 +346,29 @@ Human operators and auditors need immediate, auditable visibility into payment d
    - Implements Safe Hold filtering, Case Status badges, and 7 orthogonal state dimensions (`ORDER`, `CUSTOMER_DEBIT`, `AUTHORIZATION`, `CAPTURE`, `SETTLEMENT`, `REFUND`, `DISPUTE`).
    - Presents 4 AI role investigation cards (`CUSTOMER_AI`, `SHOP_AI`, `INVESTIGATOR_AI`, `RESOLUTION_PLANNER_AI`) detailing advisory findings and confidence scores.
    - Displays deterministic policy evaluation results and provider operation execution timelines with immutable audit provenance.
+
+---
+
+## ADR-16: Customer Claim Intake as Unverified Evidence
+
+### Context
+Customers reporting bank deductions on pending/failed orders or unauthorized transactions need an authenticated intake channel. However, treating customer statements as authoritative financial facts creates immense fraud and loss risk. Attackers could submit crafted prompt injection payloads to trick AI advisors or file false debit claims to trigger unauthorized automated refunds.
+
+### Decision
+1. **Claims are Unverified Evidence Only**:
+   - A claim is strictly a record of what a customer stated. It never proves a debit, never modifies payment or order state machines, never creates refund eligibility, and never authorizes financial dispatch.
+   - All customer claim records are permanently labeled `"customer claim (unverified)"` and carry `verified: false`.
+2. **Token-Only Identity & Zero Existence Oracle**:
+   - Customer identity (`customerId`) and tenant (`tenantId`) are derived exclusively from verified JWT token claims. The request body is strictly validated with Zod `.strict()` and rejects any tenant, customer, or state-asserting fields.
+   - Submitting a claim referencing an unowned, cross-tenant, or non-existent transaction returns the exact same HTTP 201 response shape (`claimId`, `receivedAt`, `status: "RECEIVED"`) as a linked transaction, completely eliminating existence oracles.
+3. **Inert Data & Prompt Injection Neutralization**:
+   - Claim descriptions are sanitized: 13-19 digit card numbers, phone numbers, and email addresses are redacted; control characters stripped; length hard-capped at 1000 characters.
+   - Claim text is stored as inert data in `CustomerClaim.description` and routed to `inertClaims` in classification context. Only structured fields (`claimType`) affect classifier precedence; hostile instruction text cannot alter deterministic classifications or policy decisions.
+4. **Append-Only Immutability & Audit Intent**:
+   - The `CustomerClaim` model enforces append-only immutability; updates and deletions are blocked by Mongoose middleware.
+   - Submissions enforce fail-closed audit intent: `CLAIM_SUBMISSION_REQUESTED` is recorded prior to reference checks, and `CLAIM_SUBMITTED` is recorded upon persistent storage.
+5. **Policy Engine & Provider Dispatch Closed Boundary**:
+   - The policy engine requires authoritative gateway payment evidence (`CAPTURED` status and matching captured amount). A customer claim on a `FAILED` or `PENDING` payment strictly evaluates to `REJECTED_BY_POLICY` or `INSUFFICIENT_EVIDENCE`.
+   - Zero provider operations are dispatched on customer claims alone.
+6. **Multi-Agent Pipeline Isolation**:
+   - Claim text flows only to `Customer AI` as an unverified evidence card. The `Resolution Planner AI` filter strictly excludes customer claim records, and the resolution planner output schema strictly constrains `isExecutable: false`.

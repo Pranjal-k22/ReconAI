@@ -35,6 +35,7 @@ import {
 } from "../services/classification/classificationService.js";
 import { createAuditEvent } from "../services/audit/auditService.js";
 import { PaymentCase } from "../models/PaymentCase.js";
+import { CustomerClaim } from "../models/CustomerClaim.js";
 
 const router = express.Router();
 
@@ -684,6 +685,82 @@ router.get(
       res.status(200).json({
         success: true,
         data: redactClassificationResponse(record)
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/payment-cases/:caseId/claims
+ * Returns unverified customer claims associated with a payment case.
+ * Restricted to ADMIN, SHOP (own tenant), and AUDITOR (tenant-scoped or GLOBAL_AUDIT).
+ * CUSTOMER and service roles return 403.
+ * Sentinel tenant unassigned_provider_quarantine returns 404.
+ */
+router.get(
+  "/:caseId/claims",
+  requireRoles(ROLES.ADMIN, ROLES.SHOP, ROLES.AUDITOR),
+  async (req, res, next) => {
+    try {
+      const { caseId } = req.params;
+      const isGlobal = (req.user?.role === ROLES.ADMIN || (req.user?.role === ROLES.AUDITOR && req.user?.isGlobalAudit));
+      const scopedTenantId = req.user?.tenantId;
+
+      if (!scopedTenantId && !isGlobal) {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found`);
+      }
+
+      const caseQuery = { caseId: caseId.trim() };
+      if (scopedTenantId) {
+        caseQuery.tenantId = scopedTenantId;
+      } else if (isGlobal) {
+        caseQuery.tenantId = { $ne: "unassigned_provider_quarantine" };
+      }
+
+      const caseDoc = await PaymentCase.findOne(caseQuery).lean();
+      if (!caseDoc || caseDoc.tenantId === "unassigned_provider_quarantine") {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found`);
+      }
+
+      // If global auditor accesses cross-tenant, emit audit event
+      if (req.user?.role === ROLES.AUDITOR && req.user?.isGlobalAudit && scopedTenantId !== caseDoc.tenantId) {
+        await createAuditEvent({
+          actorType: "HUMAN",
+          actorId: req.user.userId || req.user.email || "auditor_global",
+          action: "GLOBAL_AUDIT_ACCESSED",
+          entityType: "PAYMENT_CASE",
+          entityId: caseDoc.caseId,
+          tenantId: caseDoc.tenantId,
+          metadata: {
+            accessedTenantId: caseDoc.tenantId,
+            route: `/api/payment-cases/${caseId}/claims`
+          }
+        });
+      }
+
+      const claims = await CustomerClaim.find({
+        tenantId: caseDoc.tenantId,
+        linkedCaseId: caseDoc.caseId
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      res.status(200).json({
+        success: true,
+        data: claims.map((c) => ({
+          claimId: c.claimId,
+          claimType: c.claimType,
+          referenceType: c.referenceType,
+          referenceValue: c.referenceValue,
+          claimedAmountPaise: c.claimedAmountPaise,
+          description: (c.description || "").slice(0, 1000),
+          verified: false,
+          label: "claim, unverified",
+          authority: "CUSTOMER_CLAIM",
+          createdAt: c.createdAt ? new Date(c.createdAt).toISOString() : null
+        }))
       });
     } catch (err) {
       next(err);

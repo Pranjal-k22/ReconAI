@@ -1371,3 +1371,47 @@ README.md                                        |   13 +
   - `docs/reconai-2/DOCUMENTATION_CONSISTENCY_AUDIT.md`: Complete 58-file inventory table, status mappings, 21 resolved inconsistencies, open technical gaps, and evidence citations.
   - `docs/reconai-2/CURRENT_PROJECT_STATUS.md`: Authoritative release readiness, completed, partial, unimplemented, and deferred capabilities.
   - `docs/reconai-2/OPEN_DECISIONS_AND_TECHNICAL_DEBT.md`: Central register of owner decisions (OD-01 to OD-05) and technical gaps (GAP-01 to GAP-07).
+
+### Entry 24: Stage 7 — Documentation Claim Audit Corrections (Part A) & Customer Claim Intake (Part B)
+
+- **Part A Deliverables & Verification (Commit 877ef96)**:
+  - Audited dirty-tree provenance of commit `dc73af9` with transcript and file metadata tracing.
+  - Built and committed `server/scripts/auditDocClaims.js` evaluating file paths, route introspections, hex SHAs, test counts, stage names, verification buzzwords, and feature existence across 30 documents. Resolved all WRONG and UNSUPPORTED claims.
+  - Added regression test for `EvidenceRecord.js` and `seedWorkspaceDemo.js` redaction shape on GET `/api/payment-cases/:caseId/classification`.
+  - Committed reproducible browser verification script `server/scripts/verifyWorkspaceBrowser.js` executing login and UI inspection across ADMIN, SHOP A, SHOP B, AUDITOR A, and CUSTOMER roles.
+  - Audited HTTP security headers (Helmet, CSP, CORS) and documented security posture.
+  - Official Part A gates passed: 789 unit tests (79 files), 165 integration tests (15 files), 26 client tests (5 files), 120/120 benchmark scenarios (100%), 7/7 monitoring smoke gates, client build (27.6s, 0 errors).
+
+- **Part B Deliverables & Verification (Customer Claim Intake as Unverified Evidence)**:
+  - **Core Principle**: A customer claim is strictly a record of what a customer stated. It never proves a debit, never changes order/capture/refund/settlement state, never creates refund eligibility, and never selects classification by text.
+  - **Domain Model (`CustomerClaim.js`)**:
+    - Created append-only Mongoose model with `claimId`, `tenantId`, `customerId`, `claimType`, `referenceType`, `referenceValue`, `claimedAmountPaise`, `description`, `contentHash`, `idempotencyKey`, `linkStatus`, `linkedCaseId`, `verified: false`.
+    - Sanitizes descriptions (stripping control chars, redacting 13-19 digit card numbers, emails, and phone numbers, length-capped to 1000).
+    - Blocks mutation and deletion via pre-save/pre-update/pre-delete middleware.
+    - Verified with unit suite `server/tests/models/customerClaim.test.js` (13 tests).
+  - **Routes & API Layer (`claimRoutes.js`, `paymentCaseRoutes.js`, `app.js`)**:
+    - `POST /api/claims`: Restricted to `CUSTOMER` role. Requires `Idempotency-Key` header (10..64 chars). Strict Zod payload validation (`claimType`, `reference`, optional `claimedAmountPaise`, `description`). Replays idempotent requests with 200, rejects conflict with 409. Zero existence oracle: unlinked and linked references return identical response `{ claimId, receivedAt, status: "RECEIVED" }`. Writes fail-closed audit intent (`CLAIM_SUBMISSION_REQUESTED` and `CLAIM_SUBMITTED`).
+    - `GET /api/claims`: Returns own claims for authenticated customer with safe templated status.
+    - `GET /api/payment-cases/:caseId/claims`: Operator endpoint for `ADMIN`, `SHOP` (own tenant), and `AUDITOR` (own tenant). Returns unverified claims array labeled `claim, unverified` and `verified: false`.
+  - **Classifier Context Wiring (`classifierContextBuilder.js`)**:
+    - Queries authoritative `CustomerClaim` documents for the case.
+    - Populates `customerClaims` with existence and `claimType` only; sets `runtimeContext.customerDebitClaim` and `runtimeContext.fraudAllegation`.
+    - Routes claim text strictly to `inertClaims`.
+  - **Policy & Dispatch Closed Suite (`customerClaimPolicyClosed.integration.test.js`)**:
+    - Ran with sandbox writes enabled (`RAZORPAY_SANDBOX_WRITES_ENABLED=true`) and active two-person approved `PolicyConfigVersion`.
+    - Proved Claim + FAILED payment returns `REJECTED_BY_POLICY` / `INSUFFICIENT_EVIDENCE` with 0 provider calls.
+    - Proved Claim + CAPTURED payment on pending order classifies as normal status mismatch (`CASE_6_PAID_GATEWAY_UNPAID_ORDER`) and simulates local ledger repair, NOT refund.
+    - Proved Claim + CAPTURED payment already refunded returns `REJECTED_BY_POLICY` with 0 provider calls.
+    - Proved `PolicyDecision` never contains customer claim as an active decision input.
+  - **AI Pipeline Isolation Suite (`customerClaimAiBoundary.test.js`)**:
+    - Verified evidence assembler outputs `label: "customer claim (unverified)"` and `verified: false`.
+    - Proved hostile injection text cannot make planner output `isExecutable: true`, cannot alter classification, and cannot flip policy eligibility.
+    - Proved graceful degradation when Gemini mock errors or returns non-JSON garbage.
+  - **Client UI & Tests (`MyClaimsPage.jsx`, `CaseDetailPage.jsx`, `MyClaimsPage.test.jsx`)**:
+    - Created `/my-claims` page for `CUSTOMER` role with form, live 1000-char counter, `parseInrToPaise` helper, and prominent unverified evidence disclaimer box.
+    - Added read-only `Customer claims (unverified)` panel to `CaseDetailPage.jsx` for operators with pill `claim, unverified` and disclaimer box.
+    - Verified with client Vitest suite `MyClaimsPage.test.jsx` (5 tests) and updated client suite (35 tests passing).
+  - **Strict Reachability Promotion (`computeStrictReachability.js`)**:
+    - Cases 2, 3, and 29 promoted from `NEEDS_CLAIM_INTAKE` to `PROVEN_END_TO_END` via production writer `server/src/routes/claimRoutes.js:313`.
+    - Total reachability breakdown: 11 PROVEN_END_TO_END, 6 SEEDABLE_ONLY, 5 INGESTION_TIME, 0 NEEDS_CLAIM_INTAKE, 6 RESERVED, 2 NO_SOURCE. Output written to `evidence/stage7/08-strict-reachability.json` and `.txt`.
+    - Documented `ADR-16` in `docs/reconai-2/ARCHITECTURE_DECISIONS.md`.

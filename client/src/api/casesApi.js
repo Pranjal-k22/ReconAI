@@ -63,6 +63,30 @@ export function mapApiError(err) {
       retryable: false
     };
   }
+  if (status === 409) {
+    return {
+      type: "CONFLICT",
+      message: err.response?.data?.message || err.response?.data?.error?.message || "Conflict: idempotency key has already been used.",
+      status: 409,
+      retryable: false
+    };
+  }
+  if (status === 429) {
+    return {
+      type: "RATE_LIMITED",
+      message: err.response?.data?.message || err.response?.data?.error?.message || "Rate limit reached. Please wait before submitting another claim.",
+      status: 429,
+      retryable: false
+    };
+  }
+  if (status === 400) {
+    return {
+      type: "BAD_REQUEST",
+      message: err.response?.data?.message || err.response?.data?.error?.message || "Invalid claim request payload.",
+      status: 400,
+      retryable: false
+    };
+  }
   if (status === 503 || !err.response || err.code === "ECONNABORTED" || err.message?.includes("Network Error")) {
     return {
       type: "RETRYABLE",
@@ -151,4 +175,30 @@ export async function fetchCasePolicyDecisions(caseId) {
 export async function fetchCaseProviderOperations(caseId) {
   if (!caseId) throw new Error("caseId is required");
   return getWithBoundedRetry(`/payment-cases/${encodeURIComponent(caseId)}/provider/operations`);
+}
+
+/**
+ * Customer Claim API Endpoints (Stage 7b)
+ */
+
+export async function submitCustomerClaim(payload, idempotencyKey) {
+  try {
+    const headers = {};
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
+    const response = await casesAxiosInstance.post("/claims", payload, { headers });
+    return response.data;
+  } catch (err) {
+    throw mapApiError(err);
+  }
+}
+
+export async function fetchMyClaims() {
+  return getWithBoundedRetry("/claims");
+}
+
+export async function fetchCaseClaims(caseId) {
+  if (!caseId) throw new Error("caseId is required");
+  return getWithBoundedRetry(`/payment-cases/${encodeURIComponent(caseId)}/claims`);
 }

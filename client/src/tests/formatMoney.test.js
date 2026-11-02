@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatPaiseToInr } from "../utils/formatMoney.js";
+import { formatPaiseToInr, parseInrToPaise } from "../utils/formatMoney.js";
 
 describe("Paise to INR Money Formatter Invariants", () => {
   it("formats zero paise as ₹0.00", () => {
@@ -40,5 +40,32 @@ describe("Paise to INR Money Formatter Invariants", () => {
     expect(formatPaiseToInr(10001)).toBe("₹100.01");
     expect(formatPaiseToInr(10002)).toBe("₹100.02");
     expect(formatPaiseToInr(10003)).toBe("₹100.03");
+  });
+
+  describe("parseInrToPaise Invariants", () => {
+    it("returns null for empty string, null, or undefined", () => {
+      expect(parseInrToPaise("")).toBeNull();
+      expect(parseInrToPaise(null)).toBeNull();
+      expect(parseInrToPaise(undefined)).toBeNull();
+    });
+
+    it("parses integer INR to paise", () => {
+      expect(parseInrToPaise("100")).toBe(10000);
+      expect(parseInrToPaise(250)).toBe(25000);
+      expect(parseInrToPaise("0")).toBe(0);
+    });
+
+    it("parses decimal INR to paise accurately", () => {
+      expect(parseInrToPaise("100.50")).toBe(10050);
+      expect(parseInrToPaise("100.5")).toBe(10050);
+      expect(parseInrToPaise("0.05")).toBe(5);
+      expect(parseInrToPaise("0.99")).toBe(99);
+    });
+
+    it("rejects negative numbers, non-numeric strings, and >10 decimal places", () => {
+      expect(() => parseInrToPaise("-50")).toThrow();
+      expect(() => parseInrToPaise("abc")).toThrow();
+      expect(() => parseInrToPaise("10.12345678901")).toThrow("Amount cannot exceed 10 decimal places");
+    });
   });
 });

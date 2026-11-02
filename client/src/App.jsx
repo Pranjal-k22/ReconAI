@@ -18,6 +18,8 @@ import RazorpaySyncPage from "./pages/RazorpaySyncPage";
 import EvaluationPage from "./pages/EvaluationPage";
 import CasesListPage from "./pages/CasesListPage";
 import CaseDetailPage from "./pages/CaseDetailPage";
+import MyClaimsPage from "./pages/MyClaimsPage";
+import { RoleGuard } from "./components/common/RoleGuard";
 import NotFoundPage from "./pages/NotFoundPage";
 
 export default function App() {
@@ -44,6 +46,14 @@ export default function App() {
                 <Route path="import" element={<ImportDataPage />} />
                 <Route path="razorpay" element={<RazorpaySyncPage />} />
                 <Route path="evaluation" element={<EvaluationPage />} />
+                <Route
+                  path="my-claims"
+                  element={
+                    <RoleGuard allowedRoles={["CUSTOMER"]}>
+                      <MyClaimsPage />
+                    </RoleGuard>
+                  }
+                />
               </Route>
 
               {/* Direct convenience routes for existing bookmarks */}
@@ -60,6 +70,14 @@ export default function App() {
                 <Route path="/import" element={<ImportDataPage />} />
                 <Route path="/razorpay" element={<RazorpaySyncPage />} />
                 <Route path="/evaluation" element={<EvaluationPage />} />
+                <Route
+                  path="/my-claims"
+                  element={
+                    <RoleGuard allowedRoles={["CUSTOMER"]}>
+                      <MyClaimsPage />
+                    </RoleGuard>
+                  }
+                />
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>

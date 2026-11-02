@@ -9,6 +9,7 @@ import { PaymentLifecycleEvent } from "../src/models/PaymentLifecycleEvent.js";
 import { AiInvestigationRun } from "../src/models/AiInvestigationRun.js";
 import { PolicyDecision } from "../src/models/PolicyDecision.js";
 import { ProviderOperation } from "../src/models/ProviderOperation.js";
+import { CustomerClaim } from "../src/models/CustomerClaim.js";
 import { classifyCase } from "../src/services/classification/classificationService.js";
 import { validateTestDatabaseUri } from "../tests/helpers/testDbGuard.js";
 
@@ -122,7 +123,8 @@ export async function seedWorkspaceDemo() {
     PaymentLifecycleEvent.deleteMany({ tenantId: { $in: [TENANT_A, TENANT_B] } }),
     AiInvestigationRun.deleteMany({ tenantId: { $in: [TENANT_A, TENANT_B] } }),
     PolicyDecision.deleteMany({ tenantId: { $in: [TENANT_A, TENANT_B] } }),
-    ProviderOperation.deleteMany({ tenantId: { $in: [TENANT_A, TENANT_B] } })
+    ProviderOperation.deleteMany({ tenantId: { $in: [TENANT_A, TENANT_B] } }),
+    CustomerClaim.collection.deleteMany({ tenantId: { $in: [TENANT_A, TENANT_B] } })
   ]);
 
   // Case 1: Case 22 (held, late capture on a cancelled order)
@@ -150,6 +152,7 @@ export async function seedWorkspaceDemo() {
   await GatewayPayment.create({
     gatewayPaymentId: "pay_demo_22",
     tenantId: TENANT_A,
+    customerId: "cust_demo_a",
     amountPaise: 150000,
     currency: "INR",
     status: "CAPTURED",
@@ -160,6 +163,7 @@ export async function seedWorkspaceDemo() {
   await MerchantOrder.create({
     merchantOrderId: "order_demo_22",
     tenantId: TENANT_A,
+    customerId: "cust_demo_a",
     amountPaise: 150000,
     currency: "INR",
     status: "CANCELLED",

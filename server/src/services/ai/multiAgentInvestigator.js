@@ -5,6 +5,7 @@ import { GatewayPayment } from "../../models/GatewayPayment.js";
 import { MerchantOrder } from "../../models/MerchantOrder.js";
 import { EvidenceRecord } from "../../models/EvidenceRecord.js";
 import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
+import { CustomerClaim } from "../../models/CustomerClaim.js";
 import { createAuditEvent } from "../audit/auditService.js";
 import { isGeminiConfigured, executeGeminiInvestigation } from "./geminiService.js";
 import {
@@ -156,9 +157,20 @@ export async function runMultiAgentInvestigation({
     caseDoc.gatewayPaymentId ? PaymentLifecycleEvent.find({ tenantId, gatewayPaymentId: caseDoc.gatewayPaymentId }).lean() : []
   ]);
 
-  // Extract customer claims recorded in case
+  // Extract customer claims recorded in CustomerClaim or caseDoc
+  const persistedClaims = await CustomerClaim.find({ tenantId, linkedCaseId: caseId }).lean();
   const customerClaims = [];
-  if (caseDoc.customerDebitStatus && caseDoc.customerDebitStatus !== "DEBIT_NONE") {
+  if (persistedClaims && persistedClaims.length > 0) {
+    for (const pc of persistedClaims) {
+      customerClaims.push({
+        claimId: pc.claimId,
+        customerId: pc.customerId,
+        claimType: pc.claimType,
+        statement: sanitizeEvidenceText(pc.description || "Customer claim", 500),
+        receivedAt: pc.createdAt
+      });
+    }
+  } else if (caseDoc.customerDebitStatus && caseDoc.customerDebitStatus !== "DEBIT_NONE") {
     customerClaims.push({
       claimId: `CLM-${caseDoc.caseId}`,
       customerId: caseDoc.customerId,

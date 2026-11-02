@@ -96,7 +96,10 @@ const auditLogSchema = new mongoose.Schema(
         "POLICY_CONFIG_ACTIVATED",
         "POLICY_CONFIG_DEACTIVATION_REQUESTED",
         "POLICY_CONFIG_DEACTIVATED",
-        "POLICY_CONFIG_CHANGE_BLOCKED"
+        "POLICY_CONFIG_CHANGE_BLOCKED",
+        "CLAIM_SUBMISSION_REQUESTED",
+        "CLAIM_SUBMITTED",
+        "CLAIM_SUBMISSION_FAILED"
       ],
       index: true
     },

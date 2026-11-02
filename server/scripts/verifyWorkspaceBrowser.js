@@ -114,7 +114,7 @@ async function main() {
 
   // 5. Launch Chrome Headless with CDP
   console.log("Step 5: Launching Chrome Headless with CDP...");
-  const tmpProfile = path.resolve("C:\\Users\\pc\\AppData\\Local\\Temp\\chrome-reconai-stage7-profile");
+  const tmpProfile = path.resolve(`C:\\Users\\pc\\AppData\\Local\\Temp\\chrome-reconai-stage7-profile-${Date.now()}`);
   if (!fs.existsSync(tmpProfile)) {
     fs.mkdirSync(tmpProfile, { recursive: true });
   }
@@ -122,6 +122,7 @@ async function main() {
   const chromeProc = spawn(CHROME_PATH, [
     "--headless=new",
     `--remote-debugging-port=${CDP_PORT}`,
+    "--remote-debugging-address=127.0.0.1",
     `--user-data-dir=${tmpProfile}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -129,10 +130,24 @@ async function main() {
     "--window-size=1280,900"
   ]);
 
-  await sleep(1500);
+  let versionData = null;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await sleep(500);
+    try {
+      const versionRes = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+      if (versionRes.ok) {
+        versionData = await versionRes.json();
+        break;
+      }
+    } catch (e) {
+      // waiting for chrome cdp to be ready
+    }
+  }
 
-  const versionRes = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
-  const versionData = await versionRes.json();
+  if (!versionData || !versionData.webSocketDebuggerUrl) {
+    throw new Error(`Failed to connect to Chrome CDP at http://127.0.0.1:${CDP_PORT}/json/version`);
+  }
+
   const browserWs = new WebSocket(versionData.webSocketDebuggerUrl);
   await new Promise((resolve) => browserWs.addEventListener("open", resolve));
 
@@ -216,14 +231,27 @@ async function main() {
     return res.result?.value;
   }
 
+  async function waitForSelector(selector, timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const found = await evaluateInPage(`!!document.querySelector('${selector}')`);
+      if (found) return true;
+      await sleep(300);
+    }
+    return false;
+  }
+
   const roleCaseLists = {};
   let hostileScriptFindings = null;
+  let customerClaimResult = null;
+  let shopBCaseAccess = null;
+  let adminClaimsPanelFindings = null;
 
   try {
     // Pre-warm Vite page
     console.log("Pre-warming Vite dev page...");
     await pageSend("Page.navigate", { url: "http://localhost:5173/cases" });
-    await sleep(3500);
+    await sleep(5000);
 
     // 6. Drive UI for each role
     console.log("Step 6: Driving UI for all roles...");
@@ -231,6 +259,7 @@ async function main() {
     // ADMIN - Cases List
     console.log("- Driving ADMIN cases list...");
     await setTokenAndNavigate("http://localhost:5173/cases", logins.admin.token);
+    await waitForSelector("tbody tr", 8000);
     roleCaseLists.ADMIN = await evaluateInPage(`
       Array.from(document.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim()).filter(Boolean)
     `);
@@ -239,6 +268,7 @@ async function main() {
     // ADMIN - Safe Hold Queue
     console.log("- Driving ADMIN safe-hold queue view...");
     await setTokenAndNavigate("http://localhost:5173/cases?safeHold=true", logins.admin.token);
+    await waitForSelector("tbody tr", 8000);
     roleCaseLists.ADMIN_SAFE_HOLD = await evaluateInPage(`
       Array.from(document.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim()).filter(Boolean)
     `);
@@ -247,11 +277,13 @@ async function main() {
     // ADMIN - Case 22 Detail
     console.log("- Driving ADMIN Case 22 detail view...");
     await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-22", logins.admin.token);
+    await waitForSelector("h1", 8000);
     await takeScreenshot("screenshot-07-case-22-detail.png");
 
     // ADMIN - Hostile Text Detail
     console.log("- Driving ADMIN Hostile Text Case detail view...");
     await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-HOSTILE", logins.admin.token);
+    await waitForSelector("h1", 8000);
     hostileScriptFindings = await evaluateInPage(`
       (() => {
         const container = document.querySelector('main') || document.body;
@@ -270,6 +302,7 @@ async function main() {
     // SHOP A - Cases List
     console.log("- Driving SHOP A cases list...");
     await setTokenAndNavigate("http://localhost:5173/cases", logins.shopA.token);
+    await waitForSelector("tbody tr", 8000);
     roleCaseLists.SHOP_A = await evaluateInPage(`
       Array.from(document.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim()).filter(Boolean)
     `);
@@ -278,11 +311,13 @@ async function main() {
     // SHOP A - Cross-tenant Case (CASE-DEMO-TENANT-B) -> Expect 404
     console.log("- Driving SHOP A cross-tenant 404 view...");
     await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-TENANT-B", logins.shopA.token);
+    await sleep(2000);
     await takeScreenshot("screenshot-06-shop-a-cross-tenant-404.png");
 
     // SHOP B - Cases List
     console.log("- Driving SHOP B cases list...");
     await setTokenAndNavigate("http://localhost:5173/cases", logins.shopB.token);
+    await waitForSelector("tbody tr", 8000);
     roleCaseLists.SHOP_B = await evaluateInPage(`
       Array.from(document.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim()).filter(Boolean)
     `);
@@ -291,6 +326,7 @@ async function main() {
     // AUDITOR A - Cases List
     console.log("- Driving AUDITOR A cases list...");
     await setTokenAndNavigate("http://localhost:5173/cases", logins.auditorA.token);
+    await waitForSelector("tbody tr", 8000);
     roleCaseLists.AUDITOR_A = await evaluateInPage(`
       Array.from(document.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim()).filter(Boolean)
     `);
@@ -299,10 +335,107 @@ async function main() {
     // CUSTOMER - Blocked View
     console.log("- Driving CUSTOMER blocked view...");
     await setTokenAndNavigate("http://localhost:5173/cases", logins.customerA.token);
+    await sleep(2000);
     roleCaseLists.CUSTOMER = await evaluateInPage(`
       Array.from(document.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim()).filter(Boolean)
     `);
     await takeScreenshot("screenshot-05-customer-blocked.png");
+
+    // CUSTOMER - Submits Claim at /my-claims (Stage 7b B6)
+    console.log("- Driving CUSTOMER claim submission at /my-claims...");
+    await setTokenAndNavigate("http://localhost:5173/my-claims", logins.customerA.token);
+    await waitForSelector("#reference", 8000);
+    await takeScreenshot("screenshot-10-customer-my-claims.png");
+
+    // Fill form using native prototype setters for React controlled inputs
+    await evaluateInPage(`
+      (() => {
+        function setNative(el, val, proto) {
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) setter.call(el, val);
+          else el.value = val;
+        }
+
+        const typeSelect = document.querySelector('#claimType');
+        if (typeSelect) {
+          setNative(typeSelect, "DEBIT_NOT_CONFIRMED", window.HTMLSelectElement.prototype);
+          typeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const refInput = document.querySelector('#reference');
+        if (refInput) {
+          setNative(refInput, "order_demo_22", window.HTMLInputElement.prototype);
+          refInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        const amountInput = document.querySelector('#claimedAmountInr');
+        if (amountInput) {
+          setNative(amountInput, "1500.00", window.HTMLInputElement.prototype);
+          amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        const descInput = document.querySelector('#description');
+        if (descInput) {
+          setNative(descInput, "Customer charged 1500 INR but order was marked cancelled", window.HTMLTextAreaElement.prototype);
+          descInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      })()
+    `);
+    await sleep(600);
+
+    // Click submit button
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('[data-testid="submit-claim-button"]');
+        if (btn) btn.click();
+      })()
+    `);
+    await waitForSelector('[data-testid="claim-success-banner"]', 8000);
+    await takeScreenshot("screenshot-11-customer-claim-received.png");
+
+    customerClaimResult = await evaluateInPage(`
+      (() => {
+        const banner = document.querySelector('[data-testid="claim-success-banner"]');
+        const rows = Array.from(document.querySelectorAll('tbody tr')).map(tr => tr.textContent.trim());
+        return {
+          bannerFound: !!banner,
+          bannerText: banner ? banner.textContent : null,
+          tableRows: rows
+        };
+      })()
+    `);
+
+    // SHOP B - Cannot see Tenant A's case or claims (Stage 7b B6)
+    console.log("- Driving SHOP B cannot see Tenant A claims...");
+    await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-22", logins.shopB.token);
+    await sleep(2000);
+    await takeScreenshot("screenshot-12-shop-b-claim-blocked.png");
+    shopBCaseAccess = await evaluateInPage(`
+      (() => {
+        const bodyText = document.body.textContent || "";
+        return {
+          bodyTextSnippet: bodyText.slice(0, 200),
+          isBlocked: bodyText.includes("404") || bodyText.includes("Case not found") || bodyText.includes("not found")
+        };
+      })()
+    `);
+
+    // ADMIN - Views Case 22 with unverified customer claim (Stage 7b B6)
+    console.log("- Driving ADMIN viewing Case 22 with unverified customer claim...");
+    await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-22", logins.admin.token);
+    await waitForSelector('[data-testid="customer-claims-panel"]', 8000);
+    await takeScreenshot("screenshot-13-admin-case-claims-detail.png");
+    adminClaimsPanelFindings = await evaluateInPage(`
+      (() => {
+        const panel = document.querySelector('[data-testid="customer-claims-panel"]');
+        if (!panel) return { panelFound: false };
+        const text = panel.textContent || "";
+        return {
+          panelFound: true,
+          hasUnverifiedPill: text.includes("claim, unverified"),
+          hasReference: text.includes("order_demo_22"),
+          hasDisclaimer: text.includes("Customer statements are unverified evidence"),
+          hasSanitizedDescription: text.includes("Customer charged 1500 INR")
+        };
+      })()
+    `);
 
   } finally {
     pageWs.close();
@@ -322,14 +455,19 @@ async function main() {
   const apiRequests = allNetworkRequests.filter((r) => r.url.includes("/api/"));
   const nonGetRequests = apiRequests.filter((r) => r.method !== "GET");
   const optionsRequests = apiRequests.filter((r) => r.method === "OPTIONS");
-  const postRequests = apiRequests.filter((r) => r.method === "POST");
+  const loginPostRequests = apiRequests.filter((r) => r.method === "POST" && r.url.includes("/api/auth/login"));
+  const claimPostRequests = apiRequests.filter((r) => r.method === "POST" && r.url.includes("/api/claims"));
   const unexpectedNonGet = nonGetRequests.filter(
-    (r) => r.method !== "OPTIONS" && !(r.method === "POST" && r.url.includes("/api/auth/login"))
+    (r) =>
+      r.method !== "OPTIONS" &&
+      !(r.method === "POST" && (r.url.includes("/api/auth/login") || r.url.includes("/api/claims")))
   );
 
   console.log(`Total Network Requests Captured: ${allNetworkRequests.length}`);
   console.log(`API Requests Captured: ${apiRequests.length}`);
-  console.log(`Non-GET API Requests: ${nonGetRequests.length} (OPTIONS: ${optionsRequests.length}, Login POST: ${postRequests.length})`);
+  console.log(
+    `Non-GET API Requests: ${nonGetRequests.length} (OPTIONS: ${optionsRequests.length}, Login POST: ${loginPostRequests.length}, Claim POST: ${claimPostRequests.length})`
+  );
   console.log(`Unexpected Non-GET Requests: ${unexpectedNonGet.length}`);
 
   // 8. Write evidence files
@@ -341,7 +479,8 @@ async function main() {
         totalApiRequests: apiRequests.length,
         nonGetCount: nonGetRequests.length,
         optionsCount: optionsRequests.length,
-        postCount: postRequests.length,
+        loginPostCount: loginPostRequests.length,
+        claimPostCount: claimPostRequests.length,
         unexpectedNonGetCount: unexpectedNonGet.length,
         unexpectedNonGetRequests: unexpectedNonGet,
         requests: allNetworkRequests
@@ -374,15 +513,28 @@ async function main() {
   verificationReport += `- Literal '<script>alert(1)</script>...' in textContent: ${hostileScriptFindings?.containsLiteralStringInTextContent}\n`;
   verificationReport += `- Inert text rendering verdict: VERIFIED (React JSX createTextNode renders hostile string as plain text; zero execution)\n\n`;
 
-  verificationReport += "--- 4. NETWORK REQUEST AUDIT ---\n";
+  verificationReport += "--- 4. CUSTOMER CLAIM INTAKE & CROSS-TENANT ISOLATION (STAGE 7b B6) ---\n";
+  verificationReport += `- Customer Claim Form Submission (/my-claims): ${customerClaimResult?.bannerFound ? "SUCCESS" : "FAILED"}\n`;
+  verificationReport += `  * Success Banner Text: ${customerClaimResult?.bannerText || "None"}\n`;
+  verificationReport += `  * Previous Claims Table Rows Count: ${customerClaimResult?.tableRows?.length || 0}\n`;
+  verificationReport += `- SHOP B Cross-Tenant Access to Case 22 & Claims: ${shopBCaseAccess?.isBlocked ? "BLOCKED (404 Not Found)" : "LEAKED"}\n`;
+  verificationReport += `  * SHOP B View Snippet: ${shopBCaseAccess?.bodyTextSnippet?.replace(/\s+/g, " ") || "None"}\n`;
+  verificationReport += `- ADMIN Case Detail Claims Panel: ${adminClaimsPanelFindings?.panelFound ? "VERIFIED" : "NOT FOUND"}\n`;
+  verificationReport += `  * Contains 'claim, unverified' pill: ${adminClaimsPanelFindings?.hasUnverifiedPill}\n`;
+  verificationReport += `  * Displays reference 'order_demo_22': ${adminClaimsPanelFindings?.hasReference}\n`;
+  verificationReport += `  * Displays unverified evidence disclaimer: ${adminClaimsPanelFindings?.hasDisclaimer}\n`;
+  verificationReport += `  * Renders sanitized description: ${adminClaimsPanelFindings?.hasSanitizedDescription}\n\n`;
+
+  verificationReport += "--- 5. NETWORK REQUEST AUDIT ---\n";
   verificationReport += `- Total Network Requests: ${allNetworkRequests.length}\n`;
   verificationReport += `- API Requests: ${apiRequests.length}\n`;
   verificationReport += `- Non-GET Requests Count: ${nonGetRequests.length}\n`;
   verificationReport += `  * CORS Preflight OPTIONS: ${optionsRequests.length}\n`;
-  verificationReport += `  * Authentication POST /api/auth/login: ${postRequests.length}\n`;
+  verificationReport += `  * Authentication POST /api/auth/login: ${loginPostRequests.length}\n`;
+  verificationReport += `  * Customer Claim POST /api/claims: ${claimPostRequests.length}\n`;
   verificationReport += `  * Unexpected Non-GET Mutations: ${unexpectedNonGet.length}\n`;
   if (unexpectedNonGet.length === 0) {
-    verificationReport += `- Verdict: VERIFIED. Zero mutation routes called during workspace viewing.\n`;
+    verificationReport += `- Verdict: VERIFIED. Zero unexpected mutation routes called during workspace viewing.\n`;
   } else {
     verificationReport += `- Verdict: FINDING DETECTED! Unexpected requests: ${JSON.stringify(unexpectedNonGet)}\n`;
   }

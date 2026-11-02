@@ -144,4 +144,5 @@ const outputText = lines.join("\n");
 console.log(outputText);
 
 fs.writeFileSync("evidence/stage6/05-route-inventory.txt", outputText, "utf8");
-console.log("\nSaved to evidence/stage6/05-route-inventory.txt");
+fs.writeFileSync("evidence/stage7/02-introspected-routes.txt", outputText, "utf8");
+console.log("\nSaved to evidence/stage7/02-introspected-routes.txt");

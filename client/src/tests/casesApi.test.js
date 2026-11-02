@@ -18,9 +18,9 @@ describe("Cases API Read-Only by Construction Invariants", () => {
       }
     }
 
-    // Verify all exported data fetchers start with 'fetch'
+    // Verify all exported data fetchers start with 'fetch' (or customer intake submission 'submitCustomerClaim')
     const fetchers = exportedKeys.filter(
-      (k) => typeof casesApi[k] === "function" && k !== "mapApiError" && k !== "casesAxiosInstance"
+      (k) => typeof casesApi[k] === "function" && k !== "mapApiError" && k !== "casesAxiosInstance" && k !== "submitCustomerClaim"
     );
     expect(fetchers.length).toBeGreaterThanOrEqual(8);
     for (const fnName of fetchers) {

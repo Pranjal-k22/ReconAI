@@ -75,8 +75,9 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 
 | Entity / Resource | Action | `CUSTOMER` | `SHOP` | `ADMIN` | `AUDITOR` | `CUSTOMER_AI` | `SHOP_AI` | `PAYMENT_CONTROLLER` |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Customer Payment Claim** | Create / Submit | ✅ (Own) | ❌ | ✅ | ❌ | ✅ (On behalf) | ❌ | ❌ |
-| **Customer Payment Claim** | View Details | ✅ (Own) | ❌ | ✅ | ✅ | ✅ (Own) | ❌ | ✅ |
+| **Customer Payment Claim (/api/claims)** | Create / Submit (POST) | ✅ (Own) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Customer Payment Claim (/api/claims)** | View Own List (GET) | ✅ (Own) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Case Customer Claims (/api/payment-cases/:caseId/claims)** | View Case Claims (GET) | ❌ | ✅ (Own Tenant) | ✅ | ✅ (Tenant-Scoped) | ❌ | ❌ | ✅ |
 | **Merchant Order** | View Details | ✅ (Own Order) | ✅ (Own Store) | ✅ | ✅ | ✅ (Summary) | ✅ (Own Store) | ✅ |
 | **Merchant Order Ledger** | Update to PAID | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ (Policy Validated) |
 | **Gateway Payment** | View Read-Only | ✅ (Masked Own) | ✅ (Own Store) | ✅ | ✅ | ✅ (Masked Own) | ✅ (Own Store) | ✅ |
@@ -106,6 +107,12 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 > 2. Read endpoints (`GET /api/policy-config`, `GET /api/policy-config/active`) permit `ADMIN` and `AUDITOR` (strictly tenant-scoped to `token.tenantId` unless privileged `GLOBAL_AUDIT` scope is present and audited via `GLOBAL_AUDIT_ACCESSED`).
 > 3. `SHOP`, `CUSTOMER`, and all machine identities/service principals are rejected with HTTP 403 Forbidden. Unauthenticated requests are rejected with HTTP 401 Unauthorized.
 > 4. `PUT`, `PATCH`, `DELETE` are permanently unavailable (HTTP 405 Method Not Allowed).
+
+> **Customer Claim Intake as Unverified Evidence (Stage 7b)**:
+> 1. `POST /api/claims` is restricted strictly to authenticated human `CUSTOMER` principals. Identity (`customerId`, `tenantId`) is sourced exclusively from verified JWT claims. All other roles (`ADMIN`, `SHOP`, `AUDITOR`) and service identities receive HTTP 403 Forbidden.
+> 2. `GET /api/claims` returns strictly own claims for the authenticated customer (`customerId === token.customerId`), with safe templated status.
+> 3. `GET /api/payment-cases/:caseId/claims` is an operator endpoint for `ADMIN`, `SHOP` (scoped to `token.tenantId`), and `AUDITOR` (scoped to `token.tenantId`). Cross-tenant access returns HTTP 404 Not Found. Customers and machine identities receive HTTP 403 Forbidden.
+> 4. Customer claims are append-only and immutable; deletions and updates are prohibited. Claims are unverified evidence only: they never prove debit, never move money, and never alter refund policy eligibility.
 
 
 ---

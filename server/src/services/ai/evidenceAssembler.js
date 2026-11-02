@@ -76,6 +76,7 @@ export function assembleEvidenceCards({
         cardType: "CUSTOMER_CLAIM_RECORD",
         evidenceSource: "CUSTOMER_CLAIM",
         authority: "CUSTOMER_CLAIM",
+        label: "customer claim (unverified)",
         verified: false,
         tenantId,
         caseId,
@@ -84,7 +85,8 @@ export function assembleEvidenceCards({
           claimId,
           customerId: claim.customerId || caseDoc?.customerId || null,
           claimType: claim.claimType || "CUSTOMER_DEBIT_CLAIM",
-          statement: sanitizeEvidenceText(claim.text || claim.statement || "Customer reported payment issue", 500),
+          label: "customer claim (unverified)",
+          statement: sanitizeEvidenceText(claim.statement || claim.description || claim.text || "Customer reported payment issue", 500),
           receivedAt: claim.receivedAt ? new Date(claim.receivedAt).toISOString() : new Date().toISOString()
         }
       });

@@ -67,13 +67,13 @@ A scenario is classified as `PROVEN_END_TO_END` strictly iff an integration test
 
 | Category | Count | Scenarios / Production Writers / Justifications |
 |:---|:---:|:---|
-| **PROVEN_END_TO_END** | 8 | Cases 5, 6, 7, 17, 19, 20, 21, 22. All decisive fields have verified production writers in `server/src`. |
+| **PROVEN_END_TO_END** | 11 | Cases 2, 3, 5, 6, 7, 17, 19, 20, 21, 22, 29. All decisive fields have verified production writers in `server/src` (including `server/src/routes/claimRoutes.js:313` for customer intake). |
 | **SEEDABLE_ONLY** | 6 | Case 8 (`PARTIAL_CAPTURE` — schema fields `amountAuthorizedPaise`/`amountCapturedPaise` have no production ingestion writers), Case 10 (`PARTIAL_REFUND` — no webhook writes partial refund amount), Case 11 (`FULL_REFUND_INITIATED_NOT_COMPLETED` — refund initiation written only via sandbox dispatch `providerDispatchService.js:667`), Case 12 (`FAILED_REFUND` — refund failure written only via sandbox dispatch `providerDispatchService.js:770`), Case 26 (`WORKER_CRASH_ACTION_PENDING` — decisive field `actionLeaseExpiresAt` has no background worker writer), Case 30 (`CHARGEBACK_OR_FORMAL_DISPUTE` — `gatewayPayment.dispute` has no gateway dispute webhook pipeline). |
 | **INGESTION_TIME** | 5 | Case 13 (`server/src/services/webhook/webhookService.js:235`), Case 14 (`server/src/services/webhook/webhookService.js:210`), Case 15 (`server/src/services/webhook/webhookService.js:193`), Case 16 (`server/src/services/webhook/webhookService.js:1022`), Case 28 (`server/src/middleware/authMiddleware.js:230`). Enforced at network/webhook/auth boundaries. |
-| **NEEDS_CLAIM_INTAKE** | 3 | Case 2, Case 3, Case 29 (require authenticated claim intake endpoints not yet implemented). |
+| **NEEDS_CLAIM_INTAKE** | 0 | Customer claim intake implemented in Stage 7b via `POST /api/claims`. |
 | **RESERVED** | 6 | Case 1, Case 4, Case 9, Case 18, Case 23, Case 27 (reserved in classifier/policy domain models). |
 | **NO_SOURCE** | 2 | Case 24, Case 25 (runtime infrastructure faults not stored in persistence records). |
-| **Total** | 30 | Strict production reachable count is strictly **8** (`PROVEN_END_TO_END`). |
+| **Total** | 30 | Strict production reachable count is strictly **11** (`PROVEN_END_TO_END`). |
 
 ---
 
@@ -151,8 +151,8 @@ Below is the per-case reachability analysis generated directly from `evidence/st
 | Case | Scenario ID | Category | Decisive Doc Line | Production Writer (file:line) | One-Line Reachability Reason |
 |---|---|---|---|---|---|
 | 1 | `CASE_1_FRONTEND_TIMEOUT_PAYMENT_SUCCESS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:16` | `NONE` | Requires authenticated client telemetry beacon endpoint with server-verified signature (not yet implemented). |
-| 2 | `CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:32` | `NONE` | Requires customer portal claim intake route (out of scope for Stage 5b). |
-| 3 | `CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:48` | `NONE` | Requires customer portal claim intake route for debit claims on failed payments. |
+| 2 | `CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:32` | `server/src/routes/claimRoutes.js:313 (POST /api/claims, DEBIT_NOT_CONFIRMED)` | Ingested via authenticated customer portal claim intake route (POST /api/claims) when gateway payment is created/pending for >= 60 minutes. |
+| 3 | `CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:48` | `server/src/routes/claimRoutes.js:313 (POST /api/claims, DEBIT_NOT_CONFIRMED)` | Ingested via authenticated customer portal claim intake route (POST /api/claims) when gateway payment is FAILED. |
 | 4 | `CASE_4_LATE_AUTHORIZATION_AFTER_TIMEOUT` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:64` | `NONE` | Requires late-auth timeout correlation worker; reserved in classifier and policy domain models. |
 | 5 | `CASE_5_CAPTURED_PAYMENT_DELAYED_SETTLEMENT` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:80` | `server/src/services/webhook/webhookService.js:1165 (status: CAPTURED)` | Standard webhook ingestion writes CAPTURED; absence of settlements is initial ingestion state within 72h window. |
 | 6 | `CASE_6_PAID_GATEWAY_UNPAID_ORDER` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:96` | `server/src/services/webhook/webhookService.js:1165 (Payment) & server/src/services/reconciliation/normalizationService.js:70 (Order)` | Webhook writes payment capture while order remains in created/pending state in merchant ledger. |
@@ -178,7 +178,7 @@ Below is the per-case reachability analysis generated directly from `evidence/st
 | 26 | `CASE_26_WORKER_CRASH_ACTION_PENDING` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:433` | `NONE (Defined in schema server/src/models/PaymentCase.js:105; zero background worker lease writers in server/src)` | Schema supports lease expiration, but no background worker actively claims/renews action leases in server/src. |
 | 27 | `CASE_27_CONCURRENT_RESOLUTION_ATTEMPTS` | **RESERVED** | `EDGE_CASE_POLICY_MATRIX.md:449` | `NONE` | Concurrent case locking protocol reserved for Stage 6b multi-operator workspace. |
 | 28 | `CASE_28_CROSS_TENANT_ACCESS_ATTEMPT` | **INGESTION_TIME** | `EDGE_CASE_POLICY_MATRIX.md:465` | `server/src/middleware/authMiddleware.js:230` | Enforced at API gateway boundary by auth middleware; returns HTTP 403 before ledger operations. |
-| 29 | `CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT` | **NEEDS_CLAIM_INTAKE** | `EDGE_CASE_POLICY_MATRIX.md:481` | `NONE` | Requires customer fraud report submission route (out of scope for Stage 5b). |
+| 29 | `CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT` | **PROVEN_END_TO_END** | `EDGE_CASE_POLICY_MATRIX.md:481` | `server/src/routes/claimRoutes.js:313 (POST /api/claims, UNAUTHORIZED_PAYMENT)` | Ingested via authenticated customer portal claim intake route (POST /api/claims) with claimType UNAUTHORIZED_PAYMENT; triggers Tier 2 safe hold. |
 | 30 | `CASE_30_CHARGEBACK_OR_FORMAL_DISPUTE` | **SEEDABLE_ONLY** | `EDGE_CASE_POLICY_MATRIX.md:497` | `NONE` | Razorpay dispute webhook ingestion pipeline not yet implemented; representable only via seed. |
 
 ### Production Inactive Cases: Cases 18 & 23

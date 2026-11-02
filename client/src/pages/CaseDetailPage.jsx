@@ -6,7 +6,8 @@ import {
   fetchCaseLifecycleEvents,
   fetchCaseInvestigations,
   fetchCasePolicyDecisions,
-  fetchCaseProviderOperations
+  fetchCaseProviderOperations,
+  fetchCaseClaims
 } from "../api/casesApi";
 import { formatPaiseToInr } from "../utils/formatMoney";
 import { RoleGuard } from "../components/common/RoleGuard";
@@ -37,6 +38,7 @@ export function CaseDetailPage() {
   const [investigations, setInvestigations] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [operations, setOperations] = useState([]);
+  const [claims, setClaims] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -46,13 +48,14 @@ export function CaseDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [caseRes, classRes, eventsRes, invRes, decRes, opsRes] = await Promise.allSettled([
+      const [caseRes, classRes, eventsRes, invRes, decRes, opsRes, claimsRes] = await Promise.allSettled([
         fetchPaymentCaseById(caseId),
         fetchCaseClassification(caseId),
         fetchCaseLifecycleEvents(caseId),
         fetchCaseInvestigations(caseId),
         fetchCasePolicyDecisions(caseId),
-        fetchCaseProviderOperations(caseId)
+        fetchCaseProviderOperations(caseId),
+        fetchCaseClaims(caseId)
       ]);
 
       if (caseRes.status === "fulfilled") {
@@ -79,6 +82,10 @@ export function CaseDetailPage() {
 
       if (opsRes.status === "fulfilled") {
         setOperations(Array.isArray(opsRes.value?.data) ? opsRes.value.data : []);
+      }
+
+      if (claimsRes.status === "fulfilled") {
+        setClaims(Array.isArray(claimsRes.value?.data) ? claimsRes.value.data : []);
       }
     } catch (err) {
       setError(err);
@@ -704,6 +711,61 @@ export function CaseDetailPage() {
                     <div>Amount: <span className="font-semibold text-slate-800">{formatPaiseToInr(op.amountPaise || 0)}</span></div>
                     <div>Idempotency: <span className="font-mono text-[10px]">{op.idempotencyKey?.slice(0, 12)}...</span></div>
                   </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* SECTION 8: CUSTOMER CLAIMS PANEL (Strictly read-only unverified evidence) */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-5" data-testid="customer-claims-panel">
+          <div className="flex items-center space-x-2 pb-3 mb-4 border-b border-slate-100">
+            <FileText className="w-4 h-4 text-indigo-600" />
+            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+              Customer claims (unverified) ({claims.length})
+            </h2>
+          </div>
+
+          {/* Prominent Disclaimer Box */}
+          <div className="bg-amber-50 border-l-4 border-amber-400 p-3 rounded-r-md text-amber-800 text-xs mb-4 flex items-start gap-2">
+            <ShieldAlert className="w-4 h-4 flex-shrink-0 text-amber-600 mt-0.5" />
+            <div>
+              Customer statements are unverified evidence. They do not prove debit, cannot move money, and do not alter refund policy eligibility.
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {claims.length === 0 ? (
+              <p className="text-xs text-slate-400 italic">No customer claims recorded for this case.</p>
+            ) : (
+              claims.map((claim) => (
+                <div
+                  key={claim.claimId}
+                  className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-slate-800">{claim.claimId}</span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        claim, unverified
+                      </span>
+                    </div>
+                    <span className="text-slate-400 text-[11px]">
+                      {claim.receivedAt ? new Date(claim.receivedAt).toLocaleString("en-IN") : "-"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600">
+                    <div>Type: <span className="font-semibold text-slate-800">{claim.claimType}</span></div>
+                    <div>Reference: <span className="font-mono text-slate-800">{claim.referenceValue || claim.reference}</span></div>
+                  </div>
+
+                  {claim.description && (
+                    <div className="text-[11px] text-slate-700 bg-white p-2 rounded border border-slate-100">
+                      <span className="font-semibold text-slate-600">Description: </span>
+                      {claim.description}
+                    </div>
+                  )}
                 </div>
               ))
             )}

@@ -7,6 +7,7 @@ import { SettlementRecord } from "../../models/SettlementRecord.js";
 import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
 import { PaymentMonitoringTask } from "../../models/PaymentMonitoringTask.js";
 import { OrchestrationTask } from "../../models/OrchestrationTask.js";
+import { CustomerClaim } from "../../models/CustomerClaim.js";
 import { sanitizeClaimText, classifyPaymentScenario } from "./evidenceClassifier.js";
 import { AppError } from "../../utils/AppError.js";
 
@@ -261,6 +262,11 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     caseId: cleanCaseId
   }).lean();
 
+  const customerClaimsQuery = CustomerClaim.find({
+    tenantId: cleanTenantId,
+    linkedCaseId: cleanCaseId
+  }).lean();
+
   const [
     gatewayPayment,
     merchantOrder,
@@ -269,7 +275,8 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     settlementRecords,
     lifecycleEvents,
     monitoringTasks,
-    orchestrationTasks
+    orchestrationTasks,
+    persistedCustomerClaims
   ] = await Promise.all([
     paymentQuery,
     orderQuery,
@@ -278,7 +285,8 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     settlementRecordsQuery,
     lifecycleEventsQuery,
     monitoringTasksQuery,
-    orchestrationTasksQuery
+    orchestrationTasksQuery,
+    customerClaimsQuery
   ]);
 
   // 3. Inert Claims Extraction: Free text is strictly treated as inert claims, NEVER decision flags
@@ -310,7 +318,30 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     });
   }
 
-  if (
+  // Populate claims from authoritative CustomerClaim documents (existence and claimType ONLY; text to inertClaims)
+  if (Array.isArray(persistedCustomerClaims) && persistedCustomerClaims.length > 0) {
+    for (const claimDoc of persistedCustomerClaims) {
+      inertClaims.push({
+        claimId: claimDoc.claimId,
+        claimType: claimDoc.claimType,
+        statement: sanitizeClaimText(claimDoc.description || ""),
+        source: "CUSTOMER_PORTAL",
+        authority: "CUSTOMER_CLAIM",
+        receivedAt: claimDoc.createdAt || new Date(),
+        verified: false
+      });
+
+      customerClaims.push({
+        claimId: claimDoc.claimId,
+        claimType: claimDoc.claimType,
+        fraudAllegation: claimDoc.claimType === "UNAUTHORIZED_PAYMENT",
+        source: "CUSTOMER_PORTAL",
+        authority: "CUSTOMER_CLAIM",
+        receivedAt: claimDoc.createdAt || new Date(),
+        verified: false
+      });
+    }
+  } else if (
     caseDoc.customerDebitStatus === "DEBIT_REPORTED" ||
     caseDoc.customerDebitStatus === "DEBIT_VERIFIED" ||
     caseDoc.customerDebitStatus === "DEBIT_FAILED"
@@ -422,7 +453,9 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     source: isPollEvent ? "GATEWAY_API_POLL" : null,
     workerCrashedLeaseExpired: isLeaseExpired,
     leaseRenewalCount,
-    formalDispute
+    formalDispute,
+    customerDebitClaim: customerClaims.some((c) => c.claimType === "DEBIT_NOT_CONFIRMED" || c.claimType === "CUSTOMER_DEBIT_CLAIM"),
+    fraudAllegation: customerClaims.some((c) => c.claimType === "UNAUTHORIZED_PAYMENT" || c.claimType === "FRAUD_CLAIM" || c.fraudAllegation === true)
   };
 
   // 5. Build Provenance Record Mapping
@@ -435,7 +468,8 @@ export async function buildClassifierContext({ tenantId, caseId }) {
     settlementRecords: (settlementRecords || []).map((s) => ({ collection: "settlementrecords", documentId: String(s._id) })),
     lifecycleEvents: (lifecycleEvents || []).map((e) => ({ collection: "paymentlifecycleevents", documentId: String(e._id) })),
     monitoringTasks: (monitoringTasks || []).map((t) => ({ collection: "paymentmonitoringtasks", documentId: String(t._id) })),
-    orchestrationTasks: (orchestrationTasks || []).map((t) => ({ collection: "orchestrationtasks", documentId: String(t._id) }))
+    orchestrationTasks: (orchestrationTasks || []).map((t) => ({ collection: "orchestrationtasks", documentId: String(t._id) })),
+    customerClaims: (persistedCustomerClaims || []).map((c) => ({ collection: "customerclaims", documentId: String(c._id) }))
   };
 
   // 6. Assemble Full Classification Context Package

@@ -15,19 +15,19 @@ export const SCENARIOS = [
   {
     caseNumber: 2,
     scenarioId: "CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING",
-    category: "NEEDS_CLAIM_INTAKE",
-    decisiveFields: ["customerClaims[].claimType === 'CUSTOMER_DEBIT_CLAIM'", "pendingMinutes >= 60"],
-    productionWriter: "NONE",
-    reason: "Requires customer portal claim intake route (out of scope for Stage 5).",
+    category: "PROVEN_END_TO_END",
+    decisiveFields: ["customerClaims[].claimType === 'DEBIT_NOT_CONFIRMED'", "pendingMinutes >= 60"],
+    productionWriter: "server/src/routes/claimRoutes.js:313 (POST /api/claims, DEBIT_NOT_CONFIRMED)",
+    reason: "Ingested via authenticated customer portal claim intake route (POST /api/claims) when gateway payment is created/pending for >= 60 minutes.",
     docLine: "EDGE_CASE_POLICY_MATRIX.md:32"
   },
   {
     caseNumber: 3,
     scenarioId: "CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED",
-    category: "NEEDS_CLAIM_INTAKE",
-    decisiveFields: ["customerClaims[].claimType === 'CUSTOMER_DEBIT_CLAIM'", "gatewayPayment.status === 'FAILED'"],
-    productionWriter: "NONE",
-    reason: "Requires customer portal claim intake route for debit claims on failed payments.",
+    category: "PROVEN_END_TO_END",
+    decisiveFields: ["customerClaims[].claimType === 'DEBIT_NOT_CONFIRMED'", "gatewayPayment.status === 'FAILED'"],
+    productionWriter: "server/src/routes/claimRoutes.js:313 (POST /api/claims, DEBIT_NOT_CONFIRMED)",
+    reason: "Ingested via authenticated customer portal claim intake route (POST /api/claims) when gateway payment is FAILED.",
     docLine: "EDGE_CASE_POLICY_MATRIX.md:48"
   },
   {
@@ -258,10 +258,10 @@ export const SCENARIOS = [
   {
     caseNumber: 29,
     scenarioId: "CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT",
-    category: "NEEDS_CLAIM_INTAKE",
-    decisiveFields: ["customerClaims[].text matching FRAUD_KEYWORDS_REGEX"],
-    productionWriter: "NONE",
-    reason: "Requires customer fraud report submission route (out of scope for Stage 5).",
+    category: "PROVEN_END_TO_END",
+    decisiveFields: ["customerClaims[].claimType === 'UNAUTHORIZED_PAYMENT'"],
+    productionWriter: "server/src/routes/claimRoutes.js:313 (POST /api/claims, UNAUTHORIZED_PAYMENT)",
+    reason: "Ingested via authenticated customer portal claim intake route (POST /api/claims) with claimType UNAUTHORIZED_PAYMENT; triggers Tier 2 safe hold.",
     docLine: "EDGE_CASE_POLICY_MATRIX.md:481"
   },
   {
@@ -308,7 +308,15 @@ const jsonOutput = {
   scenarios: SCENARIOS
 };
 
-fs.writeFileSync(path.join(repoRoot, "evidence/stage5_6/05-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
+const stage7Dir = path.join(repoRoot, "evidence/stage7");
+if (!fs.existsSync(stage7Dir)) {
+  fs.mkdirSync(stage7Dir, { recursive: true });
+}
+
+fs.writeFileSync(path.join(stage7Dir, "08-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
+if (fs.existsSync(path.join(repoRoot, "evidence/stage5_6"))) {
+  fs.writeFileSync(path.join(repoRoot, "evidence/stage5_6/05-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
+}
 
 const textLines = [
   "=== RECONAI 2.0: STRICT PRODUCTION REACHABILITY AUDIT ===",
@@ -334,6 +342,9 @@ const textLines = [
   })
 ];
 
-fs.writeFileSync(path.join(repoRoot, "evidence/stage5_6/05-strict-reachability.txt"), textLines.join("\n"), "utf8");
+fs.writeFileSync(path.join(stage7Dir, "08-strict-reachability.txt"), textLines.join("\n"), "utf8");
+if (fs.existsSync(path.join(repoRoot, "evidence/stage5_6"))) {
+  fs.writeFileSync(path.join(repoRoot, "evidence/stage5_6/05-strict-reachability.txt"), textLines.join("\n"), "utf8");
+}
 console.log(textLines.slice(0, 15).join("\n"));
-console.log(`\nGenerated 05-strict-reachability.json and .txt successfully.`);
+console.log(`\nGenerated 08-strict-reachability.json and .txt successfully.`);
