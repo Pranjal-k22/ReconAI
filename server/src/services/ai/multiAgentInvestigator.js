@@ -6,7 +6,7 @@ import { MerchantOrder } from "../../models/MerchantOrder.js";
 import { EvidenceRecord } from "../../models/EvidenceRecord.js";
 import { PaymentLifecycleEvent } from "../../models/PaymentLifecycleEvent.js";
 import { CustomerClaim } from "../../models/CustomerClaim.js";
-import { createAuditEvent } from "../audit/auditService.js";
+import { createAuditEvent, AuditUnavailableError } from "../audit/auditService.js";
 import { isGeminiConfigured, executeGeminiInvestigation } from "./geminiService.js";
 import {
   assembleEvidenceCards,
@@ -353,22 +353,34 @@ export async function runMultiAgentInvestigation({
     }
   });
 
-  // 10. Audit log entry
-  await createAuditEvent({
-    actorType: "SYSTEM",
-    actorId: actorRole,
-    action: "AI_INVESTIGATION_COMPLETED",
-    entityType: "AiInvestigationRun",
-    entityId: investigationId,
-    metadata: {
-      tenantId,
-      caseId,
-      status: overallStatus,
-      durationMs,
-      suggestedNextStep: step4.output.suggestedNextStep,
-      isExecutable: false
+  // 10. Audit log entry (fail closed: failure rolls back investigation run and throws 503)
+  try {
+    await createAuditEvent({
+      actorType: "SYSTEM",
+      actorId: actorRole,
+      action: "AI_INVESTIGATION_COMPLETED",
+      entityType: "AiInvestigationRun",
+      entityId: investigationId,
+      metadata: {
+        tenantId,
+        caseId,
+        status: overallStatus,
+        durationMs,
+        suggestedNextStep: step4.output.suggestedNextStep,
+        isExecutable: false
+      }
+    });
+  } catch (auditErr) {
+    try {
+      await AiInvestigationRun.deleteOne({ _id: runDoc._id });
+    } catch (delErr) {
+      logger.error({ err: delErr.message }, "Failed to delete orphaned AiInvestigationRun after audit failure");
     }
-  }).catch(() => {});
+    if (auditErr instanceof AuditUnavailableError) {
+      throw auditErr;
+    }
+    throw new AuditUnavailableError(`Audit logging failed for investigation: ${auditErr.message}`, auditErr);
+  }
 
   return runDoc;
 }

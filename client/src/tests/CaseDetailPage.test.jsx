@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { CaseDetailPage } from "../pages/CaseDetailPage.jsx";
 import * as casesApi from "../api/casesApi.js";
@@ -198,5 +198,270 @@ describe("CaseDetailPage Client Component Invariants", () => {
     // Verify "Advisory only" badges
     const advisoryBadges = screen.getAllByText("Advisory only");
     expect(advisoryBadges.length).toBe(4);
+  });
+
+  it("admin action buttons are visible strictly to ADMIN; completely absent for SHOP, AUDITOR, and CUSTOMER", async () => {
+    vi.spyOn(casesApi, "fetchPaymentCaseById").mockResolvedValue({
+      data: { caseId: "CASE-RBAC-01", tenantId: "tenant_demo" }
+    });
+    vi.spyOn(casesApi, "fetchCaseClassification").mockResolvedValue({ data: null });
+    vi.spyOn(casesApi, "fetchCaseLifecycleEvents").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseInvestigations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCasePolicyDecisions").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseProviderOperations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseClaims").mockResolvedValue({ data: [] });
+
+    // 1. ADMIN sees the buttons
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/cases/CASE-RBAC-01"]}>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("admin-action-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("run-classify-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("run-investigate-btn")).toBeInTheDocument();
+    });
+
+    unmount();
+
+    // 2. Non-ADMIN roles (SHOP, AUDITOR, CUSTOMER) see NO buttons and NO panel
+    for (const nonAdminRole of ["SHOP", "AUDITOR", "CUSTOMER"]) {
+      vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+        user: { role: nonAdminRole, tenantId: "tenant_demo" },
+        isAuthenticated: true,
+        loading: false
+      });
+
+      const { unmount: unmountNonAdmin } = render(
+        <MemoryRouter initialEntries={["/cases/CASE-RBAC-01"]}>
+          <Routes>
+            <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("admin-action-panel")).toBeNull();
+        expect(screen.queryByTestId("run-classify-btn")).toBeNull();
+        expect(screen.queryByTestId("run-investigate-btn")).toBeNull();
+      });
+
+      unmountNonAdmin();
+    }
+  });
+
+  it("requires confirmation dialog with exact prompt before classifyCase; updates classification panel on success", async () => {
+    vi.spyOn(casesApi, "fetchPaymentCaseById").mockResolvedValue({
+      data: { caseId: "CASE-CONFIRM-01", tenantId: "tenant_demo" }
+    });
+    vi.spyOn(casesApi, "fetchCaseClassification").mockResolvedValue({ data: null });
+    vi.spyOn(casesApi, "fetchCaseLifecycleEvents").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseInvestigations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCasePolicyDecisions").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseProviderOperations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseClaims").mockResolvedValue({ data: [] });
+
+    const classifySpy = vi.spyOn(casesApi, "classifyCase").mockResolvedValue({
+      success: true,
+      data: {
+        recordId: "EVID-CONFIRMED-01",
+        scenarioId: "SCN_CLASSIFIED_FRESH",
+        reasonCode: "REASON_FRESH",
+        safeHold: false,
+        isStale: false,
+        recordHash: "rec_hash_fresh_12345",
+        facts: [{ dimension: "Order State", value: "ORDER_CREATED", source: "ORDER", authority: "SYSTEM_RECORD" }],
+        claims: []
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/cases/CASE-CONFIRM-01"]}>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("run-classify-btn")).toBeInTheDocument();
+    });
+
+    // Click "Run classification" -> confirmation step must appear, NO API call yet
+    fireEvent.click(screen.getByTestId("run-classify-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("action-confirmation-dialog")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("confirmation-message")).toHaveTextContent(
+      "Re-evaluates stored records and records an audit entry"
+    );
+    expect(classifySpy).not.toHaveBeenCalled();
+
+    // Confirm action -> API called and result panel updated
+    fireEvent.click(screen.getByTestId("confirm-action-btn"));
+
+    await waitFor(() => {
+      expect(classifySpy).toHaveBeenCalledTimes(1);
+      expect(classifySpy).toHaveBeenCalledWith("CASE-CONFIRM-01");
+      expect(screen.getByTestId("action-success-banner")).toBeInTheDocument();
+      expect(screen.getByText("SCN_CLASSIFIED_FRESH")).toBeInTheDocument();
+    });
+  });
+
+  it("requires confirmation dialog with exact prompt before investigateCase; prepends to investigations on success", async () => {
+    vi.spyOn(casesApi, "fetchPaymentCaseById").mockResolvedValue({
+      data: { caseId: "CASE-CONFIRM-02", tenantId: "tenant_demo" }
+    });
+    vi.spyOn(casesApi, "fetchCaseClassification").mockResolvedValue({ data: null });
+    vi.spyOn(casesApi, "fetchCaseLifecycleEvents").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseInvestigations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCasePolicyDecisions").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseProviderOperations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseClaims").mockResolvedValue({ data: [] });
+
+    const investigateSpy = vi.spyOn(casesApi, "investigateCase").mockResolvedValue({
+      success: true,
+      data: {
+        investigationId: "INV-NEW-01",
+        modelUsed: "MOCKED_GEMINI_TEST",
+        customerPerspective: { perspective: "Customer claim advisory notes" },
+        shopPerspective: { perspective: "Merchant confirmed advisory notes" },
+        investigatorFindings: { perspective: "Forensic check notes" },
+        resolutionProposal: { suggestedAction: "Hold recommended by AI" },
+        durationMs: 95
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/cases/CASE-CONFIRM-02"]}>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("run-investigate-btn")).toBeInTheDocument();
+    });
+
+    // Click "Run investigation" -> confirmation step must appear, NO API call yet
+    fireEvent.click(screen.getByTestId("run-investigate-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("action-confirmation-dialog")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("confirmation-message")).toHaveTextContent(
+      "This will call the AI model and is advisory only"
+    );
+    expect(investigateSpy).not.toHaveBeenCalled();
+
+    // Confirm action -> API called and investigations section updated
+    fireEvent.click(screen.getByTestId("confirm-action-btn"));
+
+    await waitFor(() => {
+      expect(investigateSpy).toHaveBeenCalledTimes(1);
+      expect(investigateSpy).toHaveBeenCalledWith("CASE-CONFIRM-02");
+      expect(screen.getByTestId("action-success-banner")).toBeInTheDocument();
+      expect(screen.getByText("MOCKED_GEMINI_TEST")).toBeInTheDocument();
+      expect(screen.getByText("Hold recommended by AI")).toBeInTheDocument();
+    });
+  });
+
+  it("disables buttons while in flight to prevent double submit", async () => {
+    vi.spyOn(casesApi, "fetchPaymentCaseById").mockResolvedValue({
+      data: { caseId: "CASE-FLIGHT-01", tenantId: "tenant_demo" }
+    });
+    vi.spyOn(casesApi, "fetchCaseClassification").mockResolvedValue({ data: null });
+    vi.spyOn(casesApi, "fetchCaseLifecycleEvents").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseInvestigations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCasePolicyDecisions").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseProviderOperations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseClaims").mockResolvedValue({ data: [] });
+
+    let resolvePromise;
+    const delayedPromise = new Promise((resolve) => {
+      resolvePromise = resolve;
+    });
+    vi.spyOn(casesApi, "classifyCase").mockReturnValue(delayedPromise);
+
+    render(
+      <MemoryRouter initialEntries={["/cases/CASE-FLIGHT-01"]}>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("run-classify-btn")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("run-classify-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-action-btn")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("confirm-action-btn"));
+
+    // While in flight, both main buttons and dialog buttons must be disabled
+    expect(screen.getByTestId("run-classify-btn")).toBeDisabled();
+    expect(screen.getByTestId("run-investigate-btn")).toBeDisabled();
+    expect(screen.getByTestId("confirm-action-btn")).toBeDisabled();
+    expect(screen.getByTestId("cancel-action-btn")).toBeDisabled();
+
+    // Resolve the in-flight promise
+    resolvePromise({ success: true, data: { scenarioId: "SCN_RESOLVED" } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("run-classify-btn")).not.toBeDisabled();
+      expect(screen.getByTestId("run-investigate-btn")).not.toBeDisabled();
+    });
+  });
+
+  it("maps 403, 429, and 503 errors and renders clear error messages in banner", async () => {
+    vi.spyOn(casesApi, "fetchPaymentCaseById").mockResolvedValue({
+      data: { caseId: "CASE-ERR-01", tenantId: "tenant_demo" }
+    });
+    vi.spyOn(casesApi, "fetchCaseClassification").mockResolvedValue({ data: null });
+    vi.spyOn(casesApi, "fetchCaseLifecycleEvents").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseInvestigations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCasePolicyDecisions").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseProviderOperations").mockResolvedValue({ data: [] });
+    vi.spyOn(casesApi, "fetchCaseClaims").mockResolvedValue({ data: [] });
+
+    // 1. 429 Rate limit error
+    vi.spyOn(casesApi, "investigateCase").mockRejectedValue({
+      status: 429,
+      type: "RATE_LIMITED",
+      message: "Investigation cost guard exceeded: Admin hourly limit reached."
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/cases/CASE-ERR-01"]}>
+        <Routes>
+          <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("run-investigate-btn")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("run-investigate-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-action-btn")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("confirm-action-btn"));
+
+    await waitFor(() => {
+      const errBanner = screen.getByTestId("action-error-banner");
+      expect(errBanner).toBeInTheDocument();
+      expect(errBanner.textContent).toContain("Investigation cost guard exceeded");
+    });
   });
 });

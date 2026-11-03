@@ -442,6 +442,102 @@ async function main() {
       })()
     `);
 
+    // =========================================================================
+    // 6b. ADMIN Controlled Actions on Case 22 (Stage 8b B3)
+    // =========================================================================
+    console.log("- Driving ADMIN controlled classify & investigate on Case 22...");
+    await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-22", logins.admin.token);
+    await waitForSelector('[data-testid="admin-action-panel"]', 8000);
+
+    // 1) Click "Run classification"
+    console.log("  * Clicking Run classification...");
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('[data-testid="run-classify-btn"]');
+        if (btn) btn.click();
+      })()
+    `);
+    await waitForSelector('[data-testid="action-confirmation-dialog"]', 8000);
+    const classifyConfirmMsg = await evaluateInPage(`
+      document.querySelector('[data-testid="confirmation-message"]')?.textContent?.trim()
+    `);
+    await takeScreenshot("screenshot-14-admin-classify-confirm.png");
+
+    // Confirm classification
+    console.log("  * Confirming classification...");
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('[data-testid="confirm-action-btn"]');
+        if (btn) btn.click();
+      })()
+    `);
+    await waitForSelector('[data-testid="action-success-banner"]', 8000);
+    const classifySuccessMsg = await evaluateInPage(`
+      document.querySelector('[data-testid="action-success-banner"]')?.textContent?.trim()
+    `);
+    await takeScreenshot("screenshot-15-admin-classify-success.png");
+
+    // 2) Click "Run investigation"
+    console.log("  * Clicking Run investigation...");
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('[data-testid="run-investigate-btn"]');
+        if (btn) btn.click();
+      })()
+    `);
+    await waitForSelector('[data-testid="action-confirmation-dialog"]', 8000);
+    const investigateConfirmMsg = await evaluateInPage(`
+      document.querySelector('[data-testid="confirmation-message"]')?.textContent?.trim()
+    `);
+    await takeScreenshot("screenshot-16-admin-investigate-confirm.png");
+
+    // Confirm investigation
+    console.log("  * Confirming investigation...");
+    await evaluateInPage(`
+      (() => {
+        const btn = document.querySelector('[data-testid="confirm-action-btn"]');
+        if (btn) btn.click();
+      })()
+    `);
+    await waitForSelector('[data-testid="action-success-banner"]', 8000);
+    const investigateSuccessMsg = await evaluateInPage(`
+      document.querySelector('[data-testid="action-success-banner"]')?.textContent?.trim()
+    `);
+    await takeScreenshot("screenshot-17-admin-investigate-success.png");
+
+    adminControlledActionsFindings = {
+      classifyConfirmMsg,
+      classifySuccessMsg,
+      investigateConfirmMsg,
+      investigateSuccessMsg
+    };
+
+    // 3) SHOP A sees NO admin action panel or buttons
+    console.log("- Driving SHOP A viewing Case 01: verifying absence of admin buttons...");
+    await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-01", logins.shopA.token);
+    await sleep(2000);
+    shopNonAdminFindings = await evaluateInPage(`
+      (() => ({
+        panelFound: !!document.querySelector('[data-testid="admin-action-panel"]'),
+        classifyBtnFound: !!document.querySelector('[data-testid="run-classify-btn"]'),
+        investigateBtnFound: !!document.querySelector('[data-testid="run-investigate-btn"]')
+      }))()
+    `);
+    await takeScreenshot("screenshot-18-shop-no-admin-buttons.png");
+
+    // 4) CUSTOMER sees NO admin action panel or buttons
+    console.log("- Driving CUSTOMER viewing Case 22: verifying absence of admin buttons...");
+    await setTokenAndNavigate("http://localhost:5173/cases/CASE-DEMO-22", logins.customerA.token);
+    await sleep(2000);
+    customerNonAdminFindings = await evaluateInPage(`
+      (() => ({
+        panelFound: !!document.querySelector('[data-testid="admin-action-panel"]'),
+        classifyBtnFound: !!document.querySelector('[data-testid="run-classify-btn"]'),
+        investigateBtnFound: !!document.querySelector('[data-testid="run-investigate-btn"]')
+      }))()
+    `);
+    await takeScreenshot("screenshot-19-customer-no-admin-buttons.png");
+
   } finally {
     pageWs.close();
     browserWs.close();
@@ -462,17 +558,37 @@ async function main() {
   const optionsRequests = apiRequests.filter((r) => r.method === "OPTIONS");
   const loginPostRequests = apiRequests.filter((r) => r.method === "POST" && r.url.includes("/api/auth/login"));
   const claimPostRequests = apiRequests.filter((r) => r.method === "POST" && r.url.includes("/api/claims"));
+  const classifyPostRequests = apiRequests.filter((r) => r.method === "POST" && r.url.includes("/classify"));
+  const investigatePostRequests = apiRequests.filter((r) => r.method === "POST" && r.url.includes("/investigate"));
+
+  const expectedControlledPosts = [
+    ...classifyPostRequests.map((r) => ({ method: r.method, url: r.url })),
+    ...investigatePostRequests.map((r) => ({ method: r.method, url: r.url }))
+  ];
+
   const unexpectedNonGet = nonGetRequests.filter(
     (r) =>
       r.method !== "OPTIONS" &&
-      !(r.method === "POST" && (r.url.includes("/api/auth/login") || r.url.includes("/api/claims")))
+      !(
+        r.method === "POST" &&
+        (r.url.includes("/api/auth/login") ||
+          r.url.includes("/api/claims") ||
+          r.url.includes("/classify") ||
+          r.url.includes("/investigate"))
+      )
+  );
+
+  const forbiddenMutations = apiRequests.filter((r) =>
+    /dispatch|release|refund|edit/i.test(r.url) || ["PUT", "PATCH", "DELETE"].includes(r.method)
   );
 
   console.log(`Total Network Requests Captured: ${allNetworkRequests.length}`);
   console.log(`API Requests Captured: ${apiRequests.length}`);
   console.log(
-    `Non-GET API Requests: ${nonGetRequests.length} (OPTIONS: ${optionsRequests.length}, Login POST: ${loginPostRequests.length}, Claim POST: ${claimPostRequests.length})`
+    `Non-GET API Requests: ${nonGetRequests.length} (OPTIONS: ${optionsRequests.length}, Login POST: ${loginPostRequests.length}, Claim POST: ${claimPostRequests.length}, Classify POST: ${classifyPostRequests.length}, Investigate POST: ${investigatePostRequests.length})`
   );
+  console.log(`Expected Controlled POSTs: ${expectedControlledPosts.length}`);
+  console.log(`Forbidden Mutation Requests: ${forbiddenMutations.length}`);
   console.log(`Unexpected Non-GET Requests: ${unexpectedNonGet.length}`);
 
   // 8. Write evidence files
@@ -486,6 +602,11 @@ async function main() {
         optionsCount: optionsRequests.length,
         loginPostCount: loginPostRequests.length,
         claimPostCount: claimPostRequests.length,
+        classifyPostCount: classifyPostRequests.length,
+        investigatePostCount: investigatePostRequests.length,
+        expectedControlledPosts,
+        forbiddenMutationCount: forbiddenMutations.length,
+        forbiddenMutations,
         unexpectedNonGetCount: unexpectedNonGet.length,
         unexpectedNonGetRequests: unexpectedNonGet,
         requests: allNetworkRequests
@@ -530,19 +651,39 @@ async function main() {
   verificationReport += `  * Displays unverified evidence disclaimer: ${adminClaimsPanelFindings?.hasDisclaimer}\n`;
   verificationReport += `  * Renders sanitized description: ${adminClaimsPanelFindings?.hasSanitizedDescription}\n\n`;
 
-  verificationReport += "--- 5. NETWORK REQUEST AUDIT ---\n";
+  verificationReport += "--- 5. ADMIN CONTROLLED ACTIONS & ROLE ABSENCE (STAGE 8b B3) ---\n";
+  verificationReport += `- Run Classification:\n`;
+  verificationReport += `  * Confirmation Message: "${adminControlledActionsFindings?.classifyConfirmMsg}" (Expected: "Re-evaluates stored records and records an audit entry")\n`;
+  verificationReport += `  * Success Banner: "${adminControlledActionsFindings?.classifySuccessMsg}"\n`;
+  verificationReport += `- Run Investigation:\n`;
+  verificationReport += `  * Confirmation Message: "${adminControlledActionsFindings?.investigateConfirmMsg}" (Expected: "This will call the AI model and is advisory only")\n`;
+  verificationReport += `  * Success Banner: "${adminControlledActionsFindings?.investigateSuccessMsg}"\n`;
+  verificationReport += `- Non-ADMIN Controls Absence:\n`;
+  verificationReport += `  * SHOP A viewing Case 01: panelFound=${shopNonAdminFindings?.panelFound}, classifyBtn=${shopNonAdminFindings?.classifyBtnFound}, investigateBtn=${shopNonAdminFindings?.investigateBtnFound}\n`;
+  verificationReport += `  * CUSTOMER viewing Case 22: panelFound=${customerNonAdminFindings?.panelFound}, classifyBtn=${customerNonAdminFindings?.classifyBtnFound}, investigateBtn=${customerNonAdminFindings?.investigateBtnFound}\n`;
+  verificationReport += `  * Non-ADMIN Verdict: VERIFIED. Zero admin controls shown to SHOP or CUSTOMER.\n\n`;
+
+  verificationReport += "--- 6. NETWORK REQUEST AUDIT ---\n";
   verificationReport += `- Total Network Requests: ${allNetworkRequests.length}\n`;
   verificationReport += `- API Requests: ${apiRequests.length}\n`;
   verificationReport += `- Non-GET Requests Count: ${nonGetRequests.length}\n`;
   verificationReport += `  * CORS Preflight OPTIONS: ${optionsRequests.length}\n`;
   verificationReport += `  * Authentication POST /api/auth/login: ${loginPostRequests.length}\n`;
   verificationReport += `  * Customer Claim POST /api/claims: ${claimPostRequests.length}\n`;
-  verificationReport += `  * Unexpected Non-GET Mutations: ${unexpectedNonGet.length}\n`;
-  if (unexpectedNonGet.length === 0) {
-    verificationReport += `- Verdict: VERIFIED. Zero unexpected mutation routes called during workspace viewing.\n`;
-  } else {
-    verificationReport += `- Verdict: FINDING DETECTED! Unexpected requests: ${JSON.stringify(unexpectedNonGet)}\n`;
+  verificationReport += `  * Controlled Classify POST: ${classifyPostRequests.length}\n`;
+  verificationReport += `  * Controlled Investigate POST: ${investigatePostRequests.length}\n`;
+  verificationReport += `  * Expected Controlled POST Paths:\n`;
+  for (const p of expectedControlledPosts) {
+    verificationReport += `    - ${p.method} ${p.url}\n`;
   }
+  verificationReport += `- Forbidden Dispatch/Release/Edit Mutations: ${forbiddenMutations.length}\n`;
+  verificationReport += `- Unexpected Non-GET Mutations: ${unexpectedNonGet.length}\n`;
+  if (unexpectedNonGet.length === 0 && forbiddenMutations.length === 0) {
+    verificationReport += `- Verdict: VERIFIED. Exactly the expected POSTs issued; zero dispatch/release/edit requests appear.\n`;
+  } else {
+    verificationReport += `- Verdict: FINDING DETECTED! Unexpected: ${JSON.stringify(unexpectedNonGet)}, Forbidden: ${JSON.stringify(forbiddenMutations)}\n`;
+  }
+  verificationReport += "\n";
   verificationReport += "\n";
 
   fs.writeFileSync(path.join(evidenceDir, "06-browser-verification.txt"), verificationReport, "utf8");

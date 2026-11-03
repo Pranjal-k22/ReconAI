@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { submitCustomerClaim, fetchMyClaims } from "../api/casesApi";
+import { submitCustomerClaim, fetchMyClaims } from "../api/claimsApi";
 import { parseInrToPaise } from "../utils/formatMoney";
 import { ShieldAlert, CheckCircle2, AlertCircle, FileText, Send, Clock } from "lucide-react";
 

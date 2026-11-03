@@ -145,4 +145,7 @@ console.log(outputText);
 
 fs.writeFileSync("evidence/stage6/05-route-inventory.txt", outputText, "utf8");
 fs.writeFileSync("evidence/stage7/02-introspected-routes.txt", outputText, "utf8");
-console.log("\nSaved to evidence/stage7/02-introspected-routes.txt");
+if (fs.existsSync("evidence/stage8")) {
+  fs.writeFileSync("evidence/stage8/09-introspected-routes.txt", outputText, "utf8");
+}
+console.log("\nSaved to evidence/stage7/02-introspected-routes.txt and evidence/stage8/09-introspected-routes.txt");

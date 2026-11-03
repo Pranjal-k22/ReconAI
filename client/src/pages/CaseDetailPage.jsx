@@ -7,8 +7,11 @@ import {
   fetchCaseInvestigations,
   fetchCasePolicyDecisions,
   fetchCaseProviderOperations,
-  fetchCaseClaims
+  fetchCaseClaims,
+  classifyCase,
+  investigateCase
 } from "../api/casesApi";
+import { useAuth } from "../context/AuthContext";
 import { formatPaiseToInr } from "../utils/formatMoney";
 import { RoleGuard } from "../components/common/RoleGuard";
 import { ExpandableText } from "../components/common/ExpandableText";
@@ -25,6 +28,7 @@ import {
   Activity,
   FileText,
   AlertTriangle,
+  AlertCircle,
   CheckCircle2,
   HelpCircle
 } from "lucide-react";
@@ -42,6 +46,69 @@ export function CaseDetailPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
+
+  // Controlled Admin Actions state (Stage 8b)
+  const [confirmingAction, setConfirmingAction] = useState(null); // 'classify' | 'investigate' | null
+  const [actionInFlight, setActionInFlight] = useState(false);
+  const [actionError, setActionError] = useState(null);
+  const [actionSuccess, setActionSuccess] = useState(null);
+
+  const handleStartClassify = () => {
+    setActionError(null);
+    setActionSuccess(null);
+    setConfirmingAction("classify");
+  };
+
+  const handleStartInvestigate = () => {
+    setActionError(null);
+    setActionSuccess(null);
+    setConfirmingAction("investigate");
+  };
+
+  const handleCancelConfirm = () => {
+    setConfirmingAction(null);
+  };
+
+  const handleConfirmClassify = async () => {
+    if (actionInFlight) return;
+    setActionInFlight(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const res = await classifyCase(caseId);
+      if (res?.data) {
+        setClassification(res.data);
+      }
+      setActionSuccess("Classification re-evaluated and recorded successfully.");
+      setConfirmingAction(null);
+    } catch (err) {
+      setActionError(err.message || "Failed to classify case.");
+    } finally {
+      setActionInFlight(false);
+    }
+  };
+
+  const handleConfirmInvestigate = async () => {
+    if (actionInFlight) return;
+    setActionInFlight(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const res = await investigateCase(caseId);
+      if (res?.data) {
+        setInvestigations((prev) => [res.data, ...(prev || [])]);
+      }
+      setActionSuccess("AI investigation completed successfully (advisory only).");
+      setConfirmingAction(null);
+    } catch (err) {
+      setActionError(err.message || "Failed to run investigation.");
+    } finally {
+      setActionInFlight(false);
+    }
+  };
 
   const loadCaseDetails = useCallback(async () => {
     if (!caseId) return;
@@ -205,6 +272,120 @@ export function CaseDetailPage() {
             </button>
           </div>
         </div>
+
+        {/* ADMIN ACTION PANEL (Stage 8b: ADMIN-only controlled actions; strictly no dispatch/refund) */}
+        {isAdmin && (
+          <div
+            data-testid="admin-action-panel"
+            className="bg-white rounded-xl border border-indigo-100 shadow-xs p-5 space-y-4"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-indigo-600" />
+                  Admin Controlled Actions
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Authoritative database re-classification and advisory AI investigation. No money-movement or dispatch controls exist.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="run-classify-btn"
+                  disabled={actionInFlight}
+                  onClick={handleStartClassify}
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {actionInFlight && confirmingAction === "classify" ? (
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5 mr-1.5" />
+                  )}
+                  Run classification
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="run-investigate-btn"
+                  disabled={actionInFlight}
+                  onClick={handleStartInvestigate}
+                  className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {actionInFlight && confirmingAction === "investigate" ? (
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Bot className="w-3.5 h-3.5 mr-1.5" />
+                  )}
+                  Run investigation
+                </button>
+              </div>
+            </div>
+
+            {/* Confirmation Prompt Dialog / Box */}
+            {confirmingAction && (
+              <div
+                data-testid="action-confirmation-dialog"
+                className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3"
+              >
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <h3 className="text-xs font-bold text-amber-900 uppercase">
+                      Confirm Action: {confirmingAction === "classify" ? "Run classification" : "Run investigation"}
+                    </h3>
+                    <p className="text-xs text-amber-800 mt-1 font-medium" data-testid="confirmation-message">
+                      {confirmingAction === "classify"
+                        ? "Re-evaluates stored records and records an audit entry"
+                        : "This will call the AI model and is advisory only"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-1 border-t border-amber-200">
+                  <button
+                    type="button"
+                    data-testid="cancel-action-btn"
+                    disabled={actionInFlight}
+                    onClick={handleCancelConfirm}
+                    className="px-3 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="confirm-action-btn"
+                    disabled={actionInFlight}
+                    onClick={confirmingAction === "classify" ? handleConfirmClassify : handleConfirmInvestigate}
+                    className="px-3 py-1 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {actionInFlight && <RefreshCw className="w-3 h-3 animate-spin mr-1" />}
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Success / Error Banners */}
+            {actionSuccess && (
+              <div
+                data-testid="action-success-banner"
+                className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800 flex items-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                <span>{actionSuccess}</span>
+              </div>
+            )}
+            {actionError && (
+              <div
+                data-testid="action-error-banner"
+                className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 flex items-center gap-2"
+              >
+                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                <span>{actionError}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* SECTION 8: SAFE-HOLD BANNER (Rendered prominently at top when held) */}
         {caseData.isSafeHold && (

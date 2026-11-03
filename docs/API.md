@@ -362,7 +362,7 @@ Retrieves the authoritative `EvidenceRecord` for the case:
 - `scenarioId`, `category`, `reasonCode`, `confidence`, `facts`, `claims`, `missingEvidence`, `contradictions`, `safeHold`, `safeHoldCode`, `safeHoldReason`, `suggestedNextStep`, `inputHash`, `recordHash`, `evaluatedAt`.
 
 ### `POST /api/payment-cases/:caseId/classify`
-Executes classification evaluation against canonical state, creates a new `EvidenceRecord`, and updates case resolution state. Callable by `ADMIN` or `SERVICE`.
+Re-evaluates deterministic classification against canonical stored state, creates a new `EvidenceRecord`, and logs audit trail. Restricted strictly to `ADMIN` (`requireRoles(ROLES.ADMIN)`). Requires strict empty body `{}`. All non-ADMIN roles receive HTTP 403 Forbidden.
 
 ### `GET /api/payment-cases/:caseId/evidence`
 Retrieves verified facts, unverified customer claims, and missing evidence items for the case.
@@ -373,7 +373,7 @@ Retrieves historical AI investigation runs for the case:
 - Flags: `isExecutable: false`, `authoritative: false`, `modelUsed` (or `FALLBACK_DETERMINISTIC`).
 
 ### `POST /api/payment-cases/:caseId/investigate`
-Triggers an on-demand multi-agent advisory investigation run for the case.
+Triggers an on-demand multi-agent advisory investigation run for the case. Restricted strictly to `ADMIN` (`requireRoles(ROLES.ADMIN)`). Requires strict empty body `{}`. Enforces persistent rate limiting via `InvestigationCostGuard` in MongoDB (HTTP 429 when exceeded). Enforces fail-closed audit logging (HTTP 503 with run rollback on audit failure). Advisory only (`isExecutable: false`).
 
 ### `GET /api/payment-cases/:caseId/policy/decisions`
 Retrieves policy evaluation records for the case, including `policyConfigVersion`, `appliedRuleIds`, `decisionReasons`, and outcome status (`ALLOW`, `DENY`, `HOLD`).

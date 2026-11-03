@@ -2,13 +2,13 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MyClaimsPage } from "../pages/MyClaimsPage.jsx";
-import * as casesApi from "../api/casesApi.js";
+import * as claimsApi from "../api/claimsApi.js";
 import { parseInrToPaise } from "../utils/formatMoney.js";
 
 describe("MyClaimsPage Component Invariants", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn(casesApi, "fetchMyClaims").mockResolvedValue({
+    vi.spyOn(claimsApi, "fetchMyClaims").mockResolvedValue({
       data: [
         {
           claimId: "clm_existing_001",
@@ -49,7 +49,7 @@ describe("MyClaimsPage Component Invariants", () => {
     const submitPromise = new Promise((resolve) => {
       resolveSubmit = resolve;
     });
-    vi.spyOn(casesApi, "submitCustomerClaim").mockReturnValue(submitPromise);
+    vi.spyOn(claimsApi, "submitCustomerClaim").mockReturnValue(submitPromise);
 
     render(<MyClaimsPage />);
 
@@ -87,7 +87,7 @@ describe("MyClaimsPage Component Invariants", () => {
   });
 
   it("displays user-facing error message on rate limit (429)", async () => {
-    vi.spyOn(casesApi, "submitCustomerClaim").mockRejectedValue({
+    vi.spyOn(claimsApi, "submitCustomerClaim").mockRejectedValue({
       status: 429,
       type: "RATE_LIMITED",
       message: "Daily claim submission limit reached. Limit: 20 per day."
@@ -109,7 +109,7 @@ describe("MyClaimsPage Component Invariants", () => {
   });
 
   it("converts claimed INR to paise accurately before submitting", async () => {
-    const submitSpy = vi.spyOn(casesApi, "submitCustomerClaim").mockResolvedValue({
+    const submitSpy = vi.spyOn(claimsApi, "submitCustomerClaim").mockResolvedValue({
       claimId: "clm_paise_test_01",
       receivedAt: new Date().toISOString(),
       status: "RECEIVED"

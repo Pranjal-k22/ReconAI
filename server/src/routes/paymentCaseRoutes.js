@@ -36,6 +36,10 @@ import {
 import { createAuditEvent } from "../services/audit/auditService.js";
 import { PaymentCase } from "../models/PaymentCase.js";
 import { CustomerClaim } from "../models/CustomerClaim.js";
+import {
+  checkInvestigationCostGuard,
+  recordInvestigationCostUsage
+} from "../services/ai/investigationCostGuard.js";
 
 const router = express.Router();
 
@@ -158,39 +162,61 @@ router.patch("/:caseId/safe-hold", requireRoles(ROLES.ADMIN), async (req, res, n
 
 /**
  * POST /api/payment-cases/:caseId/investigate - Runs controller-mediated 4-agent AI investigation
+ * Restricted strictly to ADMIN with strict empty body and persistent cost guardrails.
  */
 router.post(
   "/:caseId/investigate",
-  requireRoles(
-    ROLES.ADMIN,
-    ROLES.PAYMENT_CONTROLLER,
-    ROLES.AUDITOR,
-    ROLES.SHOP,
-    ROLES.SHOP_AI,
-    ROLES.CUSTOMER,
-    ROLES.CUSTOMER_AI
-  ),
+  requireRoles(ROLES.ADMIN),
   async (req, res, next) => {
     try {
       const { caseId } = req.params;
-      const { idempotencyKey } = req.body || {};
 
-      const isGlobal =
-        req.user.role === ROLES.ADMIN ||
-        req.user.role === ROLES.PAYMENT_CONTROLLER ||
-        (req.user.role === ROLES.AUDITOR && Array.isArray(req.user.scopes) && req.user.scopes.includes("GLOBAL_AUDIT"));
-      const scopedTenantId = isGlobal ? req.tenantFilter || req.user.tenantId || req.body?.tenantId : req.user.tenantId;
-
-      if (!scopedTenantId) {
-        throw AppError.badRequest("tenantId could not be determined for investigation");
+      // Strict empty body enforcement: caller cannot supply arbitrary payload
+      if (req.body && Object.keys(req.body).length > 0) {
+        throw AppError.badRequest("investigateCase requires strict empty body; caller-supplied payload is prohibited");
       }
 
+      let scopedTenantId = req.tenantFilter || req.query?.tenantId || req.user.tenantId;
+      if (!scopedTenantId) {
+        const found = await PaymentCase.findOne({ caseId: caseId.trim() }).lean();
+        if (!found || String(found.tenantId).trim() === "unassigned_provider_quarantine") {
+          throw AppError.notFound(`PaymentCase '${caseId}' not found`);
+        }
+        scopedTenantId = found.tenantId;
+      }
+
+      if (String(scopedTenantId).trim() === "unassigned_provider_quarantine") {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
+      }
+
+      const caseDoc = await PaymentCase.findOne({
+        caseId: caseId.trim(),
+        tenantId: scopedTenantId
+      }).lean();
+
+      if (!caseDoc) {
+        throw AppError.notFound(`PaymentCase '${caseId}' not found in tenant '${scopedTenantId}'`);
+      }
+
+      const adminId = req.user.userId || req.user.id || req.user.sub || req.user.email || "admin";
+
+      // Enforce MongoDB-persisted cost guard before invoking LLM investigation
+      await checkInvestigationCostGuard({
+        adminId,
+        tenantId: scopedTenantId
+      });
+
       const result = await runMultiAgentInvestigation({
-        caseId,
+        caseId: caseId.trim(),
         tenantId: scopedTenantId,
-        customerId: req.user.customerId || null,
-        actorRole: req.user.role,
-        idempotencyKey
+        customerId: null,
+        actorRole: req.user.role
+      });
+
+      // Atomically record cost usage upon successful completion
+      await recordInvestigationCostUsage({
+        adminId,
+        tenantId: scopedTenantId
       });
 
       res.status(200).json({ success: true, data: result });
@@ -559,9 +585,13 @@ router.post(
         throw AppError.badRequest("classifyCase requires strict empty body; caller-supplied evidence is prohibited");
       }
 
-      const scopedTenantId = req.tenantFilter || req.query?.tenantId || req.user.tenantId;
+      let scopedTenantId = req.tenantFilter || req.query?.tenantId || req.user.tenantId;
       if (!scopedTenantId) {
-        throw AppError.badRequest("tenantId could not be determined for classification");
+        const found = await PaymentCase.findOne({ caseId: caseId.trim() }).lean();
+        if (!found || String(found.tenantId).trim() === "unassigned_provider_quarantine") {
+          throw AppError.notFound(`PaymentCase '${caseId}' not found`);
+        }
+        scopedTenantId = found.tenantId;
       }
 
       if (String(scopedTenantId).trim() === "unassigned_provider_quarantine") {

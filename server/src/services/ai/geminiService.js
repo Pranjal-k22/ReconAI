@@ -23,10 +23,21 @@ export class GeminiProviderError extends Error {
   }
 }
 
+let _globalMockAiClient = null;
+
+export function setGeminiMockClient(client) {
+  _globalMockAiClient = client;
+}
+
+export function getGeminiMockClient() {
+  return _globalMockAiClient;
+}
+
 /**
  * Checks if Gemini API key is configured.
  */
 export function isGeminiConfigured() {
+  if (_globalMockAiClient) return true;
   const env = getEnv();
   const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   return typeof apiKey === "string" && apiKey.trim().length > 0;
@@ -74,7 +85,7 @@ export async function executeGeminiInvestigation({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   _aiClient = null // optional injected client for testing/mocking
 }) {
-  if (!isGeminiConfigured() && !_aiClient) {
+  if (!isGeminiConfigured() && !_aiClient && !_globalMockAiClient) {
     throw new GeminiProviderError(
       GEMINI_ERROR_CODES.NOT_CONFIGURED,
       "GEMINI_API_KEY is not configured."
@@ -110,7 +121,7 @@ export async function executeGeminiInvestigation({
   };
 
   const executeAttempt = async () => {
-    let aiClient = _aiClient;
+    let aiClient = _aiClient || _globalMockAiClient;
     if (!aiClient) {
       const apiKey = getEnv().GEMINI_API_KEY || process.env.GEMINI_API_KEY;
       aiClient = new GoogleGenAI({ apiKey });

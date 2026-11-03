@@ -1,31 +1,84 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as casesApi from "../api/casesApi.js";
-import { casesAxiosInstance, mapApiError } from "../api/casesApi.js";
+import { casesAxiosInstance, mapApiError, classifyCase, investigateCase } from "../api/casesApi.js";
 
-describe("Cases API Read-Only by Construction Invariants", () => {
+describe("Cases API Invariants (Stage 8b - Read & Controlled Admin Actions)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("exports strictly GET-oriented functions and zero mutation functions", () => {
+  it("exports strictly GET fetchers and exactly two controlled POST functions (classifyCase, investigateCase)", () => {
     const exportedKeys = Object.keys(casesApi);
-    const mutationTerms = ["post", "put", "patch", "delete", "create", "update", "remove", "mutate", "dispatch", "release"];
+    const nonFunctionKeys = ["casesAxiosInstance"];
+    const functions = exportedKeys.filter(
+      (k) => typeof casesApi[k] === "function" && !nonFunctionKeys.includes(k)
+    );
 
+    // Controlled admin POST actions: exactly classifyCase and investigateCase
+    const postActions = ["classifyCase", "investigateCase"];
+    for (const postFn of postActions) {
+      expect(functions).toContain(postFn);
+    }
+
+    // All other functions must be read fetchers (start with 'fetch') or mapApiError
+    for (const fnName of functions) {
+      if (postActions.includes(fnName) || fnName === "mapApiError") {
+        continue;
+      }
+      expect(fnName.startsWith("fetch"), `Export '${fnName}' is not a fetcher or approved action`).toBe(true);
+    }
+
+    // Prohibited mutation terms must NEVER appear in export names
+    const prohibitedTerms = [
+      "dispatch",
+      "release",
+      "refund",
+      "edit",
+      "delete",
+      "put",
+      "patch",
+      "mutate",
+      "remove",
+      "reopen"
+    ];
     for (const key of exportedKeys) {
       const lower = key.toLowerCase();
-      for (const term of mutationTerms) {
-        expect(lower.startsWith(term), `Export '${key}' appears to be a mutation function`).toBe(false);
+      for (const term of prohibitedTerms) {
+        expect(lower.includes(term), `Export '${key}' contains prohibited term '${term}'`).toBe(false);
       }
     }
+  });
 
-    // Verify all exported data fetchers start with 'fetch' (or customer intake submission 'submitCustomerClaim')
-    const fetchers = exportedKeys.filter(
-      (k) => typeof casesApi[k] === "function" && k !== "mapApiError" && k !== "casesAxiosInstance" && k !== "submitCustomerClaim"
-    );
-    expect(fetchers.length).toBeGreaterThanOrEqual(8);
-    for (const fnName of fetchers) {
-      expect(fnName.startsWith("fetch")).toBe(true);
-    }
+  it("classifyCase sends strict empty body ({}), no tenant header, and only path caseId", async () => {
+    const postSpy = vi.spyOn(casesAxiosInstance, "post").mockResolvedValue({
+      data: { success: true, data: { recordId: "EVID-001" } }
+    });
+
+    const res = await classifyCase("CASE-ALPHA-01");
+
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy).toHaveBeenCalledWith("/payment-cases/CASE-ALPHA-01/classify", {});
+    expect(res).toEqual({ success: true, data: { recordId: "EVID-001" } });
+
+    // URL-encode path check
+    await classifyCase("CASE with/special");
+    expect(postSpy).toHaveBeenLastCalledWith("/payment-cases/CASE%20with%2Fspecial/classify", {});
+  });
+
+  it("investigateCase sends strict empty body ({}), no tenant header, and only path caseId", async () => {
+    const postSpy = vi.spyOn(casesAxiosInstance, "post").mockResolvedValue({
+      data: { success: true, data: { investigationId: "INV-001" } }
+    });
+
+    const res = await investigateCase("CASE-ALPHA-02");
+
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy).toHaveBeenCalledWith("/payment-cases/CASE-ALPHA-02/investigate", {});
+    expect(res).toEqual({ success: true, data: { investigationId: "INV-001" } });
+
+    // URL-encode path check
+    await investigateCase("CASE special#1");
+    expect(postSpy).toHaveBeenLastCalledWith("/payment-cases/CASE%20special%231/investigate", {});
   });
 
   it("interceptor strictly strips x-tenant-id header and prevents tenant spoofing", async () => {
@@ -76,6 +129,19 @@ describe("Cases API Read-Only by Construction Invariants", () => {
     expect(mapped.status).toBe(404);
     expect(mapped.message).toBe("not found");
     expect(mapped.type).toBe("NOT_FOUND");
+  });
+
+  it("maps 429 error to rate limit message", () => {
+    const error = {
+      response: {
+        status: 429,
+        data: { message: "Investigation cost guard exceeded: Admin hourly limit reached." }
+      }
+    };
+    const mapped = mapApiError(error);
+    expect(mapped.status).toBe(429);
+    expect(mapped.type).toBe("RATE_LIMITED");
+    expect(mapped.message).toContain("Investigation cost guard exceeded");
   });
 
   it("maps 503 and network errors to retryable error", () => {

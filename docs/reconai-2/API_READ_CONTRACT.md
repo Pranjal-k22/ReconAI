@@ -16,6 +16,8 @@ This document defines the strict, code-derived read contract for the read-only o
 | Evidence Records | `GET` | `/api/payment-cases/:caseId/evidence` | `ADMIN`, `SHOP`, `AUDITOR` | Supporting evidence audit records |
 | Policy Decisions | `GET` | `/api/payment-cases/:caseId/policy/decisions` | `ADMIN`, `SHOP`, `AUDITOR` | Deterministic resolution decisions & limits config version |
 | Provider Operations | `GET` | `/api/payment-cases/:caseId/provider/operations` | `ADMIN`, `SHOP`, `AUDITOR` | Historical external provider operations (read-only audit) |
+| Controlled Admin Classify | `POST` | `/api/payment-cases/:caseId/classify` | `ADMIN` | Re-evaluates deterministic classification against stored records; strict empty body `{}` |
+| Controlled Admin Investigate | `POST` | `/api/payment-cases/:caseId/investigate` | `ADMIN` | Executes advisory multi-agent AI investigation; cost-guarded; strict empty body `{}` |
 
 ---
 
@@ -265,6 +267,21 @@ This document defines the strict, code-derived read contract for the read-only o
 
 ---
 
+### 2.9 POST `/api/payment-cases/:caseId/classify`
+- **Handler**: `server/src/routes/paymentCaseRoutes.js`
+- **Authorized Roles**: `ADMIN` only (`requireRoles(ROLES.ADMIN)`). All other roles return HTTP 403 Forbidden.
+- **Request Body**: Strict empty body `{}` (`if (req.body && Object.keys(req.body).length > 0) throw 400 Bad Request`).
+- **Behavior**: Loads authoritative case and dependent records, builds classifier context, evaluates deterministic precedence rules, persists fresh `EvidenceRecord`, and appends `CASE_CLASSIFIED` audit event.
+- **Audit Failure Safety**: Audit event logging is mandatory; returns HTTP 503 if audit fails.
+
+### 2.10 POST `/api/payment-cases/:caseId/investigate`
+- **Handler**: `server/src/routes/paymentCaseRoutes.js`
+- **Authorized Roles**: `ADMIN` only (`requireRoles(ROLES.ADMIN)`). Customer access was deprecated in Stage 8b; non-ADMIN roles receive HTTP 403 Forbidden.
+- **Request Body**: Strict empty body `{}` (`if (req.body && Object.keys(req.body).length > 0) throw 400 Bad Request`).
+- **Cost Guard**: Enforces persistent MongoDB rate limits via `investigationCostGuard.js` (`AI_INVESTIGATION_HOURLY_ADMIN_LIMIT`, etc.). Exceeding quota returns HTTP 429 Rate Limit Exceeded.
+- **Audit Logging & Rollback**: Records `INVESTIGATION_PERFORMED`. If audit persistence fails, newly created `AiInvestigationRun` is rolled back (deleted) and HTTP 503 is returned.
+- **Advisory Only**: All output cards carry `isExecutable: false` and `authoritative: false`.
+
 ## 3. Security and Scoping Invariants
 
 1. **Token-Only Scoping & Storage**:
@@ -274,5 +291,7 @@ This document defines the strict, code-derived read contract for the read-only o
    - Token Storage & XSS Consequence: In Stage 6b, the bearer JWT token is stored in the browser's `localStorage` under key `reconai_token` (`client/src/context/AuthContext.jsx:31,43`). Security consequence: Bearer tokens in `localStorage` can be read by any JavaScript running in the origin, meaning any XSS defect would allow token exfiltration and session impersonation. Production hardening roadmap requires migration to `httpOnly`, `Secure`, `SameSite=Strict` cookies.
 2. **Sentinel Exclusion**:
    - The internal sentinel tenant `unassigned_provider_quarantine` is unconditionally excluded from all workspace queries and returns 404 / empty array.
-3. **Strict Read-Only Enforcement**:
-   - The client workspace exports zero mutation functions (no POST, PUT, PATCH, DELETE).
+3. **Strict Read-Only Enforcement for Financial Mutations**:
+   - The client workspace contains zero dispatch, release, edit, or refund controls anywhere in the UI.
+   - Exactly two controlled non-financial actions are exposed strictly for `ADMIN`: re-classification (`POST /api/payment-cases/:caseId/classify`) and advisory investigation (`POST /api/payment-cases/:caseId/investigate`), both enforcing strict empty bodies `{}` and fail-closed audit logging.
+   - Customer claims intake (`POST /api/claims`, `GET /api/claims`) is strictly isolated in `client/src/api/claimsApi.js` as unverified evidence only.

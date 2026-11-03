@@ -93,6 +93,8 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 | **System Configuration** | Read / Write | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Policy Limits Configuration (/api/policy-config)** | Propose / Approve / Reject / Deactivate | ❌ | ❌ | ✅ (Two-Person Rule) | ❌ | ❌ | ❌ | ❌ |
 | **Policy Limits Configuration (/api/policy-config)** | View Active / History | ❌ | ❌ | ✅ | ✅ (Tenant-Scoped / Global Audited) | ❌ | ❌ | ❌ |
+| **Controlled Admin Classify (/api/payment-cases/:caseId/classify)** | Re-evaluate Stored Classification (POST) | ❌ | ❌ | ✅ (Strict Empty Body) | ❌ | ❌ | ❌ | ❌ |
+| **Controlled Admin Investigate (/api/payment-cases/:caseId/investigate)** | Trigger Advisory AI Investigation (POST) | ❌ | ❌ | ✅ (Cost-Guarded, Empty Body) | ❌ | ❌ | ❌ | ❌ |
 
 > **Provider Write Dispatch Hardening (Stage 3 & 4)**:
 > 1. Provider write execution is restricted strictly to authenticated human `ADMIN` principals triggering `POST /api/payment-cases/:caseId/provider/dispatch`. Machine identities (including PAYMENT_CONTROLLER, background workers, schedulers, and AI agents) cannot dispatch (returns HTTP 403 Forbidden).
@@ -113,6 +115,13 @@ ReconAI 2.0 introduces an enterprise-grade multi-tenant authorization framework.
 > 2. `GET /api/claims` returns strictly own claims for the authenticated customer (`customerId === token.customerId`), with safe templated status.
 > 3. `GET /api/payment-cases/:caseId/claims` is an operator endpoint for `ADMIN`, `SHOP` (scoped to `token.tenantId`), and `AUDITOR` (scoped to `token.tenantId`). Cross-tenant access returns HTTP 404 Not Found. Customers and machine identities receive HTTP 403 Forbidden.
 > 4. Customer claims are append-only and immutable; deletions and updates are prohibited. Claims are unverified evidence only: they never prove debit, never move money, and never alter refund policy eligibility.
+
+> **Controlled Admin Actions & AI Cost Guard (Stage 8b)**:
+> 1. `POST /api/payment-cases/:caseId/classify` is restricted strictly to authenticated human `ADMIN` principals (`requireRoles(ROLES.ADMIN)`). Callers must send an empty request body `{}`. All other roles (`SHOP`, `AUDITOR`, `CUSTOMER`) and machine identities receive HTTP 403 Forbidden.
+> 2. `POST /api/payment-cases/:caseId/investigate` is restricted strictly to authenticated human `ADMIN` principals (`requireRoles(ROLES.ADMIN)`). Callers must send an empty request body `{}`. All other roles (`SHOP`, `AUDITOR`, `CUSTOMER`) and machine identities receive HTTP 403 Forbidden. *(Customer access to trigger AI investigation was formally deprecated and removed in Stage 8b)*.
+> 3. Both endpoints enforce fail-closed audit logging (`CASE_CLASSIFIED` / `INVESTIGATION_PERFORMED`); if audit persistence fails, investigation runs are rolled back and HTTP 503 Service Unavailable is returned.
+> 4. Persistent cost guarding (`investigationCostGuard.js`) enforces per-admin and per-tenant hourly/daily rate limits in MongoDB (`investigationratelimits` collection); violations return HTTP 429 Rate Limit Exceeded.
+> 5. Zero dispatch, release, edit, or refund controls exist in the workspace UI. AI investigations remain strictly advisory (`isExecutable: false`).
 
 
 ---

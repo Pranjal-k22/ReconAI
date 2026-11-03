@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../../src/app.js";
 import * as investigatorService from "../../src/services/ai/multiAgentInvestigator.js";
+import * as costGuardService from "../../src/services/ai/investigationCostGuard.js";
+import { PaymentCase } from "../../src/models/PaymentCase.js";
 import { signUserToken, signServiceToken, ROLES } from "../../src/services/auth/tokenService.js";
 import { AppError } from "../../src/utils/AppError.js";
 
@@ -135,12 +137,20 @@ describe("Payment Case Investigation Routes (POST & GET /api/payment-cases/:case
   // 2. Successful Investigation Runs for Authorized Roles
   // -------------------------------------------------------------------------
   it("3. POST /api/payment-cases/:caseId/investigate returns 200 with structured multi-agent result for Admin", async () => {
+    vi.spyOn(costGuardService, "checkInvestigationCostGuard").mockResolvedValue();
+    vi.spyOn(costGuardService, "recordInvestigationCostUsage").mockResolvedValue();
+    vi.spyOn(PaymentCase, "findOne").mockReturnValue({
+      lean: vi.fn().mockResolvedValue({
+        caseId: "CASE-001",
+        tenantId: TENANT_A
+      })
+    });
     vi.spyOn(investigatorService, "runMultiAgentInvestigation").mockResolvedValue(sampleInvestigationRun);
 
     const res = await request(app)
       .post("/api/payment-cases/CASE-001/investigate")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ idempotencyKey: "idem-key-001" });
+      .send({});
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -155,29 +165,25 @@ describe("Payment Case Investigation Routes (POST & GET /api/payment-cases/:case
   });
 
   // -------------------------------------------------------------------------
-  // 3. Customer Isolation: Customer cannot investigate another customer's case
+  // 3. Role Restriction: Customer is rejected with 403 Forbidden (Phase 7 customer access removed in Stage 8b)
   // -------------------------------------------------------------------------
-  it("4. Customer cannot investigate another customer's case (returns 404 Not Found)", async () => {
-    vi.spyOn(investigatorService, "runMultiAgentInvestigation").mockRejectedValue(
-      AppError.notFound("PaymentCase not found for caseId 'CASE-001'")
-    );
-
+  it("4. Customer cannot investigate cases (returns 403 Forbidden under Stage 8b admin-only policy)", async () => {
     const res = await request(app)
       .post("/api/payment-cases/CASE-001/investigate")
       .set("Authorization", `Bearer ${customerTokenB}`)
       .send({});
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     expect(res.body.success).toBe(false);
   });
 
   // -------------------------------------------------------------------------
-  // 4. Cross-tenant isolation
+  // 4. Cross-tenant isolation & empty body invariants
   // -------------------------------------------------------------------------
   it("5. Cross-tenant investigation attempt fails safely with 404", async () => {
-    vi.spyOn(investigatorService, "runMultiAgentInvestigation").mockRejectedValue(
-      AppError.notFound("PaymentCase not found for caseId 'CASE-CROSS-TENANT'")
-    );
+    vi.spyOn(PaymentCase, "findOne").mockReturnValue({
+      lean: vi.fn().mockResolvedValue(null)
+    });
 
     const res = await request(app)
       .post("/api/payment-cases/CASE-CROSS-TENANT/investigate")
@@ -186,6 +192,17 @@ describe("Payment Case Investigation Routes (POST & GET /api/payment-cases/:case
 
     expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);
+  });
+
+  it("5b. Rejects non-empty request body with 400 Bad Request (strict empty body)", async () => {
+    const res = await request(app)
+      .post("/api/payment-cases/CASE-001/investigate")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ callerPayload: "injection_attempt" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error?.message).toMatch(/strict empty body/i);
   });
 
   // -------------------------------------------------------------------------

@@ -131,8 +131,11 @@ async function getWithBoundedRetry(url, config = {}, maxRetries = 2) {
 }
 
 /**
- * ONLY GET functions are exported from this module.
- * No POST, PUT, PATCH, or DELETE operations exist or are allowed.
+ * Workspace API Client (Stage 8b - Controlled Actions & Read Contract)
+ *
+ * Exports strictly GET read functions and exactly two controlled ADMIN POST
+ * functions: classifyCase and investigateCase. Both transmit strict empty bodies ({}).
+ * NO dispatch, release, edit, or refund controls exist anywhere.
  */
 
 export async function fetchPaymentCases({ page = 1, limit = 50, resolutionCaseStatus, isSafeHold } = {}) {
@@ -177,28 +180,44 @@ export async function fetchCaseProviderOperations(caseId) {
   return getWithBoundedRetry(`/payment-cases/${encodeURIComponent(caseId)}/provider/operations`);
 }
 
+export async function fetchCaseClaims(caseId) {
+  if (!caseId) throw new Error("caseId is required");
+  return getWithBoundedRetry(`/payment-cases/${encodeURIComponent(caseId)}/claims`);
+}
+
 /**
- * Customer Claim API Endpoints (Stage 7b)
+ * Controlled Admin Actions (Stage 8b)
+ *
+ * Exactly two POST functions are exported: classifyCase and investigateCase.
+ * Strict invariants:
+ * - Empty body ({}) transmitted
+ * - No tenant header
+ * - No identifier except path caseId
+ * - Handled server-side with fail-closed audit and rate limit guards
  */
 
-export async function submitCustomerClaim(payload, idempotencyKey) {
+export async function classifyCase(caseId) {
+  if (!caseId) throw new Error("caseId is required");
   try {
-    const headers = {};
-    if (idempotencyKey) {
-      headers["Idempotency-Key"] = idempotencyKey;
-    }
-    const response = await casesAxiosInstance.post("/claims", payload, { headers });
+    const response = await casesAxiosInstance.post(
+      `/payment-cases/${encodeURIComponent(caseId)}/classify`,
+      {}
+    );
     return response.data;
   } catch (err) {
     throw mapApiError(err);
   }
 }
 
-export async function fetchMyClaims() {
-  return getWithBoundedRetry("/claims");
-}
-
-export async function fetchCaseClaims(caseId) {
+export async function investigateCase(caseId) {
   if (!caseId) throw new Error("caseId is required");
-  return getWithBoundedRetry(`/payment-cases/${encodeURIComponent(caseId)}/claims`);
+  try {
+    const response = await casesAxiosInstance.post(
+      `/payment-cases/${encodeURIComponent(caseId)}/investigate`,
+      {}
+    );
+    return response.data;
+  } catch (err) {
+    throw mapApiError(err);
+  }
 }

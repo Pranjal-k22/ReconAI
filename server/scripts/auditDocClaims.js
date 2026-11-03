@@ -44,7 +44,9 @@ function shaExists(sha) {
 
 // 3. Gather introspected routes
 // Route format: METHOD | FULL PATH
-const routeFile = "evidence/stage7/02-introspected-routes.txt";
+const routeFile = fs.existsSync("evidence/stage8/09-introspected-routes.txt")
+  ? "evidence/stage8/09-introspected-routes.txt"
+  : "evidence/stage7/02-introspected-routes.txt";
 let introspectedRoutes = new Set();
 if (fs.existsSync(routeFile)) {
   const lines = fs.readFileSync(routeFile, "utf8").split("\n");

@@ -389,3 +389,49 @@ Customers reporting bank deductions on pending/failed orders or unauthorized tra
    - Future owner options for abuse throttling:
      - Cap holds per customer.
      - Require admin confirmation before a safe-hold persists beyond N hours.
+
+
+---
+
+## ADR-17: Controlled Admin Actions and AI Investigation Cost Guard
+
+### Context
+Human operators investigating payment discrepancies require interactive controls in the Operator Workspace UI to:
+1. Re-evaluate deterministic classification against freshly stored database evidence (e.g. after customer claim intake or webhook arrival).
+2. Trigger an on-demand multi-agent AI advisory investigation.
+
+However, introducing mutation capabilities into the UI carries substantial risks:
+- Financial loss risk if dispatch, release, edit, or refund controls are exposed in the browser.
+- Cost spikes or denial-of-service from unbounded LLM invocations.
+- Prompt injection or argument manipulation if endpoints accept arbitrary request bodies.
+- Audit trail bypass if mutations succeed without immutable provenance.
+
+### Decision
+1. **Strictly Two Controlled Admin Actions**:
+   - The workspace UI exposes exactly two action buttons for authenticated `ADMIN` users on the Case Detail page:
+     - `POST /api/payment-cases/:caseId/classify`
+     - `POST /api/payment-cases/:caseId/investigate`
+   - Both routes are guarded by `requireRoles(ROLES.ADMIN)`.
+   - `SHOP`, `AUDITOR`, `CUSTOMER`, and service principal machine identities are strictly rejected with `HTTP 403 Forbidden`. Customer access to trigger AI investigation was formally deprecated and removed in Stage 8b.
+   - For `SHOP`, `AUDITOR`, and `CUSTOMER` users, the admin action panel and its buttons are completely absent from the DOM.
+2. **Strict Empty Body Enforcement**:
+   - Both endpoints validate that callers send an empty request body: `if (req.body && Object.keys(req.body).length > 0) throw AppError.badRequest(...)`.
+   - Callers cannot override parameters, inject prompts, alter thresholds, or supply target state.
+3. **Multi-Step Client Confirmation & In-Flight Protection**:
+   - Both buttons trigger a modal confirmation step explaining exact operational semantics:
+     - Classify: *"Re-evaluates stored records and records an audit entry"*
+     - Investigate: *"This will call the AI model and is advisory only"*
+   - While a request is in flight, both buttons are disabled (`actionInFlight`) to eliminate double submissions.
+4. **Persistent AI Investigation Cost Guard**:
+   - Managed by `investigationCostGuard.js` and persisted in MongoDB (`InvestigationRateLimit` model in `investigationratelimits` collection).
+   - Compound index `{ key: 1, windowStart: 1 }` with MongoDB TTL expiration on `expiresAt`.
+   - Restarts do not reset usage counters.
+   - Enforces per-admin hourly limit (`AI_INVESTIGATION_HOURLY_ADMIN_LIMIT`, default 20), per-tenant hourly limit (`AI_INVESTIGATION_HOURLY_TENANT_LIMIT`, default 50), and daily caps (`AI_INVESTIGATION_DAILY_ADMIN_LIMIT`, `AI_INVESTIGATION_DAILY_TENANT_LIMIT`).
+   - Rate limit violations return `HTTP 429 Rate Limit Exceeded`.
+5. **Fail-Closed Audit Logging**:
+   - Both actions write immutable audit entries (`CASE_CLASSIFIED` and `INVESTIGATION_PERFORMED`).
+   - If audit persistence fails, any newly created investigation run is immediately deleted (rolled back) and the request fails closed with `HTTP 503 Service Unavailable`.
+6. **Strict Invariant: Zero Dispatch, Release, Edit, or Refund Controls**:
+   - Neither the frontend nor the controlled case routes provide any capability to dispatch provider operations, release safe holds, edit case records, or issue refunds.
+   - Provider dispatch remains strictly guarded under Gate 3 policy authorization tokens.
+   - Customer claims remain unverified evidence only. AI investigation outputs remain strictly advisory (`isExecutable: false`).

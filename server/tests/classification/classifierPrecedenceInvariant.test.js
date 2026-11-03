@@ -81,7 +81,9 @@ function mergeInputs(inputA, inputB) {
 }
 
 describe("Classifier Precedence Invariant Suite", () => {
-  const classifierPath = path.resolve(process.cwd(), "src/services/classification/evidenceClassifier.js");
+  const classifierPath = fs.existsSync(path.resolve(process.cwd(), "src/services/classification/evidenceClassifier.js"))
+    ? path.resolve(process.cwd(), "src/services/classification/evidenceClassifier.js")
+    : path.resolve(process.cwd(), "server/src/services/classification/evidenceClassifier.js");
   const rules = extractClassifierRules(classifierPath);
 
   const fixtureByCase = {};
