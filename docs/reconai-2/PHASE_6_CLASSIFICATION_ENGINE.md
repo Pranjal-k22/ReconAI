@@ -67,13 +67,13 @@ A scenario is classified as `PROVEN_END_TO_END` strictly iff an integration test
 
 | Category | Count | Scenarios / Production Writers / Justifications |
 |:---|:---:|:---|
-| **PROVEN_END_TO_END** | 11 | Cases 2, 3, 5, 6, 7, 17, 19, 20, 21, 22, 29. All decisive fields have verified production writers in `server/src` (including `server/src/routes/claimRoutes.js:313` for customer intake). |
-| **SEEDABLE_ONLY** | 6 | Case 8 (`PARTIAL_CAPTURE` — schema fields `amountAuthorizedPaise`/`amountCapturedPaise` have no production ingestion writers), Case 10 (`PARTIAL_REFUND` — no webhook writes partial refund amount), Case 11 (`FULL_REFUND_INITIATED_NOT_COMPLETED` — refund initiation written only via sandbox dispatch `providerDispatchService.js:667`), Case 12 (`FAILED_REFUND` — refund failure written only via sandbox dispatch `providerDispatchService.js:770`), Case 26 (`WORKER_CRASH_ACTION_PENDING` — decisive field `actionLeaseExpiresAt` has no background worker writer), Case 30 (`CHARGEBACK_OR_FORMAL_DISPUTE` — `gatewayPayment.dispute` has no gateway dispute webhook pipeline). |
+| **PROVEN_END_TO_END** | 8 | Cases 5, 6, 7, 17, 19, 20, 21, 22. All decisive fields have verified production writers in `server/src`. |
+| **SEEDABLE_ONLY** | 9 | Case 2 (`CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING` — linking requires customerId on order/payment, which has zero production writers), Case 3 (`CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED` — linking requires customerId on order/payment), Case 8 (`PARTIAL_CAPTURE` — schema fields `amountAuthorizedPaise`/`amountCapturedPaise` have no production ingestion writers), Case 10 (`PARTIAL_REFUND` — no webhook writes partial refund amount), Case 11 (`FULL_REFUND_INITIATED_NOT_COMPLETED` — refund initiation written only via sandbox dispatch `providerDispatchService.js:667`), Case 12 (`FAILED_REFUND` — refund failure written only via sandbox dispatch `providerDispatchService.js:770`), Case 26 (`WORKER_CRASH_ACTION_PENDING` — decisive field `actionLeaseExpiresAt` has no background worker writer), Case 29 (`FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT` — linking requires customerId on order/payment), Case 30 (`CHARGEBACK_OR_FORMAL_DISPUTE` — `gatewayPayment.dispute` has no gateway dispute webhook pipeline). |
 | **INGESTION_TIME** | 5 | Case 13 (`server/src/services/webhook/webhookService.js:235`), Case 14 (`server/src/services/webhook/webhookService.js:210`), Case 15 (`server/src/services/webhook/webhookService.js:193`), Case 16 (`server/src/services/webhook/webhookService.js:1022`), Case 28 (`server/src/middleware/authMiddleware.js:230`). Enforced at network/webhook/auth boundaries. |
 | **NEEDS_CLAIM_INTAKE** | 0 | Customer claim intake implemented in Stage 7b via `POST /api/claims`. |
 | **RESERVED** | 6 | Case 1, Case 4, Case 9, Case 18, Case 23, Case 27 (reserved in classifier/policy domain models). |
 | **NO_SOURCE** | 2 | Case 24, Case 25 (runtime infrastructure faults not stored in persistence records). |
-| **Total** | 30 | Strict production reachable count is strictly **11** (`PROVEN_END_TO_END`). |
+| **Total** | 30 | Strict production reachable count is strictly **8** (`PROVEN_END_TO_END`). |
 
 ---
 

@@ -648,5 +648,142 @@ describe("Customer Claim Intake & Classifier Wiring (Real MongoDB)", { timeout: 
       const victimCase = await PaymentCase.findOne({ caseId: "CASE-VICTIM-001" });
       expect(victimCase.customerDebitStatus).toBe("DEBIT_NONE");
     });
+
+    it("enforces customer rate limit (5 allowed in 1h, 6th -> 429), state persistence across fresh requests, and daily limit (20/day)", async () => {
+      // 1. Submit 5 valid claims for Customer 1 with distinct idempotency keys
+      for (let i = 1; i <= 5; i++) {
+        const res = await request(app)
+          .post("/api/claims")
+          .set("Authorization", `Bearer ${customer1Token}`)
+          .set("Idempotency-Key", `idem_rate_limit_c1_${i}`)
+          .send({
+            claimType: "DEBIT_NOT_CONFIRMED",
+            reference: `pay_rate_test_${i}`,
+            claimedAmountPaise: 1000 * i,
+            description: `Rate limit test claim ${i}`
+          });
+        expect(res.status).toBe(201);
+      }
+
+      // 2. 6th claim within the same hour fails with HTTP 429 RATE_LIMIT_EXCEEDED
+      const sixthRes = await request(app)
+        .post("/api/claims")
+        .set("Authorization", `Bearer ${customer1Token}`)
+        .set("Idempotency-Key", "idem_rate_limit_c1_6")
+        .send({
+          claimType: "DEBIT_NOT_CONFIRMED",
+          reference: "pay_rate_test_6",
+          claimedAmountPaise: 6000,
+          description: "Rate limit test claim 6"
+        });
+      expect(sixthRes.status).toBe(429);
+      expect(sixthRes.body.error).toBe("RATE_LIMIT_EXCEEDED");
+      expect(sixthRes.body.message).toContain("Limit: 5 per hour");
+
+      // 3. State persistence: a completely separate request with a new idempotency key
+      // still hits 429 because count is queried directly from persistent MongoDB collection
+      const freshReqRes = await request(app)
+        .post("/api/claims")
+        .set("Authorization", `Bearer ${customer1Token}`)
+        .set("Idempotency-Key", "idem_rate_limit_c1_fresh_req")
+        .send({
+          claimType: "DEBIT_NOT_CONFIRMED",
+          reference: "pay_rate_test_7",
+          claimedAmountPaise: 7000
+        });
+      expect(freshReqRes.status).toBe(429);
+      expect(freshReqRes.body.error).toBe("RATE_LIMIT_EXCEEDED");
+
+      // Customer 2 is isolated and not blocked by Customer 1's rate limit
+      const cust2Res = await request(app)
+        .post("/api/claims")
+        .set("Authorization", `Bearer ${customer2Token}`)
+        .set("Idempotency-Key", "idem_rate_limit_c2_1")
+        .send({
+          claimType: "DEBIT_NOT_CONFIRMED",
+          reference: "pay_rate_test_cust2",
+          claimedAmountPaise: 5000
+        });
+      expect(cust2Res.status).toBe(201);
+
+      // 4. Daily cap check (20/day):
+      // Age out the first 5 claims to 2 hours ago
+      // (Direct collection update bypasses Mongoose schema immutability middleware)
+      const twoHoursAgo = new Date(Date.now() - 7200000);
+      await mongoose.connection.collection("customerclaims").updateMany(
+        { tenantId: TENANT_A, customerId: CUSTOMER_1 },
+        { $set: { createdAt: twoHoursAgo } }
+      );
+
+      // Submit batch 2: claims 6..10 (all 201), then age them to 2 hours ago
+      for (let i = 6; i <= 10; i++) {
+        const res = await request(app)
+          .post("/api/claims")
+          .set("Authorization", `Bearer ${customer1Token}`)
+          .set("Idempotency-Key", `idem_rate_limit_daily_${i}`)
+          .send({
+            claimType: "DEBIT_NOT_CONFIRMED",
+            reference: `pay_rate_daily_${i}`,
+            claimedAmountPaise: 1000
+          });
+        expect(res.status).toBe(201);
+      }
+      await mongoose.connection.collection("customerclaims").updateMany(
+        { tenantId: TENANT_A, customerId: CUSTOMER_1 },
+        { $set: { createdAt: twoHoursAgo } }
+      );
+
+      // Submit batch 3: claims 11..15 (all 201), then age them to 2 hours ago
+      for (let i = 11; i <= 15; i++) {
+        const res = await request(app)
+          .post("/api/claims")
+          .set("Authorization", `Bearer ${customer1Token}`)
+          .set("Idempotency-Key", `idem_rate_limit_daily_${i}`)
+          .send({
+            claimType: "DEBIT_NOT_CONFIRMED",
+            reference: `pay_rate_daily_${i}`,
+            claimedAmountPaise: 1000
+          });
+        expect(res.status).toBe(201);
+      }
+      await mongoose.connection.collection("customerclaims").updateMany(
+        { tenantId: TENANT_A, customerId: CUSTOMER_1 },
+        { $set: { createdAt: twoHoursAgo } }
+      );
+
+      // Submit batch 4: claims 16..20 (all 201) - reaching 20 claims in the last 24h
+      for (let i = 16; i <= 20; i++) {
+        const res = await request(app)
+          .post("/api/claims")
+          .set("Authorization", `Bearer ${customer1Token}`)
+          .set("Idempotency-Key", `idem_rate_limit_daily_${i}`)
+          .send({
+            claimType: "DEBIT_NOT_CONFIRMED",
+            reference: `pay_rate_daily_${i}`,
+            claimedAmountPaise: 1000
+          });
+        expect(res.status).toBe(201);
+      }
+
+      // Age out batch 4 as well so hourlyCount is 0 (< 5) while 24h dailyCount is 20 (>= 20)
+      await mongoose.connection.collection("customerclaims").updateMany(
+        { tenantId: TENANT_A, customerId: CUSTOMER_1 },
+        { $set: { createdAt: twoHoursAgo } }
+      );
+
+      // The 21st claim within 24 hours fails with daily limit 429
+      const twentyFirstRes = await request(app)
+        .post("/api/claims")
+        .set("Authorization", `Bearer ${customer1Token}`)
+        .set("Idempotency-Key", "idem_rate_limit_daily_21")
+        .send({
+          claimType: "DEBIT_NOT_CONFIRMED",
+          reference: "pay_rate_daily_21",
+          claimedAmountPaise: 1000
+        });
+      expect(twentyFirstRes.status).toBe(429);
+      expect(twentyFirstRes.body.error).toBe("RATE_LIMIT_EXCEEDED");
+      expect(twentyFirstRes.body.message).toContain("Limit: 20 per day");
+    });
   });
 });

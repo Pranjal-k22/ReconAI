@@ -15,19 +15,19 @@ export const SCENARIOS = [
   {
     caseNumber: 2,
     scenarioId: "CASE_2_CUSTOMER_DEBIT_CLAIM_GATEWAY_PENDING",
-    category: "PROVEN_END_TO_END",
-    decisiveFields: ["customerClaims[].claimType === 'DEBIT_NOT_CONFIRMED'", "pendingMinutes >= 60"],
-    productionWriter: "server/src/routes/claimRoutes.js:313 (POST /api/claims, DEBIT_NOT_CONFIRMED)",
-    reason: "Ingested via authenticated customer portal claim intake route (POST /api/claims) when gateway payment is created/pending for >= 60 minutes.",
+    category: "SEEDABLE_ONLY",
+    decisiveFields: ["customerClaims[].claimType === 'DEBIT_NOT_CONFIRMED'", "pendingMinutes >= 60", "MerchantOrder.customerId / GatewayPayment.customerId link"],
+    productionWriter: "Claim intake: server/src/routes/claimRoutes.js:313; Decisive linking field customerId on MerchantOrder/GatewayPayment has NONE (zero production writers in server/src)",
+    reason: "Claim intake route exists (POST /api/claims), but correlating to the order/case requires customerId on MerchantOrder or GatewayPayment; zero production writers exist in server/src, making linking SEEDABLE_ONLY.",
     docLine: "EDGE_CASE_POLICY_MATRIX.md:32"
   },
   {
     caseNumber: 3,
     scenarioId: "CASE_3_CUSTOMER_DEBIT_CLAIM_PAYMENT_FAILED",
-    category: "PROVEN_END_TO_END",
-    decisiveFields: ["customerClaims[].claimType === 'DEBIT_NOT_CONFIRMED'", "gatewayPayment.status === 'FAILED'"],
-    productionWriter: "server/src/routes/claimRoutes.js:313 (POST /api/claims, DEBIT_NOT_CONFIRMED)",
-    reason: "Ingested via authenticated customer portal claim intake route (POST /api/claims) when gateway payment is FAILED.",
+    category: "SEEDABLE_ONLY",
+    decisiveFields: ["customerClaims[].claimType === 'DEBIT_NOT_CONFIRMED'", "gatewayPayment.status === 'FAILED'", "MerchantOrder.customerId / GatewayPayment.customerId link"],
+    productionWriter: "Claim intake: server/src/routes/claimRoutes.js:313; Decisive linking field customerId on MerchantOrder/GatewayPayment has NONE (zero production writers in server/src)",
+    reason: "Claim intake route exists (POST /api/claims), but correlating to the order/case requires customerId on MerchantOrder or GatewayPayment; zero production writers exist in server/src, making linking SEEDABLE_ONLY.",
     docLine: "EDGE_CASE_POLICY_MATRIX.md:48"
   },
   {
@@ -258,10 +258,10 @@ export const SCENARIOS = [
   {
     caseNumber: 29,
     scenarioId: "CASE_29_FRAUD_ALLEGATION_UNAUTHORIZED_PAYMENT",
-    category: "PROVEN_END_TO_END",
-    decisiveFields: ["customerClaims[].claimType === 'UNAUTHORIZED_PAYMENT'"],
-    productionWriter: "server/src/routes/claimRoutes.js:313 (POST /api/claims, UNAUTHORIZED_PAYMENT)",
-    reason: "Ingested via authenticated customer portal claim intake route (POST /api/claims) with claimType UNAUTHORIZED_PAYMENT; triggers Tier 2 safe hold.",
+    category: "SEEDABLE_ONLY",
+    decisiveFields: ["customerClaims[].claimType === 'UNAUTHORIZED_PAYMENT'", "MerchantOrder.customerId / GatewayPayment.customerId link"],
+    productionWriter: "Claim intake: server/src/routes/claimRoutes.js:313; Decisive linking field customerId on MerchantOrder/GatewayPayment has NONE (zero production writers in server/src)",
+    reason: "Claim intake route exists (POST /api/claims) with UNAUTHORIZED_PAYMENT, but correlating to the order/case requires customerId on MerchantOrder or GatewayPayment; zero production writers exist in server/src, making linking SEEDABLE_ONLY.",
     docLine: "EDGE_CASE_POLICY_MATRIX.md:481"
   },
   {
@@ -308,12 +308,15 @@ const jsonOutput = {
   scenarios: SCENARIOS
 };
 
-const stage7Dir = path.join(repoRoot, "evidence/stage7");
-if (!fs.existsSync(stage7Dir)) {
-  fs.mkdirSync(stage7Dir, { recursive: true });
+const stage8Dir = path.join(repoRoot, "evidence/stage8");
+if (!fs.existsSync(stage8Dir)) {
+  fs.mkdirSync(stage8Dir, { recursive: true });
 }
 
-fs.writeFileSync(path.join(stage7Dir, "08-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
+fs.writeFileSync(path.join(stage8Dir, "05-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
+if (fs.existsSync(path.join(repoRoot, "evidence/stage7"))) {
+  fs.writeFileSync(path.join(repoRoot, "evidence/stage7/08-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
+}
 if (fs.existsSync(path.join(repoRoot, "evidence/stage5_6"))) {
   fs.writeFileSync(path.join(repoRoot, "evidence/stage5_6/05-strict-reachability.json"), JSON.stringify(jsonOutput, null, 2), "utf8");
 }
@@ -342,9 +345,12 @@ const textLines = [
   })
 ];
 
-fs.writeFileSync(path.join(stage7Dir, "08-strict-reachability.txt"), textLines.join("\n"), "utf8");
+fs.writeFileSync(path.join(stage8Dir, "05-strict-reachability.txt"), textLines.join("\n"), "utf8");
+if (fs.existsSync(path.join(repoRoot, "evidence/stage7"))) {
+  fs.writeFileSync(path.join(repoRoot, "evidence/stage7/08-strict-reachability.txt"), textLines.join("\n"), "utf8");
+}
 if (fs.existsSync(path.join(repoRoot, "evidence/stage5_6"))) {
   fs.writeFileSync(path.join(repoRoot, "evidence/stage5_6/05-strict-reachability.txt"), textLines.join("\n"), "utf8");
 }
 console.log(textLines.slice(0, 15).join("\n"));
-console.log(`\nGenerated 08-strict-reachability.json and .txt successfully.`);
+console.log(`\nGenerated 05-strict-reachability.json and .txt successfully.`);

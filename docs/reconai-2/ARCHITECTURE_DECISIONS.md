@@ -372,3 +372,20 @@ Customers reporting bank deductions on pending/failed orders or unauthorized tra
    - Zero provider operations are dispatched on customer claims alone.
 6. **Multi-Agent Pipeline Isolation**:
    - Claim text flows only to `Customer AI` as an unverified evidence card. The `Resolution Planner AI` filter strictly excludes customer claim records, and the resolution planner output schema strictly constrains `isExecutable: false`.
+7. **Production Claim Linking Limitation & Reachability Reclassification**:
+   - `git grep -n "customerId" -- server/src` confirms zero production writers exist for `customerId` on `MerchantOrder` or `GatewayPayment`. In `server/src`, orders are ingested from merchant databases/files and webhook ingestion (`GatewayPayment.create` at `webhookService.js:1169`) does not extract `customerId`.
+   - Because `claimRoutes.js:232-258` requires `{ tenantId, customerId, merchantOrderId/gatewayPaymentId }` to link a customer claim to a case, in production claims can only link if the merchant/order record already contains `customerId`. Cases 2, 3, and 29 are therefore strictly `SEEDABLE_ONLY` for linking.
+   - Strict reachability breakdown across the 30 edge cases is: **8 PROVEN_END_TO_END, 9 SEEDABLE_ONLY, 5 INGESTION_TIME, 0 NEEDS_CLAIM_INTAKE, 6 RESERVED, 2 NO_SOURCE** (Total 30).
+   - Owner decision options for production claim linking:
+     - (a) merchant-supplied `customerId` at order creation through an authenticated API;
+     - (b) Razorpay order notes (untrusted, must be verified);
+     - (c) customer links their order by an order reference + proof (e.g. a one-time code);
+     - (d) accept the limitation.
+8. **Abuse Mitigation & Customer-Triggered Safe-Hold Freezing**:
+   - A fraud-type claim (`UNAUTHORIZED_PAYMENT`) places a safe-hold (`FRAUD_SUSPICION`, Case 29) that freezes automated repair and prevents provider dispatch.
+   - Active mitigations in place:
+     - Claims can only link to payments belonging to the authenticated customer's own verified `customerId`.
+     - Rate limiting (5 per hour, 20 per day per customer stored in MongoDB `customerclaims` collection).
+   - Future owner options for abuse throttling:
+     - Cap holds per customer.
+     - Require admin confirmation before a safe-hold persists beyond N hours.

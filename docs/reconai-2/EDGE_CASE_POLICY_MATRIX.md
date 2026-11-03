@@ -21,8 +21,8 @@ Reachability is determined strictly by runtime proxy tracing and DB-driven class
 
 | Category | Count | Cases | Notes / Enforcement Point |
 |:---|:---:|:---|:---|
-| **PROVEN_END_TO_END** | 11 | 2, 3, 5, 6, 7, 17, 19, 20, 21, 22, 29 | Webhook / API poller / customer claim intake write decisive fields in production |
-| **SEEDABLE_ONLY** | 6 | 8, 10, 11, 12, 26, 30 | Schema supports fields; test-seedable; zero production webhook writers |
+| **PROVEN_END_TO_END** | 8 | 5, 6, 7, 17, 19, 20, 21, 22 | Webhook / API poller write decisive fields in production |
+| **SEEDABLE_ONLY** | 9 | 2, 3, 8, 10, 11, 12, 26, 29, 30 | Schema supports fields; test-seedable; Cases 2, 3, 29 require customerId on MerchantOrder/GatewayPayment which has zero production writers |
 | **INGESTION_TIME** | 5 | 13, 14, 15, 16, 28 | Handled at ingestion/network boundary (`webhookService.js`, `authMiddleware.js`) |
 | **NEEDS_CLAIM_INTAKE** | 0 | None | Customer claim intake implemented in Stage 7b via `POST /api/claims` |
 | **RESERVED** | 6 | 1, 4, 9, 18, 23, 27 | Reserved pending authoritative data sources or runtime concurrency locks |

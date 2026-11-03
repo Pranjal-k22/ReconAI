@@ -1,11 +1,16 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import mongoose from "mongoose";
 import { seedWorkspaceDemo } from "./seedWorkspaceDemo.js";
 
 const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const CDP_PORT = 9222;
+const evidenceDir = process.env.EVIDENCE_DIR || "evidence/stage8";
+if (!fs.existsSync(evidenceDir)) {
+  fs.mkdirSync(evidenceDir, { recursive: true });
+}
 
 const seedPassword = process.env.DEMO_SEED_PASSWORD;
 if (!seedPassword || typeof seedPassword !== "string" || seedPassword.trim().length === 0) {
@@ -114,7 +119,7 @@ async function main() {
 
   // 5. Launch Chrome Headless with CDP
   console.log("Step 5: Launching Chrome Headless with CDP...");
-  const tmpProfile = path.resolve(`C:\\Users\\pc\\AppData\\Local\\Temp\\chrome-reconai-stage7-profile-${Date.now()}`);
+  const tmpProfile = path.resolve(path.join(os.tmpdir(), `chrome-reconai-profile-${Date.now()}`));
   if (!fs.existsSync(tmpProfile)) {
     fs.mkdirSync(tmpProfile, { recursive: true });
   }
@@ -218,9 +223,9 @@ async function main() {
   async function takeScreenshot(filename) {
     const res = await pageSend("Page.captureScreenshot", { format: "png" });
     const buffer = Buffer.from(res.data, "base64");
-    const outPath = path.resolve(`evidence/stage7/${filename}`);
+    const outPath = path.resolve(path.join(evidenceDir, filename));
     fs.writeFileSync(outPath, buffer);
-    console.log(`Saved screenshot: evidence/stage7/${filename} (${buffer.length} bytes)`);
+    console.log(`Saved screenshot: ${evidenceDir}/${filename} (${buffer.length} bytes)`);
   }
 
   async function evaluateInPage(expression) {
@@ -472,7 +477,7 @@ async function main() {
 
   // 8. Write evidence files
   fs.writeFileSync(
-    "evidence/stage7/06-browser-network-log.json",
+    path.join(evidenceDir, "07-browser-network-log.json"),
     JSON.stringify(
       {
         totalCapturedRequests: allNetworkRequests.length,
@@ -540,9 +545,9 @@ async function main() {
   }
   verificationReport += "\n";
 
-  fs.writeFileSync("evidence/stage7/05-browser-verification.txt", verificationReport, "utf8");
+  fs.writeFileSync(path.join(evidenceDir, "06-browser-verification.txt"), verificationReport, "utf8");
   console.log(verificationReport);
-  console.log("Saved evidence to evidence/stage7/05-browser-verification.txt and 06-browser-network-log.json");
+  console.log(`Saved evidence to ${evidenceDir}/06-browser-verification.txt and 07-browser-network-log.json`);
 }
 
 main().catch((err) => {

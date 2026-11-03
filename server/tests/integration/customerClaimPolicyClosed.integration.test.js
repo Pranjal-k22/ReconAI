@@ -442,4 +442,112 @@ describe("B4: Customer Claim Policy & Dispatch Stay Closed E2E (Real MongoDB)", 
     expect(decision.ruleEvaluations?.customerDebitClaimActive).toBeFalsy();
     expect(evalRes.decision.ruleEvaluations?.customerClaimActive).toBeFalsy();
   });
+
+  it("(f) Staleness guard: classify a Case 6 repair case, submit an UNAUTHORIZED_PAYMENT claim, then call dispatch -> 409 CLASSIFICATION_STALE with no provider call and no token", async () => {
+    const mockFetch = vi.fn();
+
+    // 1. Seed Case 6: CAPTURED payment with PENDING order
+    await MerchantOrder.create({
+      merchantOrderId: "ord_stale_case6_01",
+      tenantId: TENANT_ID,
+      customerId: CUSTOMER_ID,
+      amountPaise: 35000,
+      currency: "INR",
+      orderStatus: "ORDER_CREATED"
+    });
+
+    await GatewayPayment.create({
+      gatewayPaymentId: "pay_stale_case6_01",
+      merchantOrderId: "ord_stale_case6_01",
+      tenantId: TENANT_ID,
+      customerId: CUSTOMER_ID,
+      amountPaise: 35000,
+      currency: "INR",
+      status: "CAPTURED",
+      method: "UPI"
+    });
+
+    await PaymentCase.create({
+      caseId: "CASE-STALE-CASE6-01",
+      tenantId: TENANT_ID,
+      customerId: CUSTOMER_ID,
+      merchantOrderId: "ord_stale_case6_01",
+      gatewayPaymentId: "pay_stale_case6_01",
+      discrepancyCategory: "STATUS_MISMATCH",
+      captureStatus: "CAPTURE_CAPTURED",
+      customerDebitStatus: "DEBIT_NONE",
+      resolutionCaseStatus: "CASE_DETECTED"
+    });
+
+    // 2. Classify the case initially as Case 6
+    const classRes = await classifyCase({
+      tenantId: TENANT_ID,
+      caseId: "CASE-STALE-CASE6-01",
+      actorType: "SYSTEM",
+      actorId: "initial_classifier"
+    });
+    expect(classRes.evidenceRecord.scenarioId).toBe("CASE_6_PAID_GATEWAY_UNPAID_ORDER");
+
+    // 3. Evaluate policy decision for this classification
+    await evaluateAndSimulateResolution({
+      tenantId: TENANT_ID,
+      caseId: "CASE-STALE-CASE6-01",
+      actorId: "usr_policy_approver_2",
+      actorRole: "ADMIN",
+      proposedActionType: "REQUEST_REFUND",
+      amountPaise: 35000,
+      currency: "INR",
+      idempotencyKey: "idem_decision_stale_case6_01"
+    });
+
+    // 4. Now, customer submits an UNAUTHORIZED_PAYMENT claim referencing the payment
+    const claimRes = await request(app)
+      .post("/api/claims")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .set("Idempotency-Key", "idem_claim_stale_case6_01")
+      .send({
+        claimType: "UNAUTHORIZED_PAYMENT",
+        reference: "pay_stale_case6_01",
+        claimedAmountPaise: 35000,
+        description: "Fraudulent transaction reported by customer"
+      });
+    expect(claimRes.status).toBe(201);
+    const claim = await CustomerClaim.findOne({ claimId: claimRes.body.claimId });
+    expect(claim).toBeTruthy();
+    expect(claim.linkedCaseId).toBe("CASE-STALE-CASE6-01");
+
+    // 5. Attempt provider dispatch without re-classifying -> rejects with 409 CLASSIFICATION_STALE
+    let dispatchError = null;
+    let dispatchResult = null;
+    try {
+      dispatchResult = await dispatchSandboxAction({
+        tenantId: TENANT_ID,
+        caseId: "CASE-STALE-CASE6-01",
+        actorId: "usr_policy_approver_2",
+        actorRole: "ADMIN",
+        actionType: "REQUEST_REFUND",
+        idempotencyKey: "idem_dispatch_stale_case6_01",
+        customFetch: mockFetch
+      });
+    } catch (err) {
+      dispatchError = err;
+    }
+
+    // Must fail closed with 409 CLASSIFICATION_STALE or safe-hold block
+    if (dispatchError) {
+      expect(dispatchError.statusCode).toBe(409);
+      expect(dispatchError.code).toBe("CLASSIFICATION_STALE");
+      expect(dispatchError.message).toMatch(/Classification is stale/i);
+    } else {
+      expect(dispatchResult.dispatchBlocked).toBe(true);
+    }
+
+    // Assert: zero provider calls, zero provider operations
+    expect(mockFetch).not.toHaveBeenCalled();
+    const opCount = await ProviderOperation.countDocuments({
+      tenantId: TENANT_ID,
+      caseId: "CASE-STALE-CASE6-01"
+    });
+    expect(opCount).toBe(0);
+  });
 });

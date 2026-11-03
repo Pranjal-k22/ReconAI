@@ -60,6 +60,28 @@ The following decisions require explicit product, financial-policy, risk, or arc
 - **Decision Required**:
   - Establish the multi-signature protocol, regulatory compliance review, and legal indemnity agreements required before live financial write capabilities can be enabled.
 
+### OD-06: Production Claim Linking Architecture
+- **Category**: Ingestion & Evidence Collection / Claim Linking
+- **Current Code Reality**:
+  - Customer claim intake (`POST /api/claims`) is implemented, but `git grep -n "customerId" -- server/src` proves zero production writers exist for `customerId` on `MerchantOrder` or `GatewayPayment` in `server/src`.
+  - Claim linking (`claimRoutes.js:232-258`) requires `{ tenantId, customerId, merchantOrderId/gatewayPaymentId }` to match a case. Because `customerId` is not populated by standard webhook ingestion, Cases 2, 3, and 29 are `SEEDABLE_ONLY` for claim linking in production.
+- **Decision Required**:
+  - Direction from owner on resolving production customer claim linking across four options:
+    - (a) merchant-supplied `customerId` at order creation through an authenticated API;
+    - (b) Razorpay order notes (untrusted, must be verified);
+    - (c) customer links their order by an order reference + proof (e.g. a one-time code);
+    - (d) accept the limitation.
+
+### OD-07: Customer Claim Abuse & Automated Safe-Hold Freezing Policy
+- **Category**: Security, Fraud & Operational Risk
+- **Current Code Reality**:
+  - Submitting an `UNAUTHORIZED_PAYMENT` claim applies Case 29 safe-hold `FRAUD_SUSPICION`, freezing automated repair and blocking provider dispatch.
+  - Mitigations in place: claims can only link to payments belonging to the authenticated customer's own verified `customerId`, and MongoDB enforces rate limits (5/hour, 20/day).
+- **Decision Required**:
+  - Direction from owner on abuse throttling options:
+    - Option 1: Cap safe-holds per customer.
+    - Option 2: Require admin confirmation before a customer-triggered safe-hold persists beyond N hours.
+
 ---
 
 ## 2. Safety Blockers & Open Technical Gaps
